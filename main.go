@@ -1,0 +1,146 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/nuxt-apps/cli-init/internal/checks"
+	"github.com/nuxt-apps/cli-init/internal/config"
+	"github.com/nuxt-apps/cli-init/internal/logging"
+	"github.com/nuxt-apps/cli-init/internal/workspace"
+)
+
+const version = "0.1.0"
+
+func main() {
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+
+	command := os.Args[1]
+
+	switch command {
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		return
+	case "init":
+		runInit(os.Args[2:])
+	case "create_app":
+		runCreateApp(os.Args[2:])
+	case "create_layer":
+		runCreateLayer(os.Args[2:])
+	default:
+		logging.Errorf("unknown command: %s", command)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Println("cli-init " + version)
+	fmt.Println("Usage:")
+	fmt.Println("  cli-init init [--config path] [--path dir] [--layers-branch name] [--force]")
+	fmt.Println("  cli-init create_app [--config path] [--name app] [--modules m1,m2] [--branch name] [--force]")
+	fmt.Println("  cli-init create_layer [--config path] [--name layer] [--branch name] [--force]")
+}
+
+func runInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to config file")
+	targetPath := fs.String("path", ".", "Target directory to initialize")
+	layerBranch := fs.String("layers-branch", "", "Override branch for layers clone")
+	force := fs.Bool("force", false, "Allow reinitialization when directories exist")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		logging.Fatalf("failed to load config: %v", err)
+	}
+
+	ctx := context.Background()
+	warnings := checks.Run(ctx)
+	for _, w := range warnings {
+		logging.Warnf(w)
+	}
+
+	if err := workspace.RunInit(ctx, cfg, *targetPath, *layerBranch, *force); err != nil {
+		logging.Fatalf("init failed: %v", err)
+	}
+
+	logging.Infof("Initialization complete.")
+}
+
+func runCreateApp(args []string) {
+	fs := flag.NewFlagSet("create_app", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to config file")
+	name := fs.String("name", "", "Name of the new app")
+	modules := fs.String("modules", "", "Comma-separated module list")
+	branch := fs.String("branch", "", "Override starter branch")
+	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		logging.Fatalf("failed to load config: %v", err)
+	}
+
+	ctx := context.Background()
+	warnings := checks.Run(ctx)
+	for _, w := range warnings {
+		logging.Warnf(w)
+	}
+
+	appName, selectedModules, err := workspace.ResolveAppCreationInputs(cfg, *name, *modules)
+	if err != nil {
+		logging.Fatalf("input error: %v", err)
+	}
+
+	if err := workspace.RunCreateApp(ctx, cfg, appName, selectedModules, *branch, *force); err != nil {
+		logging.Fatalf("create_app failed: %v", err)
+	}
+
+	logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))
+}
+
+func runCreateLayer(args []string) {
+	fs := flag.NewFlagSet("create_layer", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to config file")
+	name := fs.String("name", "", "Name of the new layer")
+	branch := fs.String("branch", "", "Override starter branch")
+	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		logging.Fatalf("failed to load config: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	warnings := checks.Run(ctx)
+	for _, w := range warnings {
+		logging.Warnf(w)
+	}
+
+	layerName, err := workspace.ResolveLayerName(*name)
+	if err != nil {
+		logging.Fatalf("input error: %v", err)
+	}
+
+	if err := workspace.RunCreateLayer(ctx, cfg, layerName, *branch, *force); err != nil {
+		logging.Fatalf("create_layer failed: %v", err)
+	}
+
+	logging.Infof("Layer '%s' created.", layerName)
+}
+
+func init() {
+	logging.SetVersion(version)
+	os.Setenv("CLI_INIT_VERSION", version)
+}

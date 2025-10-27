@@ -1,0 +1,19 @@
+{
+  "extends": [
+    {
+      "module": "@layers/analytics",
+      "notes": "Adds analytics tracking functionality; ensure relevant env vars are configured."
+    },
+    {
+      "module": "@layers/auth",
+      "notes": "Provides authentication helpers and auth middleware integration."
+    }
+  ],
+  "generatedAt": "2025-10-27T00:00:00Z",
+  "cliVersion": "0.1.0",
+  "selectedModules": ["analytics", "auth"],
+  "nextSteps": [
+    "Update nuxt.config.ts to include the listed extends entries.",
+    "Review layer-specific documentation under /layers/<module>/docs for additional setup."
+  ]
+}
