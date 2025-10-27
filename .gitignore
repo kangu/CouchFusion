@@ -6,7 +6,7 @@
 .vscode/
 
 # Exclude built binary
-/cli-githooker
+/build/
 
 # Go
 *.exe
