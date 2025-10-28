@@ -98,9 +98,9 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 
 // RunCreateApp scaffolds a new application directory and clones starter repo.
 func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool) error {
-	root, err := resolvePath(cfg.WorkspaceRoot())
+	root, err := os.Getwd()
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
 	appsDir := filepath.Join(root, "apps")
 
@@ -136,9 +136,9 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 
 // RunCreateLayer clones a new layer repository under /layers.
 func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, overrideBranch string, force bool) error {
-	root, err := resolvePath(cfg.WorkspaceRoot())
+	root, err := os.Getwd()
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
 
 	if err := checkInitialized(root); err != nil {
@@ -231,6 +231,7 @@ func isDirEmpty(path string) (bool, error) {
 }
 
 func checkInitialized(root string) error {
+	fmt.Printf("Root path: %s\n", root)
 	apps := filepath.Join(root, "apps")
 	layers := filepath.Join(root, "layers")
 

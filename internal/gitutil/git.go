@@ -15,6 +15,8 @@ import (
 func Clone(ctx context.Context, repoURL, branch, targetDir string, protocol string, authPrompt bool) error {
 	cloneURL := repoURL
 
+	fmt.Printf("Preparing git clone: repo=%s branch=%s target=%s\n", repoURL, branch, targetDir)
+
 	if protocol == "https" && authPrompt {
 		var err error
 		cloneURL, err = injectCredentials(repoURL)
