@@ -1,10 +1,26 @@
-# couchfusion – Nuxt Apps + Layers Bootstrapper
+# couchfusion – Nuxt Apps + Layers Platform
 
-`couchfusion` is a Go-based command line tool that standardises the bootstrapping of the NuxtJS apps + shared layers ecosystem. It provisions the `/apps` and `/layers` workspace structure, clones starter repositories, and records module selections so developers know how to wire Nuxt `extends` entries manually.
+CouchFusion is the opinionated developer platform that powers our Nuxt applications and shared CouchDB-backed layers. It combines a consistent monorepo structure (`/apps`, `/layers`, `/docs`), reusable feature packs, and automation that keeps every project aligned.
+
+## Platform Overview
+- **Stack** – Nuxt 3/4, TypeScript, Bun + Node for local dev parity, and CouchDB for persistence.
+- **Workspace** – A single repository where Nuxt apps extend layers such as analytics, auth, content, and more. Each layer ships with docs and upgrade guidance.
+- **Automation** – The Go-based couchfusion CLI bootstraps workspaces, scaffolds new apps or layers, writes configuration handoff files, and seeds CouchDB credentials.
+
+## Why It Matters
+- **Velocity** – Spin up new apps or layers in minutes with consistent routing, env files, and module wiring instructions.
+- **Reliability** – Shared layers encapsulate battle-tested behaviours (auth, database access, analytics) so teams ship features instead of plumbing.
+
+## Vision
+Deliver a batteries-included platform where any contributor can clone the repo, run one command, and start building features with confidence. The CLI and documentation evolve together so CouchFusion remains the source of truth for Nuxt + CouchDB development.
 
 ---
 
-## Installation & Setup
+## CouchFusion CLI
+
+`couchfusion` is the Go CLI that provisions the workspace, scaffolds Nuxt apps and layers, and performs post-clone setup (environment docs, CouchDB admin seeding, etc.).
+
+### Installation & Setup
 
 ### Prerequisites
 - Go 1.21+
@@ -36,7 +52,7 @@ The installers place the binary in `~/.couchfusion/bin` (or `%USERPROFILE%\.couc
 ### Build from Source
 ```bash
 # from repo root
-go build -o build/couchfusion ./
+go build -o couchfusion ./cli-init
 ```
 
 Add the binary to your PATH or run it directly via `./couchfusion` from the build directory.
