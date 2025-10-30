@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -124,6 +125,10 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 	}
 
 	if err := applyLayerParameters(ctx, targetDir, modules); err != nil {
+		return err
+	}
+
+	if err := updateNuxtExtends(targetDir, modules); err != nil {
 		return err
 	}
 
@@ -350,6 +355,52 @@ func availableModules(cfg *config.Config) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func updateNuxtExtends(targetDir string, modules []string) error {
+	path := filepath.Join(targetDir, "nuxt.config.ts")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to read nuxt.config.ts: %w", err)
+	}
+
+	extendsLines := []string{}
+	for _, module := range modules {
+		extendsLines = append(extendsLines, fmt.Sprintf("    '../../layers/%s'", module))
+	}
+
+	var replacement string
+	if len(extendsLines) == 0 {
+		replacement = "  extends: [],"
+	} else {
+		replacement = fmt.Sprintf("  extends: [\n%s\n  ],", strings.Join(extendsLines, ",\n"))
+	}
+
+	pattern := regexp.MustCompile(`(?s)extends\s*:\s*\[.*?\]`)
+	if pattern.Match(data) {
+		data = pattern.ReplaceAll(data, []byte(replacement))
+	} else {
+		// attempt to insert after defineNuxtConfig opening brace
+		insertPattern := regexp.MustCompile(`defineNuxtConfig\(\{\s*`)
+		loc := insertPattern.FindIndex(data)
+		if loc == nil {
+			return fmt.Errorf("unable to locate extends block or insertion point in nuxt.config.ts")
+		}
+		insertPos := loc[1]
+		newContent := append([]byte{}, data[:insertPos]...)
+		newContent = append(newContent, []byte("\n"+replacement+"\n")...)
+		newContent = append(newContent, data[insertPos:]...)
+		data = newContent
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("failed to update nuxt.config.ts: %w", err)
+	}
+
+	return nil
 }
 
 var version = func() func() string {
