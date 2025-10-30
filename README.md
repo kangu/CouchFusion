@@ -24,13 +24,12 @@ Deliver a batteries-included platform where any contributor can clone the repo, 
 
 ### Prerequisites
 - Go 1.21+
+- CouchDB 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer from](https://couchdb.apache.org/#download) the CouchDB website for MacOS and Windows
 - `git` available in your PATH with access to the starter repositories
-- `bun` installed (required by downstream Nuxt apps; CLI only warn if missing)
-- CouchDB reachable at `http://localhost:5984` (CLI warns if unavailable)
-- `node` installed for development runs
-  With only Bun on the box you can install dependencies and run Nuxt’s CLI,
-  but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev. You’ll
-  hit those 400s because the request pipeline breaks before it reaches the handler. For
+- `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_node.sh) for installing both
+> With only Bun on the box you can install dependencies and run Nuxt’s CLI,
+  but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
+  hit 400s because the request pipeline breaks before it reaches the handler. For
   full parity we still need a real Node runtime (18/20) alongside Bun, at least until the
   Nitro/H3 team finishes their Bun support work or Bun closes the remaining gaps.
 
