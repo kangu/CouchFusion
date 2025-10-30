@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,6 +68,10 @@ func configureAuthLayer(ctx context.Context, targetDir string) error {
 	}
 
 	if err := ensureEnvEntries(envPath, values); err != nil {
+		return err
+	}
+
+	if err := ensureCouchDBAdminUser(ctx, username, password); err != nil {
 		return err
 	}
 
@@ -163,4 +169,72 @@ func promptSecret(message string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(bytes)), nil
+}
+
+func ensureCouchDBAdminUser(ctx context.Context, username, password string) error {
+	userID := fmt.Sprintf("org.couchdb.user:%s", username)
+	url := fmt.Sprintf("http://localhost:5984/_users/%s", userID)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build user lookup request: %w", err)
+	}
+	req.SetBasicAuth(username, password)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to query couchdb user document: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		logging.Infof("CouchDB admin user '%s' already exists.", username)
+		return nil
+	case http.StatusNotFound:
+		// proceed to creation
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected response checking user '%s': %s %s", username, resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	payload := map[string]any{
+		"_id":      userID,
+		"name":     username,
+		"roles":    []string{"admin"},
+		"type":     "user",
+		"password": password,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal couchdb user payload: %w", err)
+	}
+
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to build user creation request: %w", err)
+	}
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.SetBasicAuth(username, password)
+
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		return fmt.Errorf("failed to create couchdb user: %w", err)
+	}
+	defer putResp.Body.Close()
+
+	respBody, err := io.ReadAll(putResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read couchdb user creation response: %w", err)
+	}
+
+	if putResp.StatusCode < 200 || putResp.StatusCode >= 300 {
+		return fmt.Errorf("couchdb user creation failed (%s): %s", putResp.Status, strings.TrimSpace(string(respBody)))
+	}
+
+	logging.Infof("Created CouchDB admin user '%s'.", username)
+	return nil
 }

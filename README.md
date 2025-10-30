@@ -18,13 +18,25 @@
   full parity we still need a real Node runtime (18/20) alongside Bun, at least until the
   Nitro/H3 team finishes their Bun support work or Bun closes the remaining gaps.
 
-### Build the CLI
+### Quick Install
+macOS / Linux:
+```bash
+curl -fsSL https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+```powershell
+powershell -ExecutionPolicy Bypass -NoLogo -Command "iwr https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/install.ps1 -UseBasicParsing | iex"
+```
+
+> Tip: set `COUCHFUSION_VERSION=v0.1.0` (or similar) before running the installer to pin a specific release; otherwise the scripts install the latest GitHub release.
+
+The installers place the binary in `~/.couchfusion/bin` (or `%USERPROFILE%\.couchfusion\bin`) and add that directory to your shell PATH if needed.
+
+### Build from Source
 ```bash
 # from repo root
-go build -o couchfusion ./cli-init
-# or within the folder
-cd cli-init
-go build ./...
+go build -o build/couchfusion ./
 ```
 
 Add the binary to your PATH or run it directly via `./couchfusion` from the build directory.
@@ -188,3 +200,44 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 - The CLI never mutates Nuxt `nuxt.config.ts`; it surfaces instructions for manual changes via `docs/module_setup.json`.
 
 For questions or enhancements, update the couchfusion PRD in `cli-init/docs/specs/cli_bootstrap_prd.md` and track changes under `cli-init/docs/implementation_results/` per project process.
+
+---
+
+## Release Guide
+
+Follow these steps to cut and publish a new GitHub release (`kangu/CouchFusion`):
+
+1. **Prep the version**
+   - Update the `version` constant in `cli-init/main.go`.
+   - Regenerate docs or changelog entries as needed.
+   - Commit your changes with a message noting the new version.
+
+2. **Tag the release**
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+3. **Build binaries**
+   - Run `./build.sh` to compile couchfusion for Linux (amd64/arm64), macOS, and Windows.
+   - After each build, package the binary with the naming convention expected by the installers:
+     ```bash
+     tar -czf couchfusion_linux_amd64.tar.gz -C build/linux-x86 couchfusion
+     tar -czf couchfusion_linux_arm64.tar.gz -C build/linux-arm couchfusion
+     tar -czf couchfusion_darwin_amd64.tar.gz -C build/darwin-amd64 couchfusion
+     tar -czf couchfusion_darwin_arm64.tar.gz -C build/darwin-arm64 couchfusion
+     zip couchfusion_windows_amd64.zip build/windows/couchfusion.exe
+     ```
+
+4. **Publish on GitHub**
+   - Create a new release for the tag.
+   - Upload the packaged archives listed above.
+   - Paste release notes / highlights; include installer commands for convenience.
+
+5. **Verify installers**
+   - Run the macOS/Linux one-liner and confirm `couchfusion --version` matches the release.
+   - Run the PowerShell installer (or test via GitHub Actions/VM) to ensure Windows installs cleanly.
+
+6. **Communicate**
+   - Announce the release via your team channel.
+   - Update any dependent documentation or references if paths or features changed.
