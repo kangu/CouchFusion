@@ -21,7 +21,7 @@ import (
 )
 
 // RunInit performs workspace initialization.
-func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerBranch string, force bool) error {
+func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
 	root, err := resolvePath(targetPath)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerB
 		branch = overrideLayerBranch
 	}
 
-	if err := gitutil.Clone(ctx, repo.URL, branch, layersDir, repo.Protocol, repo.AuthPrompt); err != nil {
+	if err := gitutil.Clone(ctx, repo.URL, branch, layersDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
 		return err
 	}
 
@@ -74,26 +74,16 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 	modules := parseModules(providedModules)
 	if len(modules) == 0 {
 		list := availableModules(cfg)
-		if len(list) > 0 && isInteractiveTerminal() {
-			selection, err := runModuleSelector(list, cfg.DefaultModuleSelection())
+		if len(list) > 0 {
+			fmt.Printf("Available modules: %s\n", strings.Join(list, ", "))
+			selected, err := prompt("Select modules (comma separated, leave empty for defaults): ")
 			if err != nil {
 				return "", nil, err
 			}
-			modules = selection
+			modules = parseModules(selected)
 		}
-
 		if len(modules) == 0 {
-			if len(list) > 0 && !isInteractiveTerminal() {
-				fmt.Printf("Available modules: %s\n", strings.Join(list, ", "))
-				selected, err := prompt("Select modules (comma separated, leave empty for defaults): ")
-				if err != nil {
-					return "", nil, err
-				}
-				modules = parseModules(selected)
-			}
-			if len(modules) == 0 {
-				modules = cfg.DefaultModuleSelection()
-			}
+			modules = cfg.DefaultModuleSelection()
 		}
 	}
 
@@ -112,7 +102,7 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 }
 
 // RunCreateApp scaffolds a new application directory and clones starter repo.
-func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool) error {
+func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
 	root, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
@@ -134,7 +124,7 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 		branch = overrideBranch
 	}
 
-	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt); err != nil {
+    if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
 		return err
 	}
 
@@ -158,7 +148,7 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 }
 
 // RunCreateLayer clones a new layer repository under /layers.
-func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, overrideBranch string, force bool) error {
+func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
 	root, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
@@ -180,7 +170,7 @@ func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, o
 		branch = overrideBranch
 	}
 
-	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt); err != nil {
+	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
 		return err
 	}
 
@@ -254,7 +244,6 @@ func isDirEmpty(path string) (bool, error) {
 }
 
 func checkInitialized(root string) error {
-	fmt.Printf("Root path: %s\n", root)
 	apps := filepath.Join(root, "apps")
 	layers := filepath.Join(root, "layers")
 
@@ -366,6 +355,14 @@ func isInteractiveTerminal() bool {
 	return isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())
 }
 
+// ShouldUseTUI reports whether the CLI should run the Bubble Tea interface.
+func ShouldUseTUI() bool {
+	if os.Getenv("COUCHFUSION_NO_TUI") != "" {
+		return false
+	}
+	return isInteractiveTerminal()
+}
+
 func availableModules(cfg *config.Config) []string {
 	keys := make([]string, 0, len(cfg.Modules))
 	for key := range cfg.Modules {
@@ -373,6 +370,15 @@ func availableModules(cfg *config.Config) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// EnsureCurrentWorkspace validates that the current directory contains the expected couchfusion structure.
+func EnsureCurrentWorkspace() error {
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("unable to determine current working directory: %w", err)
+	}
+	return checkInitialized(root)
 }
 
 func updateNuxtExtends(targetDir string, modules []string) error {

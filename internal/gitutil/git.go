@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,14 +12,78 @@ import (
 	"golang.org/x/term"
 )
 
+type cloneConfig struct {
+	stdout io.Writer
+	stderr io.Writer
+	logf   func(string, ...any)
+}
+
+// CloneOption customizes git clone execution.
+type CloneOption func(*cloneConfig)
+
+// WithOutput directs clone stdout and stderr to the given writer.
+func WithOutput(w io.Writer) CloneOption {
+	return func(cfg *cloneConfig) {
+		cfg.stdout = w
+		cfg.stderr = w
+	}
+}
+
+// WithStdout directs clone stdout to the given writer.
+func WithStdout(w io.Writer) CloneOption {
+	return func(cfg *cloneConfig) {
+		cfg.stdout = w
+	}
+}
+
+// WithStderr directs clone stderr to the given writer.
+func WithStderr(w io.Writer) CloneOption {
+	return func(cfg *cloneConfig) {
+		cfg.stderr = w
+	}
+}
+
+// WithLogger overrides the logging function used for clone status messages.
+func WithLogger(logf func(string, ...any)) CloneOption {
+	return func(cfg *cloneConfig) {
+		cfg.logf = logf
+	}
+}
+
+func buildCloneConfig(opts []CloneOption) cloneConfig {
+	cfg := cloneConfig{
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		logf: func(format string, args ...any) {
+			fmt.Printf(format+"\n", args...)
+		},
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.stdout == nil {
+		cfg.stdout = io.Discard
+	}
+	if cfg.stderr == nil {
+		cfg.stderr = io.Discard
+	}
+	if cfg.logf == nil {
+		cfg.logf = func(string, ...any) {}
+	}
+	return cfg
+}
+
 // Clone clones the provided repository into targetDir.
-func Clone(ctx context.Context, repoURL, branch, targetDir string, protocol string, authPrompt bool) error {
+func Clone(ctx context.Context, repoURL, branch, targetDir string, protocol string, authPrompt bool, opts ...CloneOption) error {
+	cfg := buildCloneConfig(opts)
+
 	cloneURL := repoURL
 
-	fmt.Printf("Preparing git clone: repo=%s branch=%s target=%s\n", repoURL, branch, targetDir)
+	cfg.logf("Preparing git clone: repo=%s branch=%s target=%s", repoURL, branch, targetDir)
 
 	if protocol == "https" && authPrompt {
 		var err error
+		// Inject credentials using stdin; this still prompts in the terminal.
 		cloneURL, err = injectCredentials(repoURL)
 		if err != nil {
 			return err
@@ -32,8 +97,8 @@ func Clone(ctx context.Context, repoURL, branch, targetDir string, protocol stri
 	args = append(args, cloneURL, targetDir)
 
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = cfg.stdout
+	cmd.Stderr = cfg.stderr
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)

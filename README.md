@@ -50,6 +50,9 @@ powershell -ExecutionPolicy Bypass -NoLogo -Command "iwr https://raw.githubuserc
 
 The installers place the binary in `~/.couchfusion/bin` (or `%USERPROFILE%\.couchfusion\bin`) and add that directory to your shell PATH if needed.
 
+### Interactive UI
+By default, commands run with a Bubble Tea + Lip Gloss terminal interface when executed in an interactive TTY. Set `COUCHFUSION_NO_TUI=1` to disable the TUI and fall back to plain prompts.
+
 ### Build from Source
 ```bash
 # from repo root

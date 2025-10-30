@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -71,6 +72,19 @@ func runInit(args []string) {
 		logging.Warnf(w)
 	}
 
+	if workspace.ShouldUseTUI() {
+		target, err := workspace.RunInitTUI(ctx, cfg, *targetPath, *layerBranch, *force)
+		if err != nil {
+			if errors.Is(err, workspace.ErrAborted) {
+				logging.Warnf("init cancelled by user")
+				return
+			}
+			logging.Fatalf("init failed: %v", err)
+		}
+		logging.Infof("Initialization complete at %s", target)
+		return
+	}
+
 	if err := workspace.RunInit(ctx, cfg, *targetPath, *layerBranch, *force); err != nil {
 		logging.Fatalf("init failed: %v", err)
 	}
@@ -87,6 +101,14 @@ func runCreateApp(args []string) {
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	_ = fs.Parse(args)
 
+	if *name == "" && len(fs.Args()) > 0 {
+		*name = fs.Args()[0]
+	}
+
+	if err := workspace.EnsureCurrentWorkspace(); err != nil {
+		logging.Fatalf("workspace validation failed: %v", err)
+	}
+
 	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
 		logging.Fatalf("failed to load config: %v", err)
@@ -99,6 +121,20 @@ func runCreateApp(args []string) {
 	warnings := checks.Run(ctx)
 	for _, w := range warnings {
 		logging.Warnf(w)
+	}
+
+	if workspace.ShouldUseTUI() {
+		appName, selectedModules, err := workspace.RunCreateAppTUI(ctx, cfg, *name, *modules, *branch, *force)
+		if err != nil {
+			if errors.Is(err, workspace.ErrAborted) {
+				logging.Warnf("create_app cancelled by user")
+				return
+			}
+			logging.Fatalf("create_app failed: %v", err)
+		}
+
+		logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))
+		return
 	}
 
 	appName, selectedModules, err := workspace.ResolveAppCreationInputs(cfg, *name, *modules)
@@ -135,6 +171,19 @@ func runCreateLayer(args []string) {
 	warnings := checks.Run(ctx)
 	for _, w := range warnings {
 		logging.Warnf(w)
+	}
+
+	if workspace.ShouldUseTUI() {
+		layerName, err := workspace.RunCreateLayerTUI(ctx, cfg, *name, *branch, *force)
+		if err != nil {
+			if errors.Is(err, workspace.ErrAborted) {
+				logging.Warnf("create_layer cancelled by user")
+				return
+			}
+			logging.Fatalf("create_layer failed: %v", err)
+		}
+		logging.Infof("Layer '%s' created.", layerName)
+		return
 	}
 
 	layerName, err := workspace.ResolveLayerName(*name)

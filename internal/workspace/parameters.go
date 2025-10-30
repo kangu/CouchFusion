@@ -38,20 +38,34 @@ func applyLayerParameters(ctx context.Context, targetDir string, modules []strin
 }
 
 func configureAuthLayer(ctx context.Context, targetDir string) error {
-	username, err := prompt("Enter CouchDB admin username: ")
-	if err != nil {
-		return err
-	}
-	if username == "" {
-		return errors.New("couchdb admin username cannot be empty")
+	username := ""
+	password := ""
+	if creds, ok := credentialsFromContext(ctx); ok {
+		username = strings.TrimSpace(creds.Username)
+		password = strings.TrimSpace(creds.Password)
 	}
 
-	password, err := promptSecret("Enter CouchDB admin password: ")
-	if err != nil {
-		return err
+	var err error
+	if username == "" {
+		username, err = prompt("Enter CouchDB admin username: ")
+		if err != nil {
+			return err
+		}
+		username = strings.TrimSpace(username)
+		if username == "" {
+			return errors.New("couchdb admin username cannot be empty")
+		}
 	}
+
 	if password == "" {
-		return errors.New("couchdb admin password cannot be empty")
+		password, err = promptSecret("Enter CouchDB admin password: ")
+		if err != nil {
+			return err
+		}
+		password = strings.TrimSpace(password)
+		if password == "" {
+			return errors.New("couchdb admin password cannot be empty")
+		}
 	}
 
 	authHeader := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
