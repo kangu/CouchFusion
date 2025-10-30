@@ -1,13 +1,13 @@
 repos:
   init:
-    url: https://git2.kangu.ro/radu/nuxt-apps-layers.git
+    url: git@github.com:kangu/CouchFusion-BaseLayers.git
     branch: main
-    protocol: https
+    protocol: ssh
     authPrompt: true
   create_app:
-    url: https://git2.kangu.ro/radu/couchfusion-app-starter.git
+    url: git@github.com:kangu/CouchFusion-StarterApp.git
     branch: main
-    protocol: https
+    protocol: ssh
     authPrompt: true
   create_layer:
     url: git@github.com:example/nuxt-layer-starter.git
