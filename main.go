@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nuxt-apps/cli-init/internal/checks"
-	"github.com/nuxt-apps/cli-init/internal/config"
-	"github.com/nuxt-apps/cli-init/internal/logging"
-	"github.com/nuxt-apps/cli-init/internal/workspace"
+	"github.com/nuxt-apps/couchfusion/internal/checks"
+	"github.com/nuxt-apps/couchfusion/internal/config"
+	"github.com/nuxt-apps/couchfusion/internal/logging"
+	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
 
 const version = "0.1.0"
@@ -42,11 +42,11 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("cli-init " + version)
+	fmt.Println("couchfusion " + version)
 	fmt.Println("Usage:")
-	fmt.Println("  cli-init init [--config path] [--path dir] [--layers-branch name] [--force]")
-	fmt.Println("  cli-init create_app [--config path] [--name app] [--modules m1,m2] [--branch name] [--force]")
-	fmt.Println("  cli-init create_layer [--config path] [--name layer] [--branch name] [--force]")
+	fmt.Println("  couchfusion init [--config path] [--path dir] [--layers-branch name] [--force]")
+	fmt.Println("  couchfusion create_app [--config path] [--name app] [--modules m1,m2] [--branch name] [--force]")
+	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force]")
 }
 
 func runInit(args []string) {
@@ -57,9 +57,12 @@ func runInit(args []string) {
 	force := fs.Bool("force", false, "Allow reinitialization when directories exist")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(*configPath)
+	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
 		logging.Fatalf("failed to load config: %v", err)
+	}
+	if usedDefaultConfig {
+		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
 	ctx := context.Background()
@@ -84,9 +87,12 @@ func runCreateApp(args []string) {
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(*configPath)
+	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
 		logging.Fatalf("failed to load config: %v", err)
+	}
+	if usedDefaultConfig {
+		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
 	ctx := context.Background()
@@ -115,9 +121,12 @@ func runCreateLayer(args []string) {
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(*configPath)
+	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
 		logging.Fatalf("failed to load config: %v", err)
+	}
+	if usedDefaultConfig {
+		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -142,5 +151,5 @@ func runCreateLayer(args []string) {
 
 func init() {
 	logging.SetVersion(version)
-	os.Setenv("CLI_INIT_VERSION", version)
+	os.Setenv("COUCHFUSION_VERSION", version)
 }

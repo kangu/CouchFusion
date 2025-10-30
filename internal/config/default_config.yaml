@@ -1,0 +1,29 @@
+repos:
+  init:
+    url: https://git2.kangu.ro/radu/nuxt-apps-layers.git
+    branch: main
+    protocol: https
+    authPrompt: true
+  create_app:
+    url: https://git2.kangu.ro/radu/couchfusion-app-starter.git
+    branch: main
+    protocol: https
+    authPrompt: true
+  create_layer:
+    url: git@github.com:example/nuxt-layer-starter.git
+    branch: main
+    protocol: ssh
+    authPrompt: false
+modules:
+  analytics:
+    description: Analytics tracking utilities
+    extends: "@layers/analytics"
+  auth:
+    description: Authentication middleware and helpers
+    extends: "@layers/auth"
+workspace:
+  defaultRoot: "."
+prompts:
+  defaultLayerSelection:
+    - analytics
+    - auth

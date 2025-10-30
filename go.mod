@@ -1,4 +1,4 @@
-module github.com/nuxt-apps/cli-init
+module github.com/nuxt-apps/couchfusion
 
 go 1.21
 

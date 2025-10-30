@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nuxt-apps/cli-init/internal/config"
-	"github.com/nuxt-apps/cli-init/internal/gitutil"
+	"github.com/nuxt-apps/couchfusion/internal/config"
+	"github.com/nuxt-apps/couchfusion/internal/gitutil"
 )
 
 // RunInit performs workspace initialization.
@@ -120,6 +120,10 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 	}
 
 	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt); err != nil {
+		return err
+	}
+
+	if err := applyLayerParameters(ctx, targetDir, modules); err != nil {
 		return err
 	}
 
@@ -253,7 +257,7 @@ func writeAppMetadata(targetDir, appName string, modules []string) error {
 		"cliVersion":  version(),
 	}
 
-	metaPath := filepath.Join(targetDir, "cli-init.json")
+	metaPath := filepath.Join(targetDir, "couchfusion.json")
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
@@ -352,7 +356,7 @@ var version = func() func() string {
 	var v string
 	return func() string {
 		if v == "" {
-			v = os.Getenv("CLI_INIT_VERSION")
+			v = os.Getenv("COUCHFUSION_VERSION")
 			if v == "" {
 				v = "unknown"
 			}

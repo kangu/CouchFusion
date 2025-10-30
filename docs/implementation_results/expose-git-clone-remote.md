@@ -20,4 +20,4 @@ Implementation Summary: Added a pre-clone log line reporting the repository URL,
 - Debug output uses the configured repository URL, avoiding exposure of injected HTTPS credentials while still clarifying what remote the CLI is about to access.
 
 ## Implementation Examples
-- `cli-init/internal/gitutil/git.go:23` prints the repository URL, branch, and target directory ahead of the git clone invocation.
+- `cli-init/internal/gitutil/git.go:23` (couchfusion git utility) prints the repository URL, branch, and target directory ahead of the git clone invocation.

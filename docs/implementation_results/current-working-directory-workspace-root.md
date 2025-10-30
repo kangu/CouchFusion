@@ -11,5 +11,5 @@ Implementation Summary: Updated the create_app and create_layer workflows to der
 - Retained downstream cloning, metadata, and documentation generation logic to operate against the newly derived root without altering existing outputs.
 
 ## Implementation Examples
-- `cli-init/internal/workspace/workspace.go:101` resolves the workspace base using `os.Getwd()` before verifying the `apps` directory exists.
+- `cli-init/internal/workspace/workspace.go:101` (couchfusion module) resolves the workspace base using `os.Getwd()` before verifying the `apps` directory exists.
 - `cli-init/internal/workspace/workspace.go:139` mirrors the current-directory resolution for layer scaffolding to ensure parity between app and layer workflows.

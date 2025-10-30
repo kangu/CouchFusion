@@ -1,6 +1,6 @@
-# cli-init – Nuxt Apps + Layers Bootstrapper
+# couchfusion – Nuxt Apps + Layers Bootstrapper
 
-`cli-init` is a Go-based command line tool that standardises the bootstrapping of the NuxtJS apps + shared layers ecosystem. It provisions the `/apps` and `/layers` workspace structure, clones starter repositories, and records module selections so developers know how to wire Nuxt `extends` entries manually.
+`couchfusion` is a Go-based command line tool that standardises the bootstrapping of the NuxtJS apps + shared layers ecosystem. It provisions the `/apps` and `/layers` workspace structure, clones starter repositories, and records module selections so developers know how to wire Nuxt `extends` entries manually.
 
 ---
 
@@ -11,20 +11,26 @@
 - `git` available in your PATH with access to the starter repositories
 - `bun` installed (required by downstream Nuxt apps; CLI only warn if missing)
 - CouchDB reachable at `http://localhost:5984` (CLI warns if unavailable)
+- `node` installed for development runs
+  With only Bun on the box you can install dependencies and run Nuxt’s CLI,
+  but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev. You’ll
+  hit those 400s because the request pipeline breaks before it reaches the handler. For
+  full parity we still need a real Node runtime (18/20) alongside Bun, at least until the
+  Nitro/H3 team finishes their Bun support work or Bun closes the remaining gaps.
 
 ### Build the CLI
 ```bash
 # from repo root
-go build -o cli-init ./cli-init
+go build -o couchfusion ./cli-init
 # or within the folder
 cd cli-init
 go build ./...
 ```
 
-Add the binary to your PATH or run it directly via `./cli-init` from the build directory.
+Add the binary to your PATH or run it directly via `./couchfusion` from the build directory.
 
 ### Configuration File
-The CLI reads configuration from `~/.cli-init/config.yaml` by default. Override the path with `--config /path/to/config.yaml` on any command.
+The CLI reads configuration from `~/.couchfusion/config.yaml` by default. Override the path with `--config /path/to/config.yaml` on any command.
 
 Sample YAML:
 ```yaml
@@ -82,12 +88,12 @@ Use `--yes` on commands to skip interactive confirmations (planned enhancement) 
 
 ## Commands
 
-### `cli-init init`
+### `couchfusion init`
 Initialises a fresh workspace. Creates `/apps` and `/layers`, cloning the base layers repo into `/layers`.
 
 ```bash
-cli-init init \
-  --config ~/.cli-init/config.yaml \
+couchfusion init \
+  --config ~/.couchfusion/config.yaml \
   --path ~/Projects/new-workspace \
   --layers-branch develop \
   --force
@@ -106,11 +112,11 @@ Example output:
 [INFO] Initialization complete.
 ```
 
-### `cli-init create_app`
+### `couchfusion create_app`
 Scaffolds a new Nuxt app inside `/apps/<app-name>` and records module selections.
 
 ```bash
-cli-init create_app \
+couchfusion create_app \
   --name feedback-tool \
   --modules analytics,auth,content \
   --branch preview \
@@ -119,7 +125,7 @@ cli-init create_app \
 
 If `--name` or `--modules` are omitted, the CLI prompts for them. Module prompts list available options based on `modules` in config. The command produces two documentation files within the new app directory:
 
-- `cli-init.json` – records CLI version, app name, selected modules, timestamp.
+- `couchfusion.json` – records CLI version, app name, selected modules, timestamp.
 - `docs/module_setup.json` – lists Nuxt `extends` entries and follow-up steps the developer must apply manually.
 
 Example `docs/module_setup.json`:
@@ -139,11 +145,11 @@ Example `docs/module_setup.json`:
 }
 ```
 
-### `cli-init create_layer`
+### `couchfusion create_layer`
 Clones a new layer starter into `/layers/<layer-name>`.
 
 ```bash
-cli-init create_layer \
+couchfusion create_layer \
   --name analytics-pro \
   --branch feature/init \
   --force
@@ -169,7 +175,7 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | Issue | Resolution |
 |-------|------------|
 | `config file not found` | Create the YAML or pass `--config` pointing to it. |
-| `workspace not initialized` | Run `cli-init init` from the workspace root first. |
+| `workspace not initialized` | Run `couchfusion init` from the workspace root first. |
 | `git clone failed` | Verify repository URL, credentials, and access rights. For HTTPS, ensure tokens permit repo access. |
 | `bun is not available in PATH` | Install bun or ensure it is discoverable; CLI continues but downstream tasks may fail. |
 | `Unable to reach CouchDB` | Start CouchDB locally or update configuration if you intentionally work offline. |
@@ -178,7 +184,7 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 
 ## Development Notes
 - `go build ./...` validates the code compiles; add unit tests under `internal/...` as the project evolves.
-- Set `CLI_INIT_VERSION` environment variable to override the embedded version string during development builds.
+- Set `COUCHFUSION_VERSION` environment variable to override the embedded version string during development builds.
 - The CLI never mutates Nuxt `nuxt.config.ts`; it surfaces instructions for manual changes via `docs/module_setup.json`.
 
-For questions or enhancements, update the PRD in `cli-init/docs/specs/cli_bootstrap_prd.md` and track changes under `cli-init/docs/implementation_results/` per project process.
+For questions or enhancements, update the couchfusion PRD in `cli-init/docs/specs/cli_bootstrap_prd.md` and track changes under `cli-init/docs/implementation_results/` per project process.

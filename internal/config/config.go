@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,9 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 )
+
+//go:embed default_config.yaml
+var embeddedDefaultConfig []byte
 
 // Config captures CLI configuration sourced from YAML or JSON files.
 type Config struct {
@@ -44,34 +48,41 @@ type PromptConfig struct {
 	DefaultLayerSelection []string `yaml:"defaultLayerSelection" json:"defaultLayerSelection"`
 }
 
-// Load attempts to read config files from disk, defaulting to ~/.cli-init/config.yaml.
-func Load(path string) (*Config, error) {
+// Load attempts to read config files from disk, defaulting to ~/.couchfusion/config.yaml.
+// It returns a boolean indicating whether the embedded default configuration was used.
+func Load(path string) (*Config, bool, error) {
 	resolved, err := resolvePath(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	useFallback := false
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("config file not found at %s", resolved)
+		if errors.Is(err, fs.ErrNotExist) && strings.TrimSpace(path) == "" {
+			if len(embeddedDefaultConfig) == 0 {
+				return nil, false, errors.New("embedded default configuration is empty")
+			}
+			data = embeddedDefaultConfig
+			useFallback = true
+		} else {
+			return nil, false, err
 		}
-		return nil, err
 	}
 
 	cfg := &Config{}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		// Attempt JSON as fallback
 		if jsonErr := json.Unmarshal(data, cfg); jsonErr != nil {
-			return nil, fmt.Errorf("failed to parse config as YAML (%v) or JSON (%v)", err, jsonErr)
+			return nil, false, fmt.Errorf("failed to parse config as YAML (%v) or JSON (%v)", err, jsonErr)
 		}
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return cfg, nil
+	return cfg, useFallback, nil
 }
 
 func resolvePath(input string) (string, error) {
@@ -83,7 +94,7 @@ func resolvePath(input string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unable to determine home directory: %w", err)
 	}
-	return filepath.Join(home, ".cli-init", "config.yaml"), nil
+	return filepath.Join(home, ".couchfusion", "config.yaml"), nil
 }
 
 func expandHome(path string) (string, error) {

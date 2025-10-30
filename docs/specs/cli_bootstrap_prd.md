@@ -42,7 +42,7 @@
 > Progress: [Done] Listed operating expectations and environmental constraints.
 - CLI is compiled and distributed as a Go binary targeting macOS/Linux.
 - Git is available and authenticated per user environment (SSH keys or HTTPS credentials for private repos).
-- Config file lives at `~/.cli-init/config.yaml` (exact path configurable via flag) and is populated before first run.
+- Config file lives at `~/.couchfusion/config.yaml` (exact path configurable via flag) and is populated before first run.
 - Network access allowed for git clone operations.
 - The CLI runs within a workspace root where `/apps` and `/layers` folders should exist post-init.
 - HTTPS operations rely on existing system credential helpers when possible; otherwise CLI prompts for username/password or tokens inline without storing them.
@@ -59,7 +59,7 @@
 
 ## 7. Configuration File Requirements
 > Progress: [Done] Defined config schema and validation rules incorporating SSH/HTTPS guidance.
-- Default path `~/.cli-init/config.yaml` (overridable via `--config` flag).
+- Default path `~/.couchfusion/config.yaml` (overridable via `--config` flag).
 - Fields:
   ```yaml
   repos:
@@ -95,9 +95,9 @@
 > Progress: [Done] Summarized commands, flag surface area, and safety checks.
 | Command | Description | Key Flags | Idempotency Handling |
 |---------|-------------|-----------|----------------------|
-| `cli-init init` | Prepare workspace with `/apps` and `/layers`, clone base layers repo. | `--config`, `--force`, `--layers-branch`. | Warn if directories exist; allow `--force` to re-clone into empty dirs. |
-| `cli-init create_app` | Create new app folder, clone starter repo, capture module selection. | `--name`, `--modules`, `--branch`. | Prevent overwrite if app folder exists; provide `--force` to clear empty dir. |
-| `cli-init create_layer` | Create new layer folder and clone layer starter template. | `--name`, `--branch`. | Same as app: guard against existing directories. |
+| `couchfusion init` | Prepare workspace with `/apps` and `/layers`, clone base layers repo. | `--config`, `--force`, `--layers-branch`. | Warn if directories exist; allow `--force` to re-clone into empty dirs. |
+| `couchfusion create_app` | Create new app folder, clone starter repo, capture module selection. | `--name`, `--modules`, `--branch`. | Prevent overwrite if app folder exists; provide `--force` to clear empty dir. |
+| `couchfusion create_layer` | Create new layer folder and clone layer starter template. | `--name`, `--branch`. | Same as app: guard against existing directories. |
 
 ## 9. Detailed User Flows
 > Progress: [Done] Documented end-to-end execution steps with manual follow-up guidance.
@@ -121,7 +121,7 @@
 3. Present module selection list sourced from config `modules` (multi-select). Default selections drawn from config preferences.
 4. Create `/apps/<app-name>` directory.
 5. Clone `app_starter_repo` into new directory; optionally checkout provided branch/tag (branch only per config scope).
-6. Persist selection metadata in `/apps/<app-name>/cli-init.json` (records modules picked, timestamp, CLI version).
+6. Persist selection metadata in `/apps/<app-name>/couchfusion.json` (records modules picked, timestamp, CLI version).
 7. Generate manual integration guidance: output to console and write `/apps/<app-name>/docs/module_setup.json` capturing Nuxt `extends` entries for chosen modules. No automated edits to `nuxt.config.ts`.
 8. Summarize next steps, highlighting manual module wiring instructions.
 
@@ -142,7 +142,7 @@
 
 ## 11. Error Handling & Edge Cases
 > Progress: [Done] Listed failure scenarios and mitigation.
-- Missing config file: exit with instructions to create config; offer `cli-init config init` in future (out of scope for MVP).
+- Missing config file: exit with instructions to create config; offer `couchfusion config init` in future (out of scope for MVP).
 - Git clone failure: bubble up stderr, include hint to verify credentials or repo URL.
 - Existing directories: abort unless `--force` set and directory empty; never delete non-empty folders automatically.
 - Network timeouts: provide retry suggestion or offline fallback messaging.
@@ -166,7 +166,7 @@
 - Provide Makefile target `make build` to produce platform binaries.
 - Publish artifacts to internal package registry or GitHub Releases.
 - Document installation steps in project README and share config template.
-- Ensure version flag (`cli-init --version`) reflects semantic versioning.
+- Ensure version flag (`couchfusion --version`) reflects semantic versioning.
 
 ## 15. Security & Compliance
 > Progress: [Done] Addressed credential handling and repository hygiene.
