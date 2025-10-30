@@ -1,4 +1,6 @@
-# couchfusion – Nuxt Apps + Layers Platform
+# CouchFusion – Nuxt Apps + CouchDB
+
+> The CouchApp vision evolved
 
 CouchFusion is the opinionated developer platform that powers our Nuxt applications and shared CouchDB-backed layers. It combines a consistent monorepo structure (`/apps`, `/layers`, `/docs`), reusable feature packs, and automation that keeps every project aligned.
 
