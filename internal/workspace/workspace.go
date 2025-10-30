@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/gitutil"
 )
@@ -72,14 +74,26 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 	modules := parseModules(providedModules)
 	if len(modules) == 0 {
 		list := availableModules(cfg)
-		fmt.Printf("Available modules: %s\n", strings.Join(list, ", "))
-		selected, err := prompt("Select modules (comma separated, leave empty for defaults): ")
-		if err != nil {
-			return "", nil, err
+		if len(list) > 0 && isInteractiveTerminal() {
+			selection, err := runModuleSelector(list, cfg.DefaultModuleSelection())
+			if err != nil {
+				return "", nil, err
+			}
+			modules = selection
 		}
-		modules = parseModules(selected)
+
 		if len(modules) == 0 {
-			modules = cfg.DefaultModuleSelection()
+			if len(list) > 0 && !isInteractiveTerminal() {
+				fmt.Printf("Available modules: %s\n", strings.Join(list, ", "))
+				selected, err := prompt("Select modules (comma separated, leave empty for defaults): ")
+				if err != nil {
+					return "", nil, err
+				}
+				modules = parseModules(selected)
+			}
+			if len(modules) == 0 {
+				modules = cfg.DefaultModuleSelection()
+			}
 		}
 	}
 
@@ -348,6 +362,10 @@ func parseModules(input string) []string {
 	return out
 }
 
+func isInteractiveTerminal() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())
+}
+
 func availableModules(cfg *config.Config) []string {
 	keys := make([]string, 0, len(cfg.Modules))
 	for key := range cfg.Modules {
@@ -372,26 +390,38 @@ func updateNuxtExtends(targetDir string, modules []string) error {
 		extendsLines = append(extendsLines, fmt.Sprintf("    '../../layers/%s'", module))
 	}
 
-	var replacement string
-	if len(extendsLines) == 0 {
-		replacement = "  extends: [],"
-	} else {
-		replacement = fmt.Sprintf("  extends: [\n%s\n  ],", strings.Join(extendsLines, ",\n"))
+	replacement := "  extends: []"
+	if len(extendsLines) > 0 {
+		replacement = fmt.Sprintf("  extends: [\n%s\n  ]", strings.Join(extendsLines, ",\n"))
 	}
 
-	pattern := regexp.MustCompile(`(?s)extends\s*:\s*\[.*?\]`)
+	pattern := regexp.MustCompile(`(?s)extends\s*:\s*\[.*?\]\s*,?`)
 	if pattern.Match(data) {
-		data = pattern.ReplaceAll(data, []byte(replacement))
+		data = pattern.ReplaceAllFunc(data, func(match []byte) []byte {
+			hasComma := strings.HasSuffix(strings.TrimSpace(string(match)), ",")
+			if hasComma {
+				return []byte(replacement + ",")
+			}
+			return []byte(replacement)
+		})
 	} else {
-		// attempt to insert after defineNuxtConfig opening brace
 		insertPattern := regexp.MustCompile(`defineNuxtConfig\(\{\s*`)
 		loc := insertPattern.FindIndex(data)
 		if loc == nil {
 			return fmt.Errorf("unable to locate extends block or insertion point in nuxt.config.ts")
 		}
 		insertPos := loc[1]
+		rest := strings.TrimSpace(string(data[insertPos:]))
+		needsComma := rest != "" && !strings.HasPrefix(rest, "}")
+
+		line := "\n" + replacement
+		if needsComma {
+			line += ","
+		}
+		line += "\n"
+
 		newContent := append([]byte{}, data[:insertPos]...)
-		newContent = append(newContent, []byte("\n"+replacement+"\n")...)
+		newContent = append(newContent, []byte(line)...)
 		newContent = append(newContent, data[insertPos:]...)
 		data = newContent
 	}
