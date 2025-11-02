@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -49,6 +50,10 @@ func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerB
 	}
 
 	if err := gitutil.Clone(ctx, repo.URL, branch, layersDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
+		return err
+	}
+
+	if err := reinitializeGitRepo(ctx, layersDir); err != nil {
 		return err
 	}
 
@@ -124,7 +129,11 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 		branch = overrideBranch
 	}
 
-    if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
+	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
+		return err
+	}
+
+	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
 		return err
 	}
 
@@ -171,6 +180,10 @@ func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, o
 	}
 
 	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
+		return err
+	}
+
+	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
 		return err
 	}
 
@@ -472,4 +485,22 @@ func resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("unable to determine working directory: %w", err)
 	}
 	return filepath.Clean(filepath.Join(cwd, path)), nil
+}
+
+func reinitializeGitRepo(ctx context.Context, targetDir string) error {
+	gitDir := filepath.Join(targetDir, ".git")
+	if err := os.RemoveAll(gitDir); err != nil {
+		return fmt.Errorf("failed to remove git history in %s: %w", targetDir, err)
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "init")
+	cmd.Dir = targetDir
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to reinitialize git repository in %s: %w", targetDir, err)
+	}
+
+	return nil
 }

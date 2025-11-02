@@ -261,3 +261,12 @@ Follow these steps to cut and publish a new GitHub release (`kangu/CouchFusion`)
 6. **Communicate**
    - Announce the release via your team channel.
    - Update any dependent documentation or references if paths or features changed.
+
+## 🔗 Related Repositories
+
+This CLI depends on the following projects:
+
+- [layers](https://github.com/kangu/CouchFusion-BaseLayers) — provides core functionality and shared logic.
+- [starter-app](https://github.com/kangu/CouchFusion-StarterApp) — starter boilerplate app.
+
+Together, these form the **CouchFusion toolchain**.
