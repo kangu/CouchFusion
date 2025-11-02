@@ -21,9 +21,25 @@ modules:
   auth:
     description: Authentication middleware and helpers
     extends: "@layers/auth"
+  content:
+    description: Content management utilities
+    extends: "@layers/content"
+  database:
+    description: Raw database utilities
+    extends: "@layers/database"
+  imagekit:
+    description: ImageKit utilities for managing images
+    extends: "@layers/imagekit"
+  lightning:
+    description: Support for generating lightning network invoices
+    extends: "@layers/lightning"
+  orders:
+    description: Support for managing products and orders
+    extends: "@layers/orders"
 workspace:
   defaultRoot: "."
 prompts:
   defaultLayerSelection:
     - analytics
     - auth
+    - content
