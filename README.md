@@ -5,7 +5,7 @@
 CouchFusion is the opinionated developer platform that powers our Nuxt applications and shared CouchDB-backed layers. It combines a consistent monorepo structure (`/apps`, `/layers`, `/docs`), reusable feature packs, and automation that keeps every project aligned.
 
 ## Platform Overview
-- **Stack** – [Nuxt 3/4](https://nuxt.com/), TypeScript, [Bun](https://bun.sh/) + Node for local dev parity, and [CouchDB](https://couchdb.apache.org/) for persistence. ([Why not React?](./docs/specs/why-not-react.md))
+- **Stack** – [Nuxt 4](https://nuxt.com/) with [VueJS](https://vuejs.org/), TypeScript, [Bun](https://bun.sh/) + Node for local dev parity, and [CouchDB](https://couchdb.apache.org/) for persistence. ([Why not React?](./docs/specs/why-not-react.md))
 - **Workspace** – A single repository where Nuxt apps extend layers such as analytics, auth, content, and more. Each layer ships with docs and upgrade guidance.
 - **Automation** – The Go-based couchfusion CLI bootstraps workspaces, scaffolds new apps or layers, writes configuration handoff files, and seeds CouchDB credentials.
 
@@ -25,15 +25,14 @@ Deliver a batteries-included platform where any contributor can clone the repo, 
 ### Installation & Setup
 
 ### Prerequisites
-- Go 1.21+
-- CouchDB 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer from](https://couchdb.apache.org/#download) the CouchDB website for MacOS and Windows
-- `git` available in your PATH with access to the starter repositories
+- CouchDB 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer](https://couchdb.apache.org/#download) from the CouchDB website for MacOS and Windows
 - `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_node.sh) for installing both
 > With only Bun on the box you can install dependencies and run Nuxt’s CLI,
   but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
   hit 400s because the request pipeline breaks before it reaches the handler. For
   full parity we still need a real Node runtime (18/20) alongside Bun, at least until the
   Nitro/H3 team finishes their Bun support work or Bun closes the remaining gaps.
+- `git` available in your PATH with access to the starter repositories
 
 ### Quick Install
 macOS / Linux:
@@ -54,6 +53,10 @@ The installers place the binary in `~/.couchfusion/bin` (or `%USERPROFILE%\.couc
 By default, commands run with a Bubble Tea + Lip Gloss terminal interface when executed in an interactive TTY. Set `COUCHFUSION_NO_TUI=1` to disable the TUI and fall back to plain prompts.
 
 ### Build from Source
+
+#### Prerequisites
+- Go 1.21+
+
 ```bash
 # from repo root
 go build -o couchfusion ./cli-init
