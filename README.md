@@ -5,7 +5,7 @@
 CouchFusion is the opinionated developer platform that powers our Nuxt applications and shared CouchDB-backed layers. It combines a consistent monorepo structure (`/apps`, `/layers`, `/docs`), reusable feature packs, and automation that keeps every project aligned.
 
 ## Platform Overview
-- **Stack** – [Nuxt 3/4](https://nuxt.com/), TypeScript, [Bun](https://bun.sh/) + Node for local dev parity, and [CouchDB](https://couchdb.apache.org/) for persistence.
+- **Stack** – [Nuxt 3/4](https://nuxt.com/), TypeScript, [Bun](https://bun.sh/) + Node for local dev parity, and [CouchDB](https://couchdb.apache.org/) for persistence. ([Why not React?](./docs/specs/why-not-react.md))
 - **Workspace** – A single repository where Nuxt apps extend layers such as analytics, auth, content, and more. Each layer ships with docs and upgrade guidance.
 - **Automation** – The Go-based couchfusion CLI bootstraps workspaces, scaffolds new apps or layers, writes configuration handoff files, and seeds CouchDB credentials.
 
