@@ -3,6 +3,8 @@ echo "Installing Bun..."
 
 curl -fsSL https://bun.sh/install | bash
 source ~/.bashrc
+EXPORT BUN_INSTALL="$HOME/.bun"
+EXPORT PATH="$BUN_INSTALL/bin:$PATH"
 
 echo "✅ Bun is ready."
 

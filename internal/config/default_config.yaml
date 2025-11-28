@@ -1,18 +1,18 @@
 repos:
   init:
-    url: git@github.com:kangu/CouchFusion-BaseLayers.git
+    url: https://github.com/kangu/CouchFusion-BaseLayers.git
     branch: main
-    protocol: ssh
-    authPrompt: true
+    protocol: https
+    authPrompt: false
   create_app:
-    url: git@github.com:kangu/CouchFusion-StarterApp.git
+    url: https://github.com/kangu/CouchFusion-StarterApp.git
     branch: main
-    protocol: ssh
-    authPrompt: true
+    protocol: https
+    authPrompt: false
   create_layer:
-    url: git@github.com:example/nuxt-layer-starter.git
+    url: https://github.com/kangu/CouchFusion-StarterLayer.git
     branch: main
-    protocol: ssh
+    protocol: https
     authPrompt: false
 modules:
   analytics:
