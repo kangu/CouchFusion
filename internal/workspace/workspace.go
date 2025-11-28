@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -134,6 +135,10 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 	}
 
 	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
+		return err
+	}
+
+	if err := updateLayerDependencies(targetDir, modules); err != nil {
 		return err
 	}
 
@@ -392,6 +397,60 @@ func EnsureCurrentWorkspace() error {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
 	return checkInitialized(root)
+}
+
+func updateLayerDependencies(targetDir string, modules []string) error {
+	if len(modules) == 0 {
+		return nil
+	}
+
+	pkgPath := filepath.Join(targetDir, "package.json")
+
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return fmt.Errorf("failed to read package.json: %w", err)
+	}
+
+	pkg := map[string]any{}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return fmt.Errorf("failed to parse package.json: %w", err)
+	}
+
+	deps := map[string]any{}
+	if existing, ok := pkg["dependencies"]; ok {
+		if existingMap, ok := existing.(map[string]any); ok {
+			deps = existingMap
+		} else {
+			return fmt.Errorf("package.json dependencies must be an object")
+		}
+	}
+
+	seen := map[string]struct{}{}
+	for _, module := range modules {
+		if _, ok := seen[module]; ok {
+			continue
+		}
+		seen[module] = struct{}{}
+
+		depName := fmt.Sprintf("@my/%s", module)
+		deps[depName] = fmt.Sprintf("link:../../layers/%s", module)
+	}
+
+	pkg["dependencies"] = deps
+
+	updated, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal package.json: %w", err)
+	}
+	if !bytes.HasSuffix(updated, []byte("\n")) {
+		updated = append(updated, '\n')
+	}
+
+	if err := os.WriteFile(pkgPath, updated, 0o644); err != nil {
+		return fmt.Errorf("failed to write package.json: %w", err)
+	}
+
+	return nil
 }
 
 func updateNuxtExtends(targetDir string, modules []string) error {
