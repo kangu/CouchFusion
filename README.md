@@ -24,9 +24,20 @@ Deliver a batteries-included platform where any contributor can clone the repo, 
 
 ### Installation & Setup
 
+### CouchDB
+
+This amazing open source project is a rather unknown gem to most people and companies in the industry.
+It is rock solid, runs on any platform, great performance and network-native will a full HTTP API which exposes
+JSON data.
+
+It's a perfect match for a generic website CMS/builder as it can integrate tightly with any kind of data thrown at it.
+
 ### Prerequisites
-- CouchDB 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer](https://couchdb.apache.org/#download) from the CouchDB website for MacOS and Windows
-- `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_node.sh) for installing both
+- `CouchDB` 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer](https://couchdb.apache.org/#download) from the CouchDB website for MacOS and Windows
+  - [Debian / Unbutu](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) installation script
+  - [OSX installation]() script (through Homebrew)
+  - [Windows MSI official installer](https://couchdb.apache.org/#download)
+- `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_bun_node.sh) for installing both
 > With only Bun on the box you can install dependencies and run Nuxt’s CLI,
   but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
   hit 400s because the request pipeline breaks before it reaches the handler. For
