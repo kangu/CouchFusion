@@ -10,7 +10,7 @@ Check if "bun" is installed and available in the system path. Show a warning mes
 Check if couchdb is running on localhost:5984. Show a warning message if not.
 
 0. config file
-- holds the git repositories for "create_app", "create_layer", "init", with any optional authentication
+- holds the git repositories for "new", "create_layer", "init", with any optional authentication
   parameters needed for "git clone"
 
 1. "init"
@@ -18,7 +18,7 @@ Check if couchdb is running on localhost:5984. Show a warning message if not.
 Creates the folder structure with "apps" and "layers" folders. The code from "layers" is cloned from a git
 repository specified in a config file.
 
-2. "create_app"
+2. "new"
 - Ask for app name
 - Ask for which modules to include
   - Choose none/one/multiple none from a predefined list (matching the current layers setup)

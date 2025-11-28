@@ -12,4 +12,4 @@ Implementation Summary: Switched the embedded default config to use HTTPS GitHub
 - Maintains the same branches and repository targets; only the transport and prompt behaviour changed.
 
 ## Implementation Examples
-- `cli-init/internal/config/default_config.yaml` now points to `https://github.com/kangu/CouchFusion-BaseLayers.git` with `protocol: https` and `authPrompt: false` (similarly for create_app and create_layer).
+- `cli-init/internal/config/default_config.yaml` now points to `https://github.com/kangu/CouchFusion-BaseLayers.git` with `protocol: https` and `authPrompt: false` (similarly for new and create_layer).

@@ -1,4 +1,4 @@
-On the create_app workflow, at the end after asking for couchdb admin username and
+On the new workflow, at the end after asking for couchdb admin username and
   password, use those credentials for create a user document in the _users database with
   those exact username and password values. Check to see if it exists already and echo
   that it does, otherwise create the document and echo that it was created.

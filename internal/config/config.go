@@ -78,6 +78,8 @@ func Load(path string) (*Config, bool, error) {
 		}
 	}
 
+	cfg.normalizeRepoKeys()
+
 	if err := cfg.validate(); err != nil {
 		return nil, false, err
 	}
@@ -113,7 +115,7 @@ func (c *Config) validate() error {
 		return errors.New("config missing repos definitions")
 	}
 
-	required := []string{"init", "create_app", "create_layer"}
+	required := []string{"init", "new", "create_layer"}
 	for _, key := range required {
 		repo, ok := c.Repos[key]
 		if !ok {
@@ -131,6 +133,16 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+func (c *Config) normalizeRepoKeys() {
+	if _, ok := c.Repos["new"]; ok {
+		return
+	}
+
+	if legacy, ok := c.Repos["create_app"]; ok {
+		c.Repos["new"] = legacy
+	}
 }
 
 // ResolveExtends returns the extends string for a module, defaulting to @layers/<name>.

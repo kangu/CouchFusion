@@ -86,7 +86,7 @@ repos:
     branch: main
     protocol: ssh
     authPrompt: false
-  create_app:
+  new:
     url: https://github.com/your-org/nuxt-app-starter.git
     branch: stable
     protocol: https
@@ -158,11 +158,11 @@ Example output:
 [INFO] Initialization complete.
 ```
 
-### `couchfusion create_app`
+### `couchfusion new`
 Scaffolds a new Nuxt app inside `/apps/<app-name>` and records module selections.
 
 ```bash
-couchfusion create_app \
+couchfusion new \
   --name feedback-tool \
   --modules analytics,auth,content \
   --branch preview \

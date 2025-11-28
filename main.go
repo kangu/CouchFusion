@@ -15,7 +15,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
 
-const version = "0.4.1"
+const version = "0.4.2"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -31,8 +31,8 @@ func main() {
 		return
 	case "init":
 		runInit(os.Args[2:])
-	case "create_app":
-		runCreateApp(os.Args[2:])
+	case "new":
+		runNew(os.Args[2:])
 	case "create_layer":
 		runCreateLayer(os.Args[2:])
 	default:
@@ -46,7 +46,7 @@ func printUsage() {
 	fmt.Println("couchfusion " + version)
 	fmt.Println("Usage:")
 	fmt.Println("  couchfusion init [--config path] [--path dir] [--layers-branch name] [--force]")
-	fmt.Println("  couchfusion create_app [--config path] [--name app] [--modules m1,m2] [--branch name] [--force]")
+	fmt.Println("  couchfusion new [--config path] [--name app] [--modules m1,m2] [--branch name] [--force]")
 	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force]")
 }
 
@@ -92,8 +92,8 @@ func runInit(args []string) {
 	logging.Infof("Initialization complete.")
 }
 
-func runCreateApp(args []string) {
-	fs := flag.NewFlagSet("create_app", flag.ExitOnError)
+func runNew(args []string) {
+	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to config file")
 	name := fs.String("name", "", "Name of the new app")
 	modules := fs.String("modules", "", "Comma-separated module list")
@@ -124,13 +124,13 @@ func runCreateApp(args []string) {
 	}
 
 	if workspace.ShouldUseTUI() {
-		appName, selectedModules, err := workspace.RunCreateAppTUI(ctx, cfg, *name, *modules, *branch, *force)
+		appName, selectedModules, err := workspace.RunNewTUI(ctx, cfg, *name, *modules, *branch, *force)
 		if err != nil {
 			if errors.Is(err, workspace.ErrAborted) {
-				logging.Warnf("create_app cancelled by user")
+				logging.Warnf("new cancelled by user")
 				return
 			}
-			logging.Fatalf("create_app failed: %v", err)
+			logging.Fatalf("new failed: %v", err)
 		}
 
 		logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))
@@ -142,8 +142,8 @@ func runCreateApp(args []string) {
 		logging.Fatalf("input error: %v", err)
 	}
 
-	if err := workspace.RunCreateApp(ctx, cfg, appName, selectedModules, *branch, *force); err != nil {
-		logging.Fatalf("create_app failed: %v", err)
+	if err := workspace.RunNew(ctx, cfg, appName, selectedModules, *branch, *force); err != nil {
+		logging.Fatalf("new failed: %v", err)
 	}
 
 	logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))

@@ -107,8 +107,8 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 	return name, modules, nil
 }
 
-// RunCreateApp scaffolds a new application directory and clones starter repo.
-func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
+// RunNew scaffolds a new application directory and clones starter repo.
+func RunNew(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
 	root, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
@@ -124,7 +124,7 @@ func RunCreateApp(ctx context.Context, cfg *config.Config, appName string, modul
 		return err
 	}
 
-	repo := cfg.Repos["create_app"]
+	repo := cfg.Repos["new"]
 	branch := repo.Branch
 	if strings.TrimSpace(overrideBranch) != "" {
 		branch = overrideBranch

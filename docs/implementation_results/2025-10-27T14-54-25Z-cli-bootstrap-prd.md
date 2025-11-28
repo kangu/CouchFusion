@@ -11,5 +11,5 @@ Expanded the initial CLI draft into a detailed PRD covering objectives, user flo
 - Clarified how the CLI engages with existing `/apps` and `/layers` structures and prerequisite checks for bun and CouchDB.
 
 ## Implementation Examples
-- `cli-init/docs/specs/cli_bootstrap_prd.md`: Refer to sections 8–9 for command definitions and step-by-step flows that developers can follow when running `init`, `create_app`, or `create_layer`.
+- `cli-init/docs/specs/cli_bootstrap_prd.md`: Refer to sections 8–9 for command definitions and step-by-step flows that developers can follow when running `init`, `new`, or `create_layer`.
 - The testing strategy in section 13 outlines the minimal smoke script teams can adapt to validate new CLI releases.

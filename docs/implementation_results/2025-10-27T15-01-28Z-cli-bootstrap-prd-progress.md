@@ -12,4 +12,4 @@ Added progress tracking markers and stakeholder decision resolutions to the CLI 
 
 ## Implementation Examples
 - `cli-init/docs/specs/cli_bootstrap_prd.md:1` now shows `[Done]` progress markers for couchfusion that can be updated as delivery milestones evolve.
-- Section 9 outlines how `create_app` writes `docs/module_setup.json`, giving developers explicit Nuxt `extends` entries to apply.
+- Section 9 outlines how `new` writes `docs/module_setup.json`, giving developers explicit Nuxt `extends` entries to apply.

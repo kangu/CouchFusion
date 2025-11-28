@@ -9,7 +9,7 @@ Enter HTTPS username: radu
 Enter HTTPS password/token: 
 Cloning into '/home/parallels/Sites/apps/testing'...
 fatal: Remote branch stable not found in upstream origin
-[ERROR] 2025/10/28 19:46:26 0.1.0 | create_app failed: git clone failed: exit status 128
+[ERROR] 2025/10/28 19:46:26 0.1.0 | new failed: git clone failed: exit status 128
  It seems the git clone failed. The git repository for sure is there, output the remote in the console for debugging before clone. Username and password put in are correct credentials for a forjego instance with basic authentication.
 
 ## Implementation Summary

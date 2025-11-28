@@ -17,7 +17,7 @@
 ### Goals
 - Detect whether the current working directory is already initialized (contains `/apps` and `/layers`).
 - Provide an `init` command that prepares the workspace directory and clones the baseline layers repo from configured git sources.
-- Provide a `create_app` command that scaffolds an app folder and clones the configured starter repo, optionally linking selectable modules mapped to layers with clear follow-up instructions.
+- Provide a `new` command that scaffolds an app folder and clones the configured starter repo, optionally linking selectable modules mapped to layers with clear follow-up instructions.
 - Provide a `create_layer` command that scaffolds new layer directories by cloning pre-defined starter templates.
 - Manage configuration via a local config file that stores git source information and optional credentials.
 - Validate presence of `bun` executable and CouchDB service (`localhost:5984`) at startup with actionable warnings.
@@ -36,7 +36,7 @@
 - Time to first environment setup reduced to under 5 minutes.
 - Error rate for missing prerequisites drops due to visible warnings.
 - Developers report consistent directory layout across new projects (qualitative feedback).
-- Automated smoke script can execute `init` + `create_app` on a clean folder without manual intervention.
+- Automated smoke script can execute `init` + `new` on a clean folder without manual intervention.
 
 ## 5. Assumptions & Constraints
 > Progress: [Done] Listed operating expectations and environmental constraints.
@@ -68,7 +68,7 @@
       branch: main
       protocol: ssh # ssh or https
       authPrompt: false
-    create_app:
+    new:
       url: https://github.com/org/app-starter.git
       branch: main
       protocol: https
@@ -96,7 +96,7 @@
 | Command | Description | Key Flags | Idempotency Handling |
 |---------|-------------|-----------|----------------------|
 | `couchfusion init` | Prepare workspace with `/apps` and `/layers`, clone base layers repo. | `--config`, `--force`, `--layers-branch`. | Warn if directories exist; allow `--force` to re-clone into empty dirs. |
-| `couchfusion create_app` | Create new app folder, clone starter repo, capture module selection. | `--name`, `--modules`, `--branch`. | Prevent overwrite if app folder exists; provide `--force` to clear empty dir. |
+| `couchfusion new` | Create new app folder, clone starter repo, capture module selection. | `--name`, `--modules`, `--branch`. | Prevent overwrite if app folder exists; provide `--force` to clear empty dir. |
 | `couchfusion create_layer` | Create new layer folder and clone layer starter template. | `--name`, `--branch`. | Same as app: guard against existing directories. |
 
 ## 9. Detailed User Flows
@@ -113,9 +113,9 @@
 2. If already initialized, prompt user to confirm continuing; skip clone if repos exist.
 3. Create directories: `/apps`, `/layers`.
 4. Clone `layers_base_repo` into `/layers` (support branch selection from config or CLI flag).
-5. Output summary of created resources and next steps (e.g., run `create_app`).
+5. Output summary of created resources and next steps (e.g., run `new`).
 
-### `create_app`
+### `new`
 1. Ensure `init` already ran (validate directories, otherwise prompt to run `init`).
 2. Prompt for app name if not provided via flag; sanitize to filesystem-safe slug.
 3. Present module selection list sourced from config `modules` (multi-select). Default selections drawn from config preferences.
@@ -157,8 +157,8 @@
 ## 13. Testing Strategy
 > Progress: [Done] Outlined automated and manual verification pathways.
 - Unit tests for config parsing, command flag handling, path validation.
-- Integration tests (mocked git + filesystem) to cover `init`, `create_app`, `create_layer` flows.
-- Smoke test script executed in CI to run `init` then `create_app --name test-app --modules analytics,auth` inside temp directory, verifying directories, instruction file, and marker files.
+- Integration tests (mocked git + filesystem) to cover `init`, `new`, `create_layer` flows.
+- Smoke test script executed in CI to run `init` then `new --name test-app --modules analytics,auth` inside temp directory, verifying directories, instruction file, and marker files.
 - Manual QA checklist: verify warnings appear when `bun`/CouchDB absent, ensure re-running commands is safe, ensure HTTPS prompts appear when configured.
 
 ## 14. Release & Distribution

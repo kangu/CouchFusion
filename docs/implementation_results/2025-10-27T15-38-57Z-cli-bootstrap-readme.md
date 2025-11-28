@@ -7,7 +7,7 @@ Update the main README.me from /cli-init with the relevant information needed to
 Added a comprehensive README covering installation, configuration, and command usage examples for the couchfusion bootstrap tool.
 
 ## Documentation Overview
-- Authored `cli-init/README.md` outlining prerequisites, build steps, configuration schema, and detailed command usage examples for `init`, `create_app`, and `create_layer`.
+- Authored `cli-init/README.md` outlining prerequisites, build steps, configuration schema, and detailed command usage examples for `init`, `new`, and `create_layer`.
 - Included sample YAML configuration, HTTPS credential guidance, and sample `docs/module_setup.json` output so teams understand manual Nuxt wiring steps.
 
 ## Implementation Examples

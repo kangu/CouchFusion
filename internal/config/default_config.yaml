@@ -4,7 +4,7 @@ repos:
     branch: main
     protocol: https
     authPrompt: false
-  create_app:
+  new:
     url: https://github.com/kangu/CouchFusion-StarterApp.git
     branch: main
     protocol: https

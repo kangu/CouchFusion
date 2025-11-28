@@ -20,10 +20,10 @@ import (
 
 var ErrAborted = errors.New("operation cancelled by user")
 
-type createAppStep int
+type newAppStep int
 
 const (
-	stepName createAppStep = iota
+	stepName newAppStep = iota
 	stepModules
 	stepAuth
 	stepSummary
@@ -32,11 +32,11 @@ const (
 	stepError
 )
 
-type createAppResultMsg struct {
+type newAppResultMsg struct {
 	err error
 }
 
-type createAppModel struct {
+type newAppModel struct {
 	ctx    context.Context
 	cfg    *config.Config
 	branch string
@@ -44,14 +44,14 @@ type createAppModel struct {
 
 	logs *ui.LogBuffer
 
-	step createAppStep
+	step newAppStep
 
-	nameInput  textinput.Model
-	nameError  string
-	appName    string
-	moduleView moduleSelectModel
-	modules    []string
-	defaults   []string
+	nameInput     textinput.Model
+	nameError     string
+	appName       string
+	moduleView    moduleSelectModel
+	modules       []string
+	defaults      []string
 	authUserInput textinput.Model
 	authPassInput textinput.Model
 	authField     int
@@ -67,7 +67,7 @@ type createAppModel struct {
 	done    bool
 }
 
-func newCreateAppModel(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer) *createAppModel {
+func newAppModelWithDefaults(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer) *newAppModel {
 	defaults := cfg.DefaultModuleSelection()
 	modulesList := availableModules(cfg)
 
@@ -104,18 +104,18 @@ func newCreateAppModel(ctx context.Context, cfg *config.Config, nameHint string,
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(ui.PrimaryLight)
 
-	model := &createAppModel{
-		ctx:        ctx,
-		cfg:        cfg,
-		branch:     branch,
-		force:      force,
-		logs:       logs,
-		nameInput:  nameInput,
-		moduleView: newModuleSelectModel(modulesList, initialModules),
-		defaults:   defaults,
+	model := &newAppModel{
+		ctx:           ctx,
+		cfg:           cfg,
+		branch:        branch,
+		force:         force,
+		logs:          logs,
+		nameInput:     nameInput,
+		moduleView:    newModuleSelectModel(modulesList, initialModules),
+		defaults:      defaults,
 		authUserInput: authUser,
 		authPassInput: authPass,
-		spinner:    spin,
+		spinner:       spin,
 	}
 
 	if sanitizedName != "" {
@@ -128,14 +128,14 @@ func newCreateAppModel(ctx context.Context, cfg *config.Config, nameHint string,
 	return model
 }
 
-func (m *createAppModel) Init() tea.Cmd {
+func (m *newAppModel) Init() tea.Cmd {
 	if m.step == stepRunning {
 		return tea.Batch(m.spinner.Tick, m.runCreateCmd())
 	}
 	return nil
 }
 
-func (m *createAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *newAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch m.step {
@@ -163,10 +163,10 @@ func (m *createAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
-	case createAppResultMsg:
+	case newAppResultMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.logs.Errorf("Create app failed: %v", msg.err)
+			m.logs.Errorf("App creation failed: %v", msg.err)
 			m.step = stepError
 			return m, nil
 		}
@@ -178,7 +178,7 @@ func (m *createAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *createAppModel) updateNameStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *newAppModel) updateNameStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.aborted = true
@@ -200,7 +200,7 @@ func (m *createAppModel) updateNameStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *createAppModel) updateModuleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *newAppModel) updateModuleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.aborted = true
@@ -226,7 +226,7 @@ func (m *createAppModel) updateModuleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *createAppModel) updateAuthStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *newAppModel) updateAuthStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.aborted = true
@@ -274,7 +274,7 @@ func (m *createAppModel) updateAuthStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *createAppModel) updateSummaryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *newAppModel) updateSummaryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.aborted = true
@@ -296,7 +296,7 @@ func (m *createAppModel) updateSummaryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-func (m *createAppModel) runCreateCmd() tea.Cmd {
+func (m *newAppModel) runCreateCmd() tea.Cmd {
 	name := m.appName
 	modules := append([]string{}, m.modules...)
 	branch := m.branch
@@ -324,17 +324,17 @@ func (m *createAppModel) runCreateCmd() tea.Cmd {
 
 		logWriter := logs.Writer(ui.Info)
 		logs.Infof("Cloning starter repository...")
-		err := RunCreateApp(cmdCtx, cfg, name, modules, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
+		err := RunNew(cmdCtx, cfg, name, modules, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
 			logs.Infof(format, args...)
 		}))
 		if err != nil {
-			return createAppResultMsg{err: err}
+			return newAppResultMsg{err: err}
 		}
-		return createAppResultMsg{err: nil}
+		return newAppResultMsg{err: nil}
 	}
 }
 
-func (m *createAppModel) enterAuthStep() {
+func (m *newAppModel) enterAuthStep() {
 	if m.authUsername != "" {
 		m.authUserInput.SetValue(m.authUsername)
 	} else {
@@ -351,7 +351,7 @@ func (m *createAppModel) enterAuthStep() {
 	m.step = stepAuth
 }
 
-func (m *createAppModel) focusAuthField() {
+func (m *newAppModel) focusAuthField() {
 	m.authUserInput.Blur()
 	m.authPassInput.Blur()
 	if m.authField == 0 {
@@ -361,7 +361,7 @@ func (m *createAppModel) focusAuthField() {
 	}
 }
 
-func (m *createAppModel) View() string {
+func (m *newAppModel) View() string {
 	switch m.step {
 	case stepName:
 		return m.viewNameStep()
@@ -382,7 +382,7 @@ func (m *createAppModel) View() string {
 	}
 }
 
-func (m *createAppModel) viewNameStep() string {
+func (m *newAppModel) viewNameStep() string {
 	errorLine := ""
 	if m.nameError != "" {
 		errorLine = ui.LogError.Render(m.nameError)
@@ -400,7 +400,7 @@ func (m *createAppModel) viewNameStep() string {
 	return ui.Content.Render(content)
 }
 
-func (m *createAppModel) viewModuleStep() string {
+func (m *newAppModel) viewModuleStep() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		ui.Title.Render("Select layers"),
@@ -413,7 +413,7 @@ func (m *createAppModel) viewModuleStep() string {
 	return ui.Content.Render(content)
 }
 
-func (m *createAppModel) viewAuthStep() string {
+func (m *newAppModel) viewAuthStep() string {
 	lines := []string{
 		ui.Title.Render("CouchDB admin credentials"),
 		ui.Subtitle.Render("These values seed COUCHDB_ADMIN_AUTH and COUCHDB_COOKIE_SECRET."),
@@ -427,7 +427,7 @@ func (m *createAppModel) viewAuthStep() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m *createAppModel) viewSummaryStep() string {
+func (m *newAppModel) viewSummaryStep() string {
 	modList := m.modules
 	if len(modList) == 0 {
 		modList = m.defaults
@@ -456,7 +456,7 @@ func (m *createAppModel) viewSummaryStep() string {
 	return content
 }
 
-func (m *createAppModel) viewRunningStep() string {
+func (m *newAppModel) viewRunningStep() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		ui.Title.Render("Scaffolding app"),
@@ -467,7 +467,7 @@ func (m *createAppModel) viewRunningStep() string {
 	return content
 }
 
-func (m *createAppModel) viewDoneStep() string {
+func (m *newAppModel) viewDoneStep() string {
 	modList := m.modules
 	if len(modList) == 0 {
 		modList = m.defaults
@@ -484,7 +484,7 @@ func (m *createAppModel) viewDoneStep() string {
 	return content
 }
 
-func (m *createAppModel) viewErrorStep() string {
+func (m *newAppModel) viewErrorStep() string {
 	msg := ui.LogError.Render(fmt.Sprintf("Error: %v", m.err))
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -504,7 +504,7 @@ func branchLabel(branch string) string {
 	return branch
 }
 
-func (m *createAppModel) Hints() []string {
+func (m *newAppModel) Hints() []string {
 	switch m.step {
 	case stepName:
 		return []string{"Type to edit name", "Enter to continue", "Ctrl+C to cancel"}
@@ -525,7 +525,7 @@ func (m *createAppModel) Hints() []string {
 	}
 }
 
-func (m *createAppModel) Result() (string, []string, error) {
+func (m *newAppModel) Result() (string, []string, error) {
 	if m.aborted && m.err == nil {
 		return "", nil, ErrAborted
 	}
@@ -539,12 +539,12 @@ func (m *createAppModel) Result() (string, []string, error) {
 	return m.appName, mods, nil
 }
 
-// RunCreateAppTUI runs the interactive Bubble Tea experience for scaffolding a new app.
-func RunCreateAppTUI(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool) (string, []string, error) {
+// RunNewTUI runs the interactive Bubble Tea experience for scaffolding a new app.
+func RunNewTUI(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool) (string, []string, error) {
 	logBuffer := ui.NewLogBuffer(128)
 
 	initialModules := parseModules(modulesHint)
-	model := newCreateAppModel(ctx, cfg, nameHint, initialModules, branch, force, logBuffer)
+	model := newAppModelWithDefaults(ctx, cfg, nameHint, initialModules, branch, force, logBuffer)
 
 	root := ui.NewRootModel("Create Nuxt App", "Scaffold a new Nuxt application with CouchFusion layers.", model, logBuffer, nil)
 	finalModel, err := ui.Run(root, tea.WithAltScreen())
@@ -557,7 +557,7 @@ func RunCreateAppTUI(ctx context.Context, cfg *config.Config, nameHint string, m
 		return "", nil, errors.New("unexpected root model result")
 	}
 
-	child, ok := rootResult.Child.(*createAppModel)
+	child, ok := rootResult.Child.(*newAppModel)
 	if !ok {
 		return "", nil, errors.New("unexpected child model result")
 	}
