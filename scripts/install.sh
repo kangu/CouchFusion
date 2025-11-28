@@ -70,12 +70,9 @@ main() {
   log "Binary installed to ${binary_path}"
 
   if ! command -v "${BINARY_NAME}" >/dev/null 2>&1; then
-    shell_rc="${HOME}/.bashrc"
-    if [[ -n "${ZSH_VERSION:-}" ]]; then
-      shell_rc="${HOME}/.zshrc"
-    elif [[ -n "${FISH_VERSION:-}" ]]; then
-      shell_rc="${HOME}/.config/fish/config.fish"
-    fi
+    shell_rc="$(resolve_shell_rc "${os}")"
+
+    mkdir -p "$(dirname "${shell_rc}")"
 
     if [[ "${shell_rc}" == *"config.fish" ]]; then
       if ! grep -Fq "${INSTALL_DIR}" "${shell_rc}" 2>/dev/null; then
@@ -91,6 +88,36 @@ main() {
   fi
 
   log "Done! Restart your shell or source your profile to use ${BINARY_NAME}."
+}
+
+resolve_shell_rc() {
+  local os="$1"
+  local shell_name
+
+  shell_name="$(basename "${SHELL:-}")"
+
+  case "${shell_name}" in
+    zsh)
+      if [[ "${os}" == "darwin" ]]; then
+        echo "${HOME}/.zprofile"
+      else
+        echo "${HOME}/.zshrc"
+      fi
+      ;;
+    bash)
+      if [[ "${os}" == "darwin" ]]; then
+        echo "${HOME}/.bash_profile"
+      else
+        echo "${HOME}/.bashrc"
+      fi
+      ;;
+    fish)
+      echo "${HOME}/.config/fish/config.fish"
+      ;;
+    *)
+      echo "${HOME}/.profile"
+      ;;
+  esac
 }
 
 main "$@"
