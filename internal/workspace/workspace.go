@@ -54,10 +54,6 @@ func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerB
 		return err
 	}
 
-	if err := reinitializeGitRepo(ctx, layersDir); err != nil {
-		return err
-	}
-
 	return nil
 }
 
