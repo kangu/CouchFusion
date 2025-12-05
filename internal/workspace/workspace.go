@@ -429,7 +429,7 @@ func updateLayerDependencies(targetDir string, modules []string) error {
 		seen[module] = struct{}{}
 
 		depName := fmt.Sprintf("@my/%s", module)
-		deps[depName] = fmt.Sprintf("link:../../layers/%s", module)
+		deps[depName] = fmt.Sprintf("file:../../layers/%s", module)
 	}
 
 	pkg["dependencies"] = deps
