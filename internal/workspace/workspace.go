@@ -308,7 +308,7 @@ func writeModuleSetup(targetDir string, cfg *config.Config, modules []string) er
 		"generatedAt":     time.Now().UTC().Format(time.RFC3339),
 		"cliVersion":      version(),
 		"nextSteps": []string{
-			"Update nuxt.config.ts to include the listed extends entries.",
+			"Review nuxt.config.ts and package.json to confirm selected layer wiring.",
 			"Review layer-specific documentation under /layers/<module>/docs for additional setup.",
 		},
 	}

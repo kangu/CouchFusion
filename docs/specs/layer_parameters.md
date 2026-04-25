@@ -8,3 +8,9 @@ certain operations with them.
 - [x] Confirm both values are written to the `.env` file after configuration completes. *(2025-10-28)*
 
 The same parameter handling should be re-used when the forthcoming `add_layer` workflow is implemented.
+
+Current direction:
+
+- Keep layer-specific parameter handling centralized so both `new` and the future `add_layer` command can call the same logic.
+- Prefer flat environment values written into the app `.env` unless the target layer has moved to a CouchDB `_config` contract.
+- For future CouchDB `_config` integration, use flat key-value sections named `cf_env_[slug]`, where `[slug]` defaults to the app folder name.

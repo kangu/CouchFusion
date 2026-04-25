@@ -116,19 +116,21 @@ Key notes:
 - `protocol` can be `ssh` or `https`. When `https` and `authPrompt: true`, the CLI requests username/password (or token) interactively for `git clone` and does **not** store credentials.
 - Add additional modules under `modules` to match the layers in your ecosystem. If `extends` is omitted, it defaults to `@layers/<module>`.
 - Set `workspace.defaultRoot` if you routinely run the CLI outside the workspace root.
+- If no config file exists at `~/.couchfusion/config.yaml` and no `--config` path is provided, the CLI uses the embedded `internal/config/default_config.yaml` and prints a warning.
 
 ---
 
 ## Global Behaviour
 Every command performs the following before executing its workflow:
 1. Loads configuration (YAML or JSON).
-2. Checks whether the current directory already contains `/apps` and `/layers` (for non-`init` commands).
-3. Runs prerequisite checks:
+2. Falls back to the embedded default config when no user config is present.
+3. Checks whether the current directory already contains `/apps` and `/layers` for workspace commands that operate on existing workspaces.
+4. Runs prerequisite checks:
    - `bun --version`
    - GET `http://localhost:5984/_up`
-4. Prints warnings for any missing prerequisites but continues execution unless configuration is invalid.
+5. Prints warnings for any missing prerequisites but continues execution unless configuration or input validation fails.
 
-Use `--yes` on commands to skip interactive confirmations (planned enhancement) and `--config` to select alternate config files.
+Use `--config` to select an alternate config file. `--yes`, `--verbose`, and `--quiet` remain planned automation/logging enhancements.
 
 ---
 
@@ -159,7 +161,7 @@ Example output:
 ```
 
 ### `couchfusion new`
-Scaffolds a new Nuxt app inside `/apps/<app-name>` and records module selections.
+Scaffolds a new Nuxt app inside `/apps/<app-name>`, records module selections, and wires the selected layers into the cloned starter.
 
 ```bash
 couchfusion new \
@@ -169,10 +171,26 @@ couchfusion new \
   --force
 ```
 
-If `--name` or `--modules` are omitted, the CLI prompts for them. Module prompts list available options based on `modules` in config. The command produces two documentation files within the new app directory:
+You can also pass the app name positionally:
+
+```bash
+couchfusion new feedback-tool
+```
+
+If `--name` or `--modules` are omitted, the CLI prompts for them. In an interactive terminal, the command uses a Bubble Tea + Lip Gloss TUI with arrow-key module selection and Space toggles. Set `COUCHFUSION_NO_TUI=1` to use plain prompts.
+
+The command performs the following post-clone setup:
+
+- Reinitializes the cloned app as a fresh git repository.
+- Adds selected layer package dependencies to `package.json` as `@my/<module>: "file:../../layers/<module>"`.
+- Rewrites the top-level `extends` array in `nuxt.config.ts` to include only the selected `../../layers/<module>` entries.
+- Runs selected layer parameter handlers. Today, the `auth` layer asks for CouchDB admin credentials, writes `COUCHDB_ADMIN_AUTH` and `COUCHDB_COOKIE_SECRET` to `.env`, and ensures the matching CouchDB user document exists.
+- Writes app metadata and module setup documentation.
+
+The command produces two documentation files within the new app directory:
 
 - `couchfusion.json` – records CLI version, app name, selected modules, timestamp.
-- `docs/module_setup.json` – lists Nuxt `extends` entries and follow-up steps the developer must apply manually.
+- `docs/module_setup.json` – records selected module metadata, resolved layer entries, and post-create follow-up steps.
 
 Example `docs/module_setup.json`:
 ```json
@@ -185,14 +203,22 @@ Example `docs/module_setup.json`:
   "cliVersion": "0.1.0",
   "selectedModules": ["analytics", "auth"],
   "nextSteps": [
-    "Update nuxt.config.ts to include the listed extends entries.",
+    "Review nuxt.config.ts and package.json to confirm selected layer wiring.",
     "Review layer-specific documentation under /layers/<module>/docs for additional setup."
   ]
 }
 ```
 
+After a successful run:
+
+```bash
+cd apps/feedback-tool
+bun install
+bun run dev
+```
+
 ### `couchfusion create_layer`
-Clones a new layer starter into `/layers/<layer-name>`.
+Clones a new layer starter into `/layers/<layer-name>` and reinitializes it as a fresh git repository.
 
 ```bash
 couchfusion create_layer \
@@ -212,7 +238,7 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 
 ## Logging & Exit Codes
 - Logs follow `[LEVEL] timestamp | version message` format.
-- Use `--verbose` (future enhancement) for additional git details; by default git outputs are streamed directly from the `git clone` commands.
+- Additional `--verbose` and `--quiet` modes are planned; by default git output is streamed during clone operations.
 - Non-zero exit codes indicate fatal errors (config missing, git failure, invalid inputs). Warnings do not change the exit code.
 
 ---
@@ -231,7 +257,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 ## Development Notes
 - `go build ./...` validates the code compiles; add unit tests under `internal/...` as the project evolves.
 - Set `COUCHFUSION_VERSION` environment variable to override the embedded version string during development builds.
-- The CLI never mutates Nuxt `nuxt.config.ts`; it surfaces instructions for manual changes via `docs/module_setup.json`.
+- The CLI currently mutates cloned app files during `new`: `package.json`, `.env` for selected layer parameters, `nuxt.config.ts`, `couchfusion.json`, and `docs/module_setup.json`.
+- There are no Go test files yet. Use `GOCACHE=<repo>/.gocache go test ./...` when the default Go cache is outside the writable sandbox.
 
 For questions or enhancements, update the couchfusion PRD in `cli-init/docs/specs/cli_bootstrap_prd.md` and track changes under `cli-init/docs/implementation_results/` per project process.
 

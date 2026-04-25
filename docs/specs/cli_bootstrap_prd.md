@@ -25,11 +25,15 @@
 
 ### Non-Goals
 - Managing dependency installation beyond prerequisite checks (no automatic install of bun or CouchDB).
-- Modifying cloned repositories beyond initial clone (no automatic package updates or template customization).
 - Handling starter repository version pinning beyond branches specified in config (no tag management workflow).
-- Auto-editing Nuxt config or app code to wire modules; CLI only surfaces instructions for manual changes.
 - Handling cloud provisioned infrastructure beyond local CouchDB reachability check.
-- Providing GUI or interactive TUI beyond standard CLI prompts.
+
+### Current Direction Updates
+- The implementation now intentionally mutates cloned app files during `couchfusion new` when those edits are part of selected layer setup.
+- Selected layers are wired automatically into `package.json` and `nuxt.config.ts`; `docs/module_setup.json` remains a handoff record rather than the only wiring mechanism.
+- The interactive experience now uses Bubble Tea + Lip Gloss TUIs when stdin/stdout are terminals, with `COUCHFUSION_NO_TUI=1` as the plain-prompt fallback.
+- The CLI falls back to an embedded default config when no user config exists.
+- Cloned app and layer starter repositories are reinitialized as fresh git repositories after clone. The base layers clone used by `init` is expected to preserve its repository state unless future requirements say otherwise.
 
 ## 4. Success Metrics
 > Progress: [Done] Defined measurable outcomes for rollout validation.
@@ -121,23 +125,28 @@
 3. Present module selection list sourced from config `modules` (multi-select). Default selections drawn from config preferences.
 4. Create `/apps/<app-name>` directory.
 5. Clone `app_starter_repo` into new directory; optionally checkout provided branch/tag (branch only per config scope).
-6. Persist selection metadata in `/apps/<app-name>/couchfusion.json` (records modules picked, timestamp, CLI version).
-7. Generate manual integration guidance: output to console and write `/apps/<app-name>/docs/module_setup.json` capturing Nuxt `extends` entries for chosen modules. No automated edits to `nuxt.config.ts`.
-8. Summarize next steps, highlighting manual module wiring instructions.
+6. Reinitialize the cloned starter as a fresh git repository.
+7. Add selected layer dependencies to `package.json` using local `file:../../layers/<module>` links.
+8. Run selected layer parameter handlers. Current implementation supports `auth`, which writes CouchDB auth values to `.env` and ensures the CouchDB user document exists.
+9. Rewrite `nuxt.config.ts` so its top-level `extends` array contains only selected `../../layers/<module>` entries.
+10. Persist selection metadata in `/apps/<app-name>/couchfusion.json` (records modules picked, timestamp, CLI version).
+11. Generate handoff guidance in `/apps/<app-name>/docs/module_setup.json` capturing selected modules, resolved layer entries, and next steps.
+12. Summarize next steps: `cd apps/<app-name>`, `bun install`, and `bun run dev`.
 
 ### `create_layer`
 1. Validate workspace init.
 2. Prompt for new layer name; ensure uniqueness against existing `/layers` directories.
 3. Clone `layer_starter_repo` into `/layers/<layer-name>`.
-4. Register new layer within config modules section (optional interactive step or manual instructions) and provide reminder to update shared documentation.
+4. Reinitialize the cloned layer as a fresh git repository.
+5. Register new layer within config modules section (future automation) or provide manual instructions and a reminder to update shared documentation.
 
 ## 10. UX, Prompts & Output
 > Progress: [Done] Captured messaging style and automation flags.
-- Use clear ANSI-neutral text with progress indicators (e.g., `Creating apps directory... done`).
-- Provide `--yes` / `-y` option to skip confirmations for automation.
+- Use clear logs for non-TUI mode and Bubble Tea + Lip Gloss flows for interactive TTY sessions.
+- Keep `COUCHFUSION_NO_TUI=1` as the explicit fallback for plain prompts.
 - Provide structured warnings in yellow text equivalents (e.g., `[WARN] bun not detected`).
 - Display final success summary with next commands, module follow-up paths, and location paths.
-- Support verbose mode (`--verbose`) for detailed git commands, and quiet mode (`--quiet`) for automation logs.
+- Treat `--yes` / `-y`, `--verbose`, and `--quiet` as planned enhancements until implemented.
 - When HTTPS protocol requires credentials, prompt inline and optionally cache via system credential helper if available.
 
 ## 11. Error Handling & Edge Cases
@@ -178,8 +187,11 @@
 ## 16. Future Enhancements (Backlog)
 > Progress: [Done] Captured follow-on opportunities beyond MVP.
 - Command `config init` to bootstrap config file from interactive prompts.
-- Layer linking automation that adds required dependencies to app package files.
+- `add_layer` workflow for applying the same module wiring and parameter handling to existing apps.
+- Test coverage for config parsing, filesystem mutation helpers, package dependency merging, Nuxt config rewrites, and TUI-independent workflows.
+- Safer structured parsing for `nuxt.config.ts` if regex rewriting becomes too fragile for real-world configs.
 - Template registry management (list available starters, fetch remote metadata).
+- Automation flags such as `--yes`, `--verbose`, and `--quiet`.
 - Telemetry opt-in for usage analytics.
 - Plugins architecture for custom scaffolds.
 
