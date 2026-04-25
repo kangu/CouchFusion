@@ -70,17 +70,49 @@ func ApplyEnv(env Env) {
 }
 
 func ShellProfilePath(home, shell string) string {
+	paths := ShellProfilePaths(home, shell)
+	if len(paths) == 0 {
+		return filepath.Join(home, ".profile")
+	}
+	return paths[0]
+}
+
+func ShellProfilePaths(home, shell string) []string {
 	name := filepath.Base(shell)
 	switch name {
 	case "zsh":
-		return filepath.Join(home, ".zshrc")
+		return []string{
+			filepath.Join(home, ".zshrc"),
+			filepath.Join(home, ".zprofile"),
+		}
 	case "bash":
-		return filepath.Join(home, ".bashrc")
+		paths := []string{
+			filepath.Join(home, ".bashrc"),
+			filepath.Join(home, ".profile"),
+		}
+		for _, path := range []string{
+			filepath.Join(home, ".bash_profile"),
+			filepath.Join(home, ".bash_login"),
+		} {
+			if _, err := os.Stat(path); err == nil {
+				paths = append(paths, path)
+			}
+		}
+		return paths
 	case "fish":
-		return filepath.Join(home, ".config", "fish", "config.fish")
+		return []string{filepath.Join(home, ".config", "fish", "config.fish")}
 	default:
-		return filepath.Join(home, ".profile")
+		return []string{filepath.Join(home, ".profile")}
 	}
+}
+
+func EnsureProfileBlocks(paths []string, fish bool) error {
+	for _, path := range paths {
+		if err := EnsureProfileBlock(path, fish); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func EnsureProfileBlock(path string, fish bool) error {
@@ -114,6 +146,31 @@ func EnsureCouchFusionBinShim(home, bunBin string) (string, error) {
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return "", err
 	}
+	return ensureBunShimInDir(shimDir, bunBin, true)
+}
+
+func EnsureCurrentPathShim(pathValue, bunBin string) (string, error) {
+	target := filepath.Join(bunBin, "bun")
+	if !fileExists(target) {
+		return "", nil
+	}
+	for _, dir := range filepath.SplitList(pathValue) {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		shim, err := ensureBunShimInDir(dir, bunBin, false)
+		if err == nil && shim != "" {
+			return shim, nil
+		}
+	}
+	return "", nil
+}
+
+func ensureBunShimInDir(shimDir, bunBin string, replaceExisting bool) (string, error) {
 	target := filepath.Join(bunBin, "bun")
 	shim := filepath.Join(shimDir, "bun")
 	if _, err := os.Stat(target); err != nil {
@@ -124,6 +181,9 @@ func EnsureCouchFusionBinShim(home, bunBin string) (string, error) {
 	}
 	if existing, err := os.Readlink(shim); err == nil && existing == target {
 		return shim, nil
+	}
+	if !replaceExisting && fileExists(shim) {
+		return "", nil
 	}
 	_ = os.Remove(shim)
 	if err := os.Symlink(target, shim); err == nil {
@@ -137,6 +197,11 @@ func EnsureCouchFusionBinShim(home, bunBin string) (string, error) {
 		return "", err
 	}
 	return shim, nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func pathContains(pathValue, entry string) bool {
