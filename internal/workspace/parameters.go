@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nuxt-apps/couchfusion/internal/couchdb"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
 	"golang.org/x/term"
 )
@@ -43,6 +44,13 @@ func configureAuthLayer(ctx context.Context, targetDir string) error {
 	if creds, ok := credentialsFromContext(ctx); ok {
 		username = strings.TrimSpace(creds.Username)
 		password = strings.TrimSpace(creds.Password)
+	}
+
+	if username == "" || password == "" {
+		if storedUser, storedPassword, ok := storedCouchDBCredentials(); ok {
+			username = storedUser
+			password = storedPassword
+		}
 	}
 
 	var err error
@@ -93,9 +101,25 @@ func configureAuthLayer(ctx context.Context, targetDir string) error {
 	return nil
 }
 
+func storedCouchDBCredentials() (string, string, bool) {
+	store, err := couchdb.DefaultStore()
+	if err != nil {
+		return "", "", false
+	}
+	auth, ok, err := couchdb.LoadAdminAuth(store)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	username, password, err := couchdb.DecodeAdminAuth(auth)
+	if err != nil {
+		return "", "", false
+	}
+	return username, password, true
+}
+
 func fetchCouchDBCookieSecret(ctx context.Context, username, password string) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:5984/_node/_local/_config/chttpd_auth/secret", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, couchdb.DefaultURL+"/_node/_local/_config/chttpd_auth/secret", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to build couchdb config request: %w", err)
 	}
@@ -187,7 +211,7 @@ func promptSecret(message string) (string, error) {
 
 func ensureCouchDBAdminUser(ctx context.Context, username, password string) error {
 	userID := fmt.Sprintf("org.couchdb.user:%s", username)
-	url := fmt.Sprintf("http://localhost:5984/_users/%s", userID)
+	url := fmt.Sprintf("%s/_users/%s", couchdb.DefaultURL, userID)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
