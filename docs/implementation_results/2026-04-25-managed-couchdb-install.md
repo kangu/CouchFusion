@@ -14,6 +14,8 @@ Implemented a managed CouchDB preflight that runs before workspace commands. The
 - Updated auth-layer parameter setup to reuse `COUCHDB_ADMIN_AUTH` from the process environment or `~/.couchfusion/couchdb.env`.
 - Updated README and specs to document managed install behavior, supported platforms, local-only bind address, and the credential handoff file.
 - Updated the install success flow to print the generated admin password and wait for Enter before continuing.
+- Added the Photon UI URL to the install success output: `http://localhost:5984/photon/_design/photon/index.html`.
+- Added managed Bun setup before CouchDB preflight: missing Bun can be installed on macOS/Linux, the current process environment is refreshed, and the shell profile is updated so `bun -v` is available after setup.
 
 ## Verification
 

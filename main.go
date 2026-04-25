@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/checks"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
@@ -72,6 +73,10 @@ func runInit(args []string) {
 	}
 
 	ctx := context.Background()
+	if err := ensureBun(ctx, *yes); err != nil {
+		logging.Fatalf("bun preflight failed: %v", err)
+	}
+
 	if err := ensureCouchDB(ctx, *yes); err != nil {
 		logging.Fatalf("couchdb preflight failed: %v", err)
 	}
@@ -128,6 +133,10 @@ func runNew(args []string) {
 	}
 
 	ctx := context.Background()
+	if err := ensureBun(ctx, *yes); err != nil {
+		logging.Fatalf("bun preflight failed: %v", err)
+	}
+
 	if err := ensureCouchDB(ctx, *yes); err != nil {
 		logging.Fatalf("couchdb preflight failed: %v", err)
 	}
@@ -183,6 +192,10 @@ func runCreateLayer(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
+	if err := ensureBun(ctx, *yes); err != nil {
+		logging.Fatalf("bun preflight failed: %v", err)
+	}
+
 	if err := ensureCouchDB(ctx, *yes); err != nil {
 		logging.Fatalf("couchdb preflight failed: %v", err)
 	}
@@ -228,6 +241,31 @@ func addYesFlags(fs *flag.FlagSet) *bool {
 	return yes
 }
 
+func ensureBun(ctx context.Context, yes bool) error {
+	manager := bun.Manager{
+		Interactive: isInteractiveTerminal(),
+		AutoApprove: yes,
+		Shell:       os.Getenv("SHELL"),
+		PromptInstall: func() (bool, error) {
+			return confirm("Bun is not available in PATH. Install and configure it now?")
+		},
+	}
+	result, err := manager.Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	if result.Installed {
+		logging.Infof("Installed Bun %s and refreshed PATH with %s", result.Status.Version, result.BunBin)
+		return nil
+	}
+	versionLabel := result.Status.Version
+	if versionLabel == "" {
+		versionLabel = "unknown"
+	}
+	logging.Infof("Detected Bun %s", versionLabel)
+	return nil
+}
+
 func ensureCouchDB(ctx context.Context, yes bool) error {
 	manager := couchdb.Manager{
 		Interactive: isInteractiveTerminal(),
@@ -250,13 +288,7 @@ func ensureCouchDB(ctx context.Context, yes bool) error {
 	}
 	if result.Installed {
 		logging.Infof("Installed CouchDB %s and stored admin auth in %s", result.Status.Version, result.StorePath)
-		fmt.Println("")
-		fmt.Println("CouchDB admin credentials")
-		fmt.Println("-------------------------")
-		fmt.Printf("Username: %s\n", result.AdminUser)
-		fmt.Printf("Password: %s\n", result.AdminPassword)
-		fmt.Printf("Auth env: %s\n", result.StorePath)
-		fmt.Println("")
+		fmt.Print(formatCouchDBInstallDetails(result))
 		if err := waitForEnter("Press Enter to continue..."); err != nil {
 			return err
 		}
@@ -268,6 +300,21 @@ func ensureCouchDB(ctx context.Context, yes bool) error {
 	}
 	logging.Infof("Detected CouchDB %s at %s", versionLabel, result.Status.URL)
 	return nil
+}
+
+func formatCouchDBInstallDetails(result couchdb.Result) string {
+	return fmt.Sprintf(`
+CouchDB admin credentials
+-------------------------
+Username: %s
+Password: %s
+Auth env: %s
+
+Photon UI
+---------
+http://localhost:5984/photon/_design/photon/index.html
+
+`, result.AdminUser, result.AdminPassword, result.StorePath)
 }
 
 func confirm(message string) (bool, error) {

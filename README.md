@@ -37,7 +37,8 @@ It's a perfect match for a generic website CMS/builder as it can integrate tight
   - macOS installs through Homebrew.
   - Debian/Ubuntu installs through the Apache CouchDB apt repository.
   - Windows managed installation is not supported yet; use the [official installer](https://couchdb.apache.org/#download).
-- `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_bun_node.sh) for installing both
+- `bun` - couchfusion manages local Bun setup during command preflight on macOS and Linux. If Bun is missing from `PATH`, the CLI can install it with the official Bun installer, refresh the current process environment, and update the user shell profile so `bun -v` works after setup.
+- `node` - install Node separately for full Nuxt/Nitro dev parity.
 > With only Bun on the box you can install dependencies and run Nuxt’s CLI,
   but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
   hit 400s because the request pipeline breaks before it reaches the handler. For
@@ -125,17 +126,22 @@ Every command performs the following before executing its workflow:
 1. Loads configuration (YAML or JSON).
 2. Falls back to the embedded default config when no user config is present.
 3. Checks whether the current directory already contains `/apps` and `/layers` for workspace commands that operate on existing workspaces.
-4. Runs prerequisite checks:
-   - `bun --version`
+4. Runs the managed Bun preflight:
+   - checks `bun --version`
+   - installs Bun on macOS/Linux when missing and approved
+   - ensures Linux prerequisites `unzip`, `ca-certificates`, and `curl` are present before running Bun's installer
+   - sets `BUN_INSTALL=$HOME/.bun` and prepends `$HOME/.bun/bin` to the current process `PATH`
+   - updates the user shell profile when the Bun path block is missing
+   - creates a `~/.couchfusion/bin/bun` shim to `~/.bun/bin/bun` when possible, so shells that already have CouchFusion on PATH can run `bun -v` immediately after setup
 5. Runs the managed CouchDB preflight:
    - probes `http://127.0.0.1:5984/_up`
    - shows the detected CouchDB version when already running
    - records first-time acknowledgement in `~/.couchfusion/couchdb.env`
    - installs and starts CouchDB on macOS or Debian/Ubuntu when missing and approved
    - prints the generated admin password after installation and waits for Enter before continuing
-6. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, or CouchDB setup fails.
+6. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, Bun setup, or CouchDB setup fails.
 
-Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.
+Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve Bun/CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.
 
 Managed CouchDB setup writes `~/.couchfusion/couchdb.env` with `0600` permissions:
 
@@ -173,7 +179,7 @@ Flags:
 
 Example output:
 ```
-[WARN] bun is not available in PATH
+[INFO] Detected Bun 1.x.x
 [INFO] Creating apps directory... done
 [INFO] Cloning layers repo (branch develop)... done
 [INFO] Initialization complete.
@@ -270,7 +276,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `config file not found` | Create the YAML or pass `--config` pointing to it. |
 | `workspace not initialized` | Run `couchfusion init` from the workspace root first. |
 | `git clone failed` | Verify repository URL, credentials, and access rights. For HTTPS, ensure tokens permit repo access. |
-| `bun is not available in PATH` | Install bun or ensure it is discoverable; CLI continues but downstream tasks may fail. |
+| `bun installation requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
+| `managed Bun installation is supported on macOS and Linux only` | Install Bun manually for your OS and re-run the command. |
 | `couchdb install or acknowledgement requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
 | `managed CouchDB installation is supported on macOS and Debian/Ubuntu only` | Install CouchDB manually for your OS and re-run the command. |
 
@@ -280,6 +287,7 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 - `go build ./...` validates the code compiles; add unit tests under `internal/...` as the project evolves.
 - Set `COUCHFUSION_VERSION` environment variable to override the embedded version string during development builds.
 - The CLI currently mutates cloned app files during `new`: `package.json`, `.env` for selected layer parameters, `nuxt.config.ts`, `couchfusion.json`, and `docs/module_setup.json`.
+- Managed Bun setup lives under `internal/bun`; tests use injected probes/installers and do not invoke the live Bun installer. It refreshes current-process env, updates shell profiles, and creates a CouchFusion bin shim when possible.
 - Managed CouchDB setup lives under `internal/couchdb`; tests use injected probes/installers and do not run system package managers.
 - Use `GOCACHE=<repo>/.gocache go test ./...` when the default Go cache is outside the writable sandbox.
 
