@@ -87,10 +87,11 @@ func TestEnsureRequiresYesWhenMissingInNonInteractiveMode(t *testing.T) {
 func TestEnsureInstallsAndStoresGeneratedAdminAuth(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "couchdb.env")}
 	installer := &fakeInstaller{result: InstallResult{
-		URL:       DefaultURL,
-		AdminUser: "admin",
-		AdminAuth: "YWRtaW46Z2VuZXJhdGVk",
-		Version:   "3.4.2",
+		URL:           DefaultURL,
+		AdminUser:     "admin",
+		AdminPassword: "generated",
+		AdminAuth:     "YWRtaW46Z2VuZXJhdGVk",
+		Version:       "3.4.2",
 	}}
 	manager := Manager{
 		Store:       store,
@@ -116,5 +117,8 @@ func TestEnsureInstallsAndStoresGeneratedAdminAuth(t *testing.T) {
 	}
 	if !ok || creds.AdminAuth != "YWRtaW46Z2VuZXJhdGVk" {
 		t.Fatalf("stored creds = %+v ok=%v", creds, ok)
+	}
+	if result.AdminUser != "admin" || result.AdminPassword != "generated" {
+		t.Fatalf("install credentials = %q/%q, want admin/generated", result.AdminUser, result.AdminPassword)
 	}
 }

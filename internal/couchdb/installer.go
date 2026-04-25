@@ -109,10 +109,11 @@ func (i SystemInstaller) Install(ctx context.Context, opts InstallOptions) (Inst
 	}
 
 	return InstallResult{
-		URL:       DefaultURL,
-		AdminUser: adminUser,
-		AdminAuth: auth,
-		Version:   status.Version,
+		URL:           DefaultURL,
+		AdminUser:     adminUser,
+		AdminPassword: password,
+		AdminAuth:     auth,
+		Version:       status.Version,
 	}, nil
 }
 

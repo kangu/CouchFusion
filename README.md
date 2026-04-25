@@ -132,6 +132,7 @@ Every command performs the following before executing its workflow:
    - shows the detected CouchDB version when already running
    - records first-time acknowledgement in `~/.couchfusion/couchdb.env`
    - installs and starts CouchDB on macOS or Debian/Ubuntu when missing and approved
+   - prints the generated admin password after installation and waits for Enter before continuing
 6. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, or CouchDB setup fails.
 
 Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.

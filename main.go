@@ -250,6 +250,16 @@ func ensureCouchDB(ctx context.Context, yes bool) error {
 	}
 	if result.Installed {
 		logging.Infof("Installed CouchDB %s and stored admin auth in %s", result.Status.Version, result.StorePath)
+		fmt.Println("")
+		fmt.Println("CouchDB admin credentials")
+		fmt.Println("-------------------------")
+		fmt.Printf("Username: %s\n", result.AdminUser)
+		fmt.Printf("Password: %s\n", result.AdminPassword)
+		fmt.Printf("Auth env: %s\n", result.StorePath)
+		fmt.Println("")
+		if err := waitForEnter("Press Enter to continue..."); err != nil {
+			return err
+		}
 		return nil
 	}
 	versionLabel := result.Status.Version
@@ -277,6 +287,13 @@ func promptLine(message string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(value), nil
+}
+
+func waitForEnter(message string) error {
+	fmt.Print(message)
+	reader := bufio.NewReader(os.Stdin)
+	_, err := reader.ReadString('\n')
+	return err
 }
 
 func isInteractiveTerminal() bool {

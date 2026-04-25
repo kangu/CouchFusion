@@ -13,6 +13,7 @@ Implemented a managed CouchDB preflight that runs before workspace commands. The
 - Removed the old warning-only CouchDB check from `internal/checks`; CouchDB is now handled by the managed preflight.
 - Updated auth-layer parameter setup to reuse `COUCHDB_ADMIN_AUTH` from the process environment or `~/.couchfusion/couchdb.env`.
 - Updated README and specs to document managed install behavior, supported platforms, local-only bind address, and the credential handoff file.
+- Updated the install success flow to print the generated admin password and wait for Enter before continuing.
 
 ## Verification
 

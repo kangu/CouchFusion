@@ -20,16 +20,19 @@ type InstallOptions struct {
 }
 
 type InstallResult struct {
-	URL       string
-	AdminUser string
-	AdminAuth string
-	Version   string
+	URL           string
+	AdminUser     string
+	AdminPassword string
+	AdminAuth     string
+	Version       string
 }
 
 type Result struct {
-	Installed bool
-	Status    Status
-	StorePath string
+	Installed     bool
+	Status        Status
+	StorePath     string
+	AdminUser     string
+	AdminPassword string
 }
 
 type Manager struct {
@@ -122,7 +125,9 @@ func (m Manager) Ensure(ctx context.Context) (Result, error) {
 			URL:     installResult.URL,
 			Version: installResult.Version,
 		},
-		StorePath: store.Path,
+		StorePath:     store.Path,
+		AdminUser:     installResult.AdminUser,
+		AdminPassword: installResult.AdminPassword,
 	}, nil
 }
 
