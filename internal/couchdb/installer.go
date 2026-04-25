@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -24,14 +25,39 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	cmd.Stdin = os.Stdin
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return commandError{name: name, args: args, err: err, output: string(output)}
+	}
+	return nil
 }
 
 func (execRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	return cmd.Output()
+}
+
+type commandError struct {
+	name   string
+	args   []string
+	err    error
+	output string
+}
+
+func (e commandError) Error() string {
+	output := strings.TrimSpace(e.output)
+	if len(output) > 4000 {
+		output = output[len(output)-4000:]
+	}
+	if output == "" {
+		return fmt.Sprintf("%s %s failed: %v", e.name, strings.Join(e.args, " "), e.err)
+	}
+	return fmt.Sprintf("%s %s failed: %v\n%s", e.name, strings.Join(e.args, " "), e.err, output)
+}
+
+func (e commandError) Unwrap() error {
+	return e.err
 }
 
 type SystemInstaller struct {
@@ -188,6 +214,7 @@ if [ -z "${VERSION_CODENAME:-}" ]; then
   echo "Unsupported Linux distribution: missing VERSION_CODENAME" >&2
   exit 1
 fi
+sudo -v
 sudo apt update -y
 sudo apt install -y curl apt-transport-https gnupg debconf-utils openssl
 curl -fsSL https://couchdb.apache.org/repo/keys.asc | gpg --dearmor | sudo tee /usr/share/keyrings/couchdb-archive-keyring.gpg >/dev/null

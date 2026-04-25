@@ -42,6 +42,26 @@ func TestSystemInstallerRejectsUnsupportedOS(t *testing.T) {
 	}
 }
 
+func TestLinuxInstallScriptPreflightsSudo(t *testing.T) {
+	script := buildLinuxInstallScript("admin", "secret", "cookie")
+	if !strings.Contains(script, "sudo -v") {
+		t.Fatal("linux install script does not run sudo -v before apt operations")
+	}
+}
+
+func TestCommandErrorIncludesCapturedOutput(t *testing.T) {
+	err := commandError{
+		name:   "bash",
+		args:   []string{"-lc", "false"},
+		err:    context.Canceled,
+		output: "apt failed with useful details",
+	}
+	got := err.Error()
+	if !strings.Contains(got, "apt failed with useful details") {
+		t.Fatalf("error = %q, want captured output", got)
+	}
+}
+
 func testContext(t *testing.T) context.Context {
 	t.Helper()
 	return context.Background()
