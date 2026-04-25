@@ -215,6 +215,12 @@ func (m *newAppModel) updateModuleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.modules = selected
 		if containsModule(selected, "auth") {
+			if username, password, ok := storedCouchDBCredentials(); ok {
+				m.authUsername = username
+				m.authPassword = password
+				m.step = stepSummary
+				return m, nil
+			}
 			m.enterAuthStep()
 		} else {
 			m.step = stepSummary

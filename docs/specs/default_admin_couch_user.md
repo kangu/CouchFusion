@@ -5,3 +5,4 @@ On the new workflow, at the end after asking for couchdb admin username and
 
 - [x] Detect existing `_users/org.couchdb.user:<username>` entry using the provided admin credentials and log when it already exists. *(2025-10-28)*
 - [x] Create the CouchDB user document with roles including `admin` when missing, using the supplied username/password, and confirm creation. *(2025-10-28)*
+- [x] Reuse `COUCHDB_ADMIN_AUTH` from process environment or `~/.couchfusion/couchdb.env` before prompting for admin credentials. *(2026-04-25)*

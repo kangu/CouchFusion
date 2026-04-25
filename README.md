@@ -33,10 +33,10 @@ JSON data.
 It's a perfect match for a generic website CMS/builder as it can integrate tightly with any kind of data thrown at it.
 
 ### Prerequisites
-- `CouchDB` 3.x - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) to install on Debian-based systems and use the [official installer](https://couchdb.apache.org/#download) from the CouchDB website for MacOS and Windows
-  - [Debian / Unbutu](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_couchdb.sh) installation script
-  - [OSX installation]() script (through Homebrew)
-  - [Windows MSI official installer](https://couchdb.apache.org/#download)
+- `CouchDB` 3.x - couchfusion now manages local CouchDB setup during command preflight on macOS and Debian/Ubuntu. If CouchDB is already running at `http://127.0.0.1:5984`, the CLI shows the detected version and records first-time acknowledgement. If it is missing, the CLI can install and configure it in the background.
+  - macOS installs through Homebrew.
+  - Debian/Ubuntu installs through the Apache CouchDB apt repository.
+  - Windows managed installation is not supported yet; use the [official installer](https://couchdb.apache.org/#download).
 - `bun` and `node` - use this [script](https://raw.githubusercontent.com/kangu/CouchFusion/main/scripts/tooling/install_bun_node.sh) for installing both
 > With only Bun on the box you can install dependencies and run Nuxt’s CLI,
   but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
@@ -127,10 +127,26 @@ Every command performs the following before executing its workflow:
 3. Checks whether the current directory already contains `/apps` and `/layers` for workspace commands that operate on existing workspaces.
 4. Runs prerequisite checks:
    - `bun --version`
-   - GET `http://localhost:5984/_up`
-5. Prints warnings for any missing prerequisites but continues execution unless configuration or input validation fails.
+5. Runs the managed CouchDB preflight:
+   - probes `http://127.0.0.1:5984/_up`
+   - shows the detected CouchDB version when already running
+   - records first-time acknowledgement in `~/.couchfusion/couchdb.env`
+   - installs and starts CouchDB on macOS or Debian/Ubuntu when missing and approved
+6. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, or CouchDB setup fails.
 
-Use `--config` to select an alternate config file. `--yes`, `--verbose`, and `--quiet` remain planned automation/logging enhancements.
+Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.
+
+Managed CouchDB setup writes `~/.couchfusion/couchdb.env` with `0600` permissions:
+
+```dotenv
+COUCHDB_URL=http://127.0.0.1:5984
+COUCHDB_ADMIN_USER=admin
+COUCHDB_ADMIN_AUTH=<base64 admin:generated-password>
+COUCHDB_ACCEPTED_VERSION=<detected version>
+COUCHDB_ACCEPTED_AT=<timestamp>
+```
+
+The auth layer setup reuses `COUCHDB_ADMIN_AUTH` from the process environment or this file before prompting.
 
 ---
 
@@ -144,13 +160,15 @@ couchfusion init \
   --config ~/.couchfusion/config.yaml \
   --path ~/Projects/new-workspace \
   --layers-branch develop \
-  --force
+  --force \
+  --yes
 ```
 
 Flags:
 - `--path` – target directory to initialise (defaults to `.`).
 - `--layers-branch` – override the branch defined in config for the layers clone.
 - `--force` – re-clone if directories already exist but are empty. The CLI never deletes non-empty directories unless `--force` is provided.
+- `--yes`, `-y` – approve managed CouchDB acknowledgement or installation without interactive prompts.
 
 Example output:
 ```
@@ -168,7 +186,8 @@ couchfusion new \
   --name feedback-tool \
   --modules analytics,auth,content \
   --branch preview \
-  --force
+  --force \
+  --yes
 ```
 
 You can also pass the app name positionally:
@@ -184,7 +203,7 @@ The command performs the following post-clone setup:
 - Reinitializes the cloned app as a fresh git repository.
 - Adds selected layer package dependencies to `package.json` as `@my/<module>: "file:../../layers/<module>"`.
 - Rewrites the top-level `extends` array in `nuxt.config.ts` to include only the selected `../../layers/<module>` entries.
-- Runs selected layer parameter handlers. Today, the `auth` layer asks for CouchDB admin credentials, writes `COUCHDB_ADMIN_AUTH` and `COUCHDB_COOKIE_SECRET` to `.env`, and ensures the matching CouchDB user document exists.
+- Runs selected layer parameter handlers. Today, the `auth` layer reuses `COUCHDB_ADMIN_AUTH` from the environment or `~/.couchfusion/couchdb.env` when available, otherwise asks for CouchDB admin credentials, writes `COUCHDB_ADMIN_AUTH` and `COUCHDB_COOKIE_SECRET` to `.env`, and ensures the matching CouchDB user document exists.
 - Writes app metadata and module setup documentation.
 
 The command produces two documentation files within the new app directory:
@@ -224,7 +243,8 @@ Clones a new layer starter into `/layers/<layer-name>` and reinitializes it as a
 couchfusion create_layer \
   --name analytics-pro \
   --branch feature/init \
-  --force
+  --force \
+  --yes
 ```
 
 After cloning, add the new layer to your config `modules` list manually so future app scaffolds can reference it.
@@ -250,7 +270,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `workspace not initialized` | Run `couchfusion init` from the workspace root first. |
 | `git clone failed` | Verify repository URL, credentials, and access rights. For HTTPS, ensure tokens permit repo access. |
 | `bun is not available in PATH` | Install bun or ensure it is discoverable; CLI continues but downstream tasks may fail. |
-| `Unable to reach CouchDB` | Start CouchDB locally or update configuration if you intentionally work offline. |
+| `couchdb install or acknowledgement requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
+| `managed CouchDB installation is supported on macOS and Debian/Ubuntu only` | Install CouchDB manually for your OS and re-run the command. |
 
 ---
 
@@ -258,7 +279,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 - `go build ./...` validates the code compiles; add unit tests under `internal/...` as the project evolves.
 - Set `COUCHFUSION_VERSION` environment variable to override the embedded version string during development builds.
 - The CLI currently mutates cloned app files during `new`: `package.json`, `.env` for selected layer parameters, `nuxt.config.ts`, `couchfusion.json`, and `docs/module_setup.json`.
-- There are no Go test files yet. Use `GOCACHE=<repo>/.gocache go test ./...` when the default Go cache is outside the writable sandbox.
+- Managed CouchDB setup lives under `internal/couchdb`; tests use injected probes/installers and do not run system package managers.
+- Use `GOCACHE=<repo>/.gocache go test ./...` when the default Go cache is outside the writable sandbox.
 
 For questions or enhancements, update the couchfusion PRD in `cli-init/docs/specs/cli_bootstrap_prd.md` and track changes under `cli-init/docs/implementation_results/` per project process.
 

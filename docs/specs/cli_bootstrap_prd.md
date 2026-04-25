@@ -20,11 +20,11 @@
 - Provide a `new` command that scaffolds an app folder and clones the configured starter repo, optionally linking selectable modules mapped to layers with clear follow-up instructions.
 - Provide a `create_layer` command that scaffolds new layer directories by cloning pre-defined starter templates.
 - Manage configuration via a local config file that stores git source information and optional credentials.
-- Validate presence of `bun` executable and CouchDB service (`localhost:5984`) at startup with actionable warnings.
+- Validate presence of `bun` executable and manage local CouchDB service (`127.0.0.1:5984`) at startup with actionable prompts.
 - Ensure commands remain idempotent and report when directories already exist or repos are previously cloned.
 
 ### Non-Goals
-- Managing dependency installation beyond prerequisite checks (no automatic install of bun or CouchDB).
+- Managing dependency installation beyond prerequisite checks for tools other than CouchDB.
 - Handling starter repository version pinning beyond branches specified in config (no tag management workflow).
 - Handling cloud provisioned infrastructure beyond local CouchDB reachability check.
 
@@ -34,6 +34,7 @@
 - The interactive experience now uses Bubble Tea + Lip Gloss TUIs when stdin/stdout are terminals, with `COUCHFUSION_NO_TUI=1` as the plain-prompt fallback.
 - The CLI falls back to an embedded default config when no user config exists.
 - Cloned app and layer starter repositories are reinitialized as fresh git repositories after clone. The base layers clone used by `init` is expected to preserve its repository state unless future requirements say otherwise.
+- Local CouchDB setup is now part of global preflight: running instances are version-detected and acknowledged once, while missing instances can be installed on macOS and Debian/Ubuntu.
 
 ## 4. Success Metrics
 > Progress: [Done] Defined measurable outcomes for rollout validation.
@@ -54,7 +55,7 @@
 ## 6. Dependencies
 > Progress: [Done] Enumerated external binaries, services, and repositories.
 - **System binaries:** `git`, `bun`.
-- **Services:** CouchDB at `http://localhost:5984` (warning-only check, local endpoint only).
+- **Services:** CouchDB at `http://127.0.0.1:5984` (managed local preflight).
 - **Repositories:**
   - `layers_base_repo` – starter kit for shared layers.
   - `app_starter_repo` – base Nuxt app template.
@@ -109,8 +110,10 @@
 1. Load config file.
 2. Detect current workspace initialization status (presence of `apps/` and `layers/`).
 3. Check `bun` availability via `bun --version`.
-4. Ping CouchDB at `http://localhost:5984/_up` or `_utils`.
-5. Display aggregated warnings before executing command logic; continue unless fatal configuration missing.
+4. Probe CouchDB at `http://127.0.0.1:5984/_up` and fetch root version metadata.
+5. If CouchDB is running, show the detected version and record first-time acknowledgement in `~/.couchfusion/couchdb.env`.
+6. If CouchDB is missing, prompt to install it or require `--yes` in non-interactive mode.
+7. Display aggregated warnings before executing command logic; continue unless fatal configuration or CouchDB setup fails.
 
 ### `init`
 1. Confirm target directory (current working directory or `--path`).
@@ -146,7 +149,7 @@
 - Keep `COUCHFUSION_NO_TUI=1` as the explicit fallback for plain prompts.
 - Provide structured warnings in yellow text equivalents (e.g., `[WARN] bun not detected`).
 - Display final success summary with next commands, module follow-up paths, and location paths.
-- Treat `--yes` / `-y`, `--verbose`, and `--quiet` as planned enhancements until implemented.
+- Support `--yes` / `-y` for managed CouchDB preflight automation. Treat `--verbose` and `--quiet` as planned enhancements until implemented.
 - When HTTPS protocol requires credentials, prompt inline and optionally cache via system credential helper if available.
 
 ## 11. Error Handling & Edge Cases
@@ -154,7 +157,7 @@
 - Missing config file: exit with instructions to create config; offer `couchfusion config init` in future (out of scope for MVP).
 - Git clone failure: bubble up stderr, include hint to verify credentials or repo URL.
 - Existing directories: abort unless `--force` set and directory empty; never delete non-empty folders automatically.
-- Network timeouts: provide retry suggestion or offline fallback messaging.
+- Network timeouts: provide retry suggestion and identify the failing CouchDB setup phase where possible.
 - Invalid module selections: re-prompt or exit with list of valid options.
 - HTTPS authentication failures: mask passwords in logs and re-prompt with option to abort.
 
@@ -168,7 +171,7 @@
 - Unit tests for config parsing, command flag handling, path validation.
 - Integration tests (mocked git + filesystem) to cover `init`, `new`, `create_layer` flows.
 - Smoke test script executed in CI to run `init` then `new --name test-app --modules analytics,auth` inside temp directory, verifying directories, instruction file, and marker files.
-- Manual QA checklist: verify warnings appear when `bun`/CouchDB absent, ensure re-running commands is safe, ensure HTTPS prompts appear when configured.
+- Manual QA checklist: verify warnings appear when `bun` is absent, verify CouchDB running/missing preflight branches, ensure re-running commands is safe, ensure HTTPS prompts appear when configured.
 
 ## 14. Release & Distribution
 > Progress: [Done] Set release packaging, versioning, and documentation expectations.
@@ -191,7 +194,7 @@
 - Test coverage for config parsing, filesystem mutation helpers, package dependency merging, Nuxt config rewrites, and TUI-independent workflows.
 - Safer structured parsing for `nuxt.config.ts` if regex rewriting becomes too fragile for real-world configs.
 - Template registry management (list available starters, fetch remote metadata).
-- Automation flags such as `--yes`, `--verbose`, and `--quiet`.
+- Logging automation flags such as `--verbose` and `--quiet`.
 - Telemetry opt-in for usage analytics.
 - Plugins architecture for custom scaffolds.
 
@@ -200,7 +203,7 @@
 1. **Starter repo version pinning:** CLI relies on branches declared in config; no additional tag management or version pinning workflow.
 2. **HTTPS git support:** CLI must support HTTPS clones by prompting for username/password or tokens when `protocol: https` is configured, in addition to SSH.
 3. **Module selection wiring:** CLI generates a instructions file detailing required `extends` entries for `nuxt.config.ts` and leaves code edits to the developer.
-4. **CouchDB endpoint override:** Health check remains fixed to `http://localhost:5984`; no remote configuration required.
+4. **CouchDB endpoint override:** Managed local preflight remains fixed to `http://127.0.0.1:5984`; no remote configuration required.
 
 ---
 

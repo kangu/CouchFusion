@@ -14,3 +14,4 @@ Current direction:
 - Keep layer-specific parameter handling centralized so both `new` and the future `add_layer` command can call the same logic.
 - Prefer flat environment values written into the app `.env` unless the target layer has moved to a CouchDB `_config` contract.
 - For future CouchDB `_config` integration, use flat key-value sections named `cf_env_[slug]`, where `[slug]` defaults to the app folder name.
+- Auth layer setup should prefer `COUCHDB_ADMIN_AUTH` from the process environment or `~/.couchfusion/couchdb.env` before asking for credentials.
