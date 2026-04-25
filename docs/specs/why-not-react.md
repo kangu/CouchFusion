@@ -54,7 +54,8 @@ This function is what React expects — not a structure describing what to rende
 ## Overall considerations of Vue over React
 
 - I appreciate the stability of the API and best practices across multiple development cycles
-- The community-driven development approach is (I think) superior to frameworks supported by large
-tech companies like React and Angular.
-- Less boilerplate code
+- The community-driven development approach Vue and Nuxt have tends to be superior to those frameworks supported by large
+tech companies like React and Angular, in terms of actually receiving feature you want and ask for, instead of the
+company's current area of interest.
+- Less boilerplate code overall.
 - Nuxt is practically just a cleaner and (arguably) better version of Next.js (as it was originally intended).
