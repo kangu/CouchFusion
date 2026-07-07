@@ -129,25 +129,12 @@ func installDarwin(ctx context.Context, runner CommandRunner, adminUser, passwor
 }
 
 func buildDarwinInstallScript() string {
-	return `
+	return darwinHomebrewPrelude() + `
 set -euo pipefail
-BREW_BIN="$(command -v brew || true)"
-if [ -z "$BREW_BIN" ]; then
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  if [ -x /opt/homebrew/bin/brew ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [ -x /usr/local/bin/brew ]; then
-    eval "$(/usr/local/bin/brew shellenv)"
-  fi
-else
-  if [ -x /opt/homebrew/bin/brew ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [ -x /usr/local/bin/brew ]; then
-    eval "$(/usr/local/bin/brew shellenv)"
-  fi
-fi
+ensure_homebrew
+ensure_homebrew_shellenv_profiles
 brew update
-brew install couchdb
+brew list couchdb >/dev/null 2>&1 || brew install couchdb
 BREW_PREFIX="$(brew --prefix)"
 CONF_FILE="$BREW_PREFIX/etc/local.ini"
 LOCAL_D="$BREW_PREFIX/etc/local.d"
@@ -157,13 +144,10 @@ touch "$CONF_FILE"
 }
 
 func buildDarwinConfigScript(adminUser, password string) string {
-	return fmt.Sprintf(`
+	return fmt.Sprintf(darwinHomebrewPrelude()+`
 set -euo pipefail
-if [ -x /opt/homebrew/bin/brew ]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-elif [ -x /usr/local/bin/brew ]; then
-  eval "$(/usr/local/bin/brew shellenv)"
-fi
+ensure_homebrew
+ensure_homebrew_shellenv_profiles
 BREW_PREFIX="$(brew --prefix)"
 CONF_FILE="$BREW_PREFIX/etc/local.ini"
 LOCAL_D="$BREW_PREFIX/etc/local.d"
@@ -193,6 +177,45 @@ chmod 0644 "$CONF_FILE" "$LOCAL_D/10-single-node.ini"
 brew services stop couchdb >/dev/null 2>&1 || true
 brew services start couchdb
 `, shellEscape(adminUser), shellEscape(password))
+}
+
+func darwinHomebrewPrelude() string {
+	return `
+ensure_homebrew() {
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [ -x /opt/homebrew/bin/brew ]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+  fi
+}
+
+ensure_homebrew_shellenv_profiles() {
+  if [ -x /opt/homebrew/bin/brew ]; then
+    BREW_SHELLENV='eval "$(/opt/homebrew/bin/brew shellenv)"'
+  elif [ -x /usr/local/bin/brew ]; then
+    BREW_SHELLENV='eval "$(/usr/local/bin/brew shellenv)"'
+  else
+    return 0
+  fi
+
+  for profile in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
+    mkdir -p "$(dirname "$profile")"
+    touch "$profile"
+    if ! grep -Fq 'brew shellenv' "$profile"; then
+      printf '\n# Homebrew\n%s\n' "$BREW_SHELLENV" >> "$profile"
+    fi
+  done
+}
+`
 }
 
 func installLinux(ctx context.Context, runner CommandRunner, adminUser, password string) error {

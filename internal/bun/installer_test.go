@@ -77,6 +77,27 @@ func TestSystemInstallerUsesOfficialBunInstaller(t *testing.T) {
 	}
 }
 
+func TestSystemInstallerUsesOfficialBunInstallerOnMacOS(t *testing.T) {
+	runner := &recordingRunner{}
+	_, err := (SystemInstaller{OS: "darwin", Runner: runner, HomeDir: "/tmp/home"}).Install(context.Background())
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	joined := strings.Join(runner.commands, "\n")
+	if strings.Contains(joined, "sudo apt install") {
+		t.Fatalf("macOS install should not run apt commands:\n%s", joined)
+	}
+	if !strings.Contains(joined, "curl -fsSL https://bun.com/install | bash") {
+		t.Fatalf("commands did not invoke official installer:\n%s", joined)
+	}
+	if !strings.Contains(joined, "if command -v bun") {
+		t.Fatalf("commands did not verify bun through PATH first:\n%s", joined)
+	}
+	if !envList(runner.envs[0]).Contains("BUN_INSTALL=/tmp/home/.bun") {
+		t.Fatalf("installer env missing BUN_INSTALL: %#v", runner.envs[0])
+	}
+}
+
 func TestVerifyFailureIncludesInstallerOutput(t *testing.T) {
 	runner := &recordingRunner{
 		outputs: [][]byte{

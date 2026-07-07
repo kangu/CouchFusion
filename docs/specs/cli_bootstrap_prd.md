@@ -35,8 +35,8 @@
 - The CLI falls back to an embedded default config when no user config exists.
 - Cloned app and layer starter repositories are reinitialized as fresh git repositories after clone. The base layers clone used by `init` is expected to preserve its repository state unless future requirements say otherwise.
 - Git setup is now part of global preflight: missing Git can be installed on macOS or Debian/Ubuntu before any clone or reinitialize operation runs.
-- Bun setup is now part of global preflight: missing Bun can be installed on macOS/Linux, with current-process PATH refresh and shell profile updates.
-- Local CouchDB setup is now part of global preflight: running instances are version-detected and acknowledged once, while missing instances can be installed on macOS and Debian/Ubuntu.
+- Bun setup is now part of global preflight: missing Bun can be installed on macOS/Linux, with current-process PATH refresh, same-session shim creation when possible, and shell profile updates.
+- Local CouchDB setup is now part of global preflight: running instances are version-detected and acknowledged once, while missing instances can be installed on macOS and Debian/Ubuntu. macOS setup uses Homebrew and persists Homebrew shellenv into zsh/bash profile files.
 
 ## 4. Success Metrics
 > Progress: [Done] Defined measurable outcomes for rollout validation.
@@ -113,7 +113,7 @@
 2. Detect current workspace initialization status (presence of `apps/` and `layers/`).
 3. Check Git availability via `git --version`; if missing, prompt to install it or require `--yes` in non-interactive mode.
 4. Check Bun availability via `bun --version`; if missing, prompt to install it or require `--yes` in non-interactive mode.
-5. Refresh the current process environment with `BUN_INSTALL=$HOME/.bun` and Bun paths, update the user shell profile if needed, and create a `~/.couchfusion/bin/bun` shim when possible.
+5. Refresh the current process environment with `BUN_INSTALL=$HOME/.bun` and Bun paths, update the user shell profile if needed, create a same-session PATH shim when possible, and create a `~/.couchfusion/bin/bun` shim when possible.
 6. Probe CouchDB at `http://127.0.0.1:5984/_up` and fetch root version metadata.
 7. If CouchDB is running, show the detected version and record first-time acknowledgement in `~/.couchfusion/couchdb.env`.
 8. If CouchDB is missing, prompt to install it or require `--yes` in non-interactive mode.

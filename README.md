@@ -34,7 +34,7 @@ It's a perfect match for a generic website CMS/builder as it can integrate tight
 
 ### Prerequisites
 - `CouchDB` 3.x - couchfusion now manages local CouchDB setup during command preflight on macOS and Debian/Ubuntu. If CouchDB is already running at `http://127.0.0.1:5984`, the CLI shows the detected version and records first-time acknowledgement. If it is missing, the CLI can install and configure it in the background.
-  - macOS installs through Homebrew.
+  - macOS installs through Homebrew, bootstraps Homebrew when missing, and persists Homebrew shellenv setup into zsh/bash profile files.
   - Debian/Ubuntu installs through the Apache CouchDB apt repository.
   - Windows managed installation is not supported yet; use the [official installer](https://couchdb.apache.org/#download).
 - `bun` - couchfusion manages local Bun setup during command preflight on macOS and Linux. If Bun is missing from `PATH`, the CLI can install it with the official Bun installer, refresh the current process environment, and update the user shell profile so `bun -v` works after setup.
@@ -144,6 +144,7 @@ Every command performs the following before executing its workflow:
    - shows the detected CouchDB version when already running
    - records first-time acknowledgement in `~/.couchfusion/couchdb.env`
    - installs and starts CouchDB on macOS or Debian/Ubuntu when missing and approved
+   - on macOS, ensures Homebrew is available in the install process and future zsh/bash sessions
    - prints the generated admin password after installation and waits for Enter before continuing
 7. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, Git setup, Bun setup, or CouchDB setup fails.
 

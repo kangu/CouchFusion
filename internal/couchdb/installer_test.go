@@ -49,6 +49,32 @@ func TestLinuxInstallScriptPreflightsSudo(t *testing.T) {
 	}
 }
 
+func TestDarwinInstallScriptPersistsHomebrewShellenv(t *testing.T) {
+	script := buildDarwinInstallScript()
+	for _, want := range []string{
+		"/opt/homebrew/bin/brew shellenv",
+		"/usr/local/bin/brew shellenv",
+		".zprofile",
+		".zshrc",
+		".bash_profile",
+		".bashrc",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("darwin install script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestDarwinConfigScriptPersistsHomebrewShellenv(t *testing.T) {
+	script := buildDarwinConfigScript("admin", "secret")
+	if !strings.Contains(script, "ensure_homebrew_shellenv_profiles") {
+		t.Fatalf("darwin config script does not persist Homebrew shellenv:\n%s", script)
+	}
+	if !strings.Contains(script, "brew services start couchdb") {
+		t.Fatalf("darwin config script does not start CouchDB service:\n%s", script)
+	}
+}
+
 func TestCommandErrorIncludesCapturedOutput(t *testing.T) {
 	err := commandError{
 		name:   "bash",
