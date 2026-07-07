@@ -77,16 +77,24 @@ func (m Manager) Ensure(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	originalPath := Env(env).Get("PATH")
 	refreshed := RefreshEnv(env, home)
-	profilePath := ShellProfilePath(home, m.Shell)
-	if err := EnsureProfileBlock(profilePath, filepath.Base(m.Shell) == "fish"); err != nil {
+	profilePaths := ShellProfilePaths(home, m.Shell)
+	if err := EnsureProfileBlocks(profilePaths, filepath.Base(m.Shell) == "fish"); err != nil {
 		return Result{}, err
+	}
+	currentPathShim, err := EnsureCurrentPathShim(originalPath, installResult.BunBin)
+	if err != nil {
+		return Result{}, err
+	}
+	if currentPathShim != "" && !pathContains(refreshed.Get("PATH"), filepath.Dir(currentPathShim)) {
+		refreshed = refreshed.Set("PATH", filepath.Dir(currentPathShim)+string(os.PathListSeparator)+refreshed.Get("PATH"))
 	}
 	shim, err := EnsureCouchFusionBinShim(home, installResult.BunBin)
 	if err != nil {
 		return Result{}, err
 	}
-	if !pathContains(refreshed.Get("PATH"), filepath.Dir(shim)) {
+	if shim != "" && !pathContains(refreshed.Get("PATH"), filepath.Dir(shim)) {
 		refreshed = refreshed.Set("PATH", filepath.Dir(shim)+string(os.PathListSeparator)+refreshed.Get("PATH"))
 	}
 	ApplyEnv(refreshed)

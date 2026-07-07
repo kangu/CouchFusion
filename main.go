@@ -16,6 +16,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/checks"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
+	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
@@ -73,6 +74,10 @@ func runInit(args []string) {
 	}
 
 	ctx := context.Background()
+	if err := ensureGit(ctx, *yes); err != nil {
+		logging.Fatalf("git preflight failed: %v", err)
+	}
+
 	if err := ensureBun(ctx, *yes); err != nil {
 		logging.Fatalf("bun preflight failed: %v", err)
 	}
@@ -133,6 +138,10 @@ func runNew(args []string) {
 	}
 
 	ctx := context.Background()
+	if err := ensureGit(ctx, *yes); err != nil {
+		logging.Fatalf("git preflight failed: %v", err)
+	}
+
 	if err := ensureBun(ctx, *yes); err != nil {
 		logging.Fatalf("bun preflight failed: %v", err)
 	}
@@ -192,6 +201,10 @@ func runCreateLayer(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
+	if err := ensureGit(ctx, *yes); err != nil {
+		logging.Fatalf("git preflight failed: %v", err)
+	}
+
 	if err := ensureBun(ctx, *yes); err != nil {
 		logging.Fatalf("bun preflight failed: %v", err)
 	}
@@ -239,6 +252,30 @@ func addYesFlags(fs *flag.FlagSet) *bool {
 	yes := fs.Bool("yes", false, "Approve non-interactive setup prompts")
 	fs.BoolVar(yes, "y", false, "Approve non-interactive setup prompts")
 	return yes
+}
+
+func ensureGit(ctx context.Context, yes bool) error {
+	manager := gitsetup.Manager{
+		Interactive: isInteractiveTerminal(),
+		AutoApprove: yes,
+		PromptInstall: func() (bool, error) {
+			return confirm("Git is not available in PATH. Install and configure it now?")
+		},
+	}
+	result, err := manager.Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	versionLabel := result.Status.Version
+	if versionLabel == "" {
+		versionLabel = "unknown"
+	}
+	if result.Installed {
+		logging.Infof("Installed Git %s", versionLabel)
+		return nil
+	}
+	logging.Infof("Detected Git %s", versionLabel)
+	return nil
 }
 
 func ensureBun(ctx context.Context, yes bool) error {

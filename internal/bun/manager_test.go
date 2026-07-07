@@ -65,7 +65,11 @@ func TestEnsureRequiresYesWhenMissingInNonInteractiveMode(t *testing.T) {
 func TestEnsureInstallsRefreshesEnvironmentAndUpdatesProfile(t *testing.T) {
 	home := t.TempDir()
 	profile := filepath.Join(home, ".bashrc")
+	currentPathDir := filepath.Join(home, "current-bin")
 	bunBin := filepath.Join(home, ".bun", "bin")
+	if err := os.MkdirAll(currentPathDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(bunBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +83,7 @@ func TestEnsureInstallsRefreshesEnvironmentAndUpdatesProfile(t *testing.T) {
 		AutoApprove: true,
 		HomeDir:     home,
 		Shell:       "/bin/bash",
-		Env:         []string{"PATH=/usr/bin"},
+		Env:         []string{"PATH=" + currentPathDir + string(os.PathListSeparator) + "/usr/bin"},
 	}
 
 	result, err := manager.Ensure(context.Background())
@@ -98,6 +102,9 @@ func TestEnsureInstallsRefreshesEnvironmentAndUpdatesProfile(t *testing.T) {
 	}
 	if !strings.Contains(pathValue, filepath.Join(home, ".couchfusion", "bin")) {
 		t.Fatalf("PATH = %q, want couchfusion bin present", pathValue)
+	}
+	if _, err := os.Stat(filepath.Join(currentPathDir, "bun")); err != nil {
+		t.Fatalf("current PATH shim was not created: %v", err)
 	}
 	content, err := readFile(profile)
 	if err != nil {

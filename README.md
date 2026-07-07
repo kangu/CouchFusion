@@ -34,17 +34,18 @@ It's a perfect match for a generic website CMS/builder as it can integrate tight
 
 ### Prerequisites
 - `CouchDB` 3.x - couchfusion now manages local CouchDB setup during command preflight on macOS and Debian/Ubuntu. If CouchDB is already running at `http://127.0.0.1:5984`, the CLI shows the detected version and records first-time acknowledgement. If it is missing, the CLI can install and configure it in the background.
-  - macOS installs through Homebrew.
+  - macOS installs through Homebrew, bootstraps Homebrew when missing, and persists Homebrew shellenv setup into zsh/bash profile files.
   - Debian/Ubuntu installs through the Apache CouchDB apt repository.
   - Windows managed installation is not supported yet; use the [official installer](https://couchdb.apache.org/#download).
 - `bun` - couchfusion manages local Bun setup during command preflight on macOS and Linux. If Bun is missing from `PATH`, the CLI can install it with the official Bun installer, refresh the current process environment, and update the user shell profile so `bun -v` works after setup.
+- `git` - couchfusion manages local Git setup during command preflight on macOS and Debian/Ubuntu. If Git is missing from `PATH`, the CLI can install it before any starter repository clone runs.
 - `node` - install Node separately for full Nuxt/Nitro dev parity.
 > With only Bun on the box you can install dependencies and run Nuxt’s CLI,
   but Bun’s Node-compat layer isn’t yet complete enough to host Nitro/H3 in dev mode. You’ll
   hit 400s because the request pipeline breaks before it reaches the handler. For
   full parity we still need a real Node runtime (18/20) alongside Bun, at least until the
   Nitro/H3 team finishes their Bun support work or Bun closes the remaining gaps.
-- `git` available in your PATH with access to the starter repositories
+- Git authentication still needs to be configured by the user when cloning private repositories. Managed Git installation only installs the binary; SSH keys, HTTPS tokens, and credential helpers remain environment-specific.
 
 ### Quick Install
 macOS / Linux:
@@ -126,22 +127,28 @@ Every command performs the following before executing its workflow:
 1. Loads configuration (YAML or JSON).
 2. Falls back to the embedded default config when no user config is present.
 3. Checks whether the current directory already contains `/apps` and `/layers` for workspace commands that operate on existing workspaces.
-4. Runs the managed Bun preflight:
+4. Runs the managed Git preflight:
+   - checks `git --version`
+   - shows the detected Git version when available
+   - installs Git on macOS or Debian/Ubuntu when missing and approved
+5. Runs the managed Bun preflight:
    - checks `bun --version`
    - installs Bun on macOS/Linux when missing and approved
    - ensures Linux prerequisites `unzip`, `ca-certificates`, and `curl` are present before running Bun's installer
    - sets `BUN_INSTALL=$HOME/.bun` and prepends `$HOME/.bun/bin` to the current process `PATH`
-   - updates the user shell profile when the Bun path block is missing
-   - creates a `~/.couchfusion/bin/bun` shim to `~/.bun/bin/bun` when possible, so shells that already have CouchFusion on PATH can run `bun -v` immediately after setup
-5. Runs the managed CouchDB preflight:
+   - updates login and interactive shell profiles when the Bun path block is missing, for example `.bashrc` plus `.profile` for bash and `.zshrc` plus `.zprofile` for zsh
+   - creates a `bun` shim in the first writable directory already on the current `PATH` when possible, so the same terminal can run `bun -v` after setup without opening a new session
+   - creates a `~/.couchfusion/bin/bun` shim to `~/.bun/bin/bun` when possible, so shells that already have CouchFusion on PATH can also run `bun -v` immediately after setup
+6. Runs the managed CouchDB preflight:
    - probes `http://127.0.0.1:5984/_up`
    - shows the detected CouchDB version when already running
    - records first-time acknowledgement in `~/.couchfusion/couchdb.env`
    - installs and starts CouchDB on macOS or Debian/Ubuntu when missing and approved
+   - on macOS, ensures Homebrew is available in the install process and future zsh/bash sessions
    - prints the generated admin password after installation and waits for Enter before continuing
-6. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, Bun setup, or CouchDB setup fails.
+7. Prints warnings for any missing non-fatal prerequisites but continues execution unless configuration, input validation, Git setup, Bun setup, or CouchDB setup fails.
 
-Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve Bun/CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.
+Use `--config` to select an alternate config file. Use `--yes` or `-y` to approve Git/Bun/CouchDB setup in non-interactive automation. `--verbose` and `--quiet` remain planned logging enhancements.
 
 Managed CouchDB setup writes `~/.couchfusion/couchdb.env` with `0600` permissions:
 
@@ -175,10 +182,11 @@ Flags:
 - `--path` – target directory to initialise (defaults to `.`).
 - `--layers-branch` – override the branch defined in config for the layers clone.
 - `--force` – re-clone if directories already exist but are empty. The CLI never deletes non-empty directories unless `--force` is provided.
-- `--yes`, `-y` – approve managed CouchDB acknowledgement or installation without interactive prompts.
+- `--yes`, `-y` – approve managed Git/Bun/CouchDB setup without interactive prompts.
 
 Example output:
 ```
+[INFO] Detected Git git version 2.x.x
 [INFO] Detected Bun 1.x.x
 [INFO] Creating apps directory... done
 [INFO] Cloning layers repo (branch develop)... done
@@ -276,6 +284,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `config file not found` | Create the YAML or pass `--config` pointing to it. |
 | `workspace not initialized` | Run `couchfusion init` from the workspace root first. |
 | `git clone failed` | Verify repository URL, credentials, and access rights. For HTTPS, ensure tokens permit repo access. |
+| `git preflight failed` | Re-run in an interactive terminal or pass `--yes` / `-y` so the CLI can install Git before cloning. |
+| `managed Git installation is supported on macOS and Linux only` | Install Git manually for your OS and re-run the command. |
 | `bun installation requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
 | `managed Bun installation is supported on macOS and Linux only` | Install Bun manually for your OS and re-run the command. |
 | `couchdb install or acknowledgement requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
@@ -287,7 +297,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 - `go build ./...` validates the code compiles; add unit tests under `internal/...` as the project evolves.
 - Set `COUCHFUSION_VERSION` environment variable to override the embedded version string during development builds.
 - The CLI currently mutates cloned app files during `new`: `package.json`, `.env` for selected layer parameters, `nuxt.config.ts`, `couchfusion.json`, and `docs/module_setup.json`.
-- Managed Bun setup lives under `internal/bun`; tests use injected probes/installers and do not invoke the live Bun installer. It refreshes current-process env, updates shell profiles, and creates a CouchFusion bin shim when possible.
+- Managed Git setup lives under `internal/gitsetup`; tests use injected probes/installers and do not invoke live system package managers. It runs before clone or reinitialize operations.
+- Managed Bun setup lives under `internal/bun`; tests use injected probes/installers and do not invoke the live Bun installer. It refreshes current-process env, updates login and interactive shell profiles, creates a same-session PATH shim when possible, and creates a CouchFusion bin shim when possible.
 - Managed CouchDB setup lives under `internal/couchdb`; tests use injected probes/installers and do not run system package managers.
 - Use `GOCACHE=<repo>/.gocache go test ./...` when the default Go cache is outside the writable sandbox.
 
