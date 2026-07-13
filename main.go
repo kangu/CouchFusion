@@ -14,6 +14,7 @@ import (
 
 	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/checks"
+	"github.com/nuxt-apps/couchfusion/internal/cli"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
@@ -21,31 +22,40 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
 
-const version = "0.5.0"
+const version = cli.Version
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	command := os.Args[1]
-
-	switch command {
-	case "version", "--version", "-v":
-		fmt.Println(version)
+	err := cli.Run(context.Background(), os.Args[1:], cli.IO{
+		In:  os.Stdin,
+		Out: os.Stdout,
+		Err: os.Stderr,
+	}, cli.Commands{
+		Init: func(_ context.Context, args []string) error {
+			runInit(args)
+			return nil
+		},
+		New: func(_ context.Context, args []string) error {
+			runNew(args)
+			return nil
+		},
+		CreateLayer: func(_ context.Context, args []string) error {
+			runCreateLayer(args)
+			return nil
+		},
+	})
+	if err == nil {
 		return
-	case "init":
-		runInit(os.Args[2:])
-	case "new":
-		runNew(os.Args[2:])
-	case "create_layer":
-		runCreateLayer(os.Args[2:])
-	default:
-		logging.Errorf("unknown command: %s", command)
-		printUsage()
-		os.Exit(1)
 	}
+
+	logging.Errorf("%v", err)
+	var exitErr cli.ExitError
+	if errors.As(err, &exitErr) && exitErr.Code == 2 {
+		printUsage()
+	}
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.Code)
+	}
+	os.Exit(1)
 }
 
 func printUsage() {

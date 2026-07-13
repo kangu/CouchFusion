@@ -113,7 +113,7 @@
 - Produces: `cli.Commands` callbacks that temporarily adapt the existing workflows; Task 8 replaces those callbacks with `app.Service` calls.
 - Consumes later: Task 12 adds `ui` dispatch to this boundary.
 
-- [ ] **Step 1: Write failing command-boundary tests**
+- [x] **Step 1: Write failing command-boundary tests**
 
 Add table-driven tests that call `Run` without mutating `os.Args` and assert `version`, missing command, and unknown command behavior:
 
@@ -132,13 +132,13 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [x] **Step 2: Run the focused tests and verify failure**
 
 Run: `go test ./internal/cli -run 'TestRun' -count=1`
 
 Expected: FAIL because `internal/cli` and `Run` do not exist.
 
-- [ ] **Step 3: Implement the minimal command boundary**
+- [x] **Step 3: Implement the minimal command boundary**
 
 Define `Version = "0.5.0"`, normalize nil IO streams, return dispatch errors rather than calling `os.Exit`, and move command selection into `internal/cli`. Keep existing command implementations callable during this first step through injected callbacks; do not change their workflow behavior until Task 8.
 
@@ -178,13 +178,13 @@ func Run(ctx context.Context, args []string, streams IO, commands Commands) erro
 
 Make `main()` call `cli.Run` with callbacks that invoke the existing `runInit`, `runNew`, and `runCreateLayer` behavior. Print one safe dispatch error to stderr and exit using `ExitError.Code` or `1`. Task 8 removes process exits from the workflow implementations after application services exist.
 
-- [ ] **Step 4: Run compatibility verification**
+- [x] **Step 4: Run compatibility verification**
 
 Run: `go test ./internal/cli ./... -count=1 && go vet ./...`
 
 Expected: all existing and new tests PASS; vet produces no diagnostics.
 
-- [ ] **Step 5: Commit the command boundary**
+- [x] **Step 5: Commit the command boundary**
 
 ```bash
 git add main.go internal/cli/run.go internal/cli/run_test.go
