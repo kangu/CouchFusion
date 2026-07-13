@@ -343,7 +343,7 @@ git commit -m "feat: add explicit workspace registry"
 - Produces: `config.Effective{Config Config, Sources SourceMap}`.
 - Produces: `config.WriteGlobal` and `config.WriteWorkspace` with validation and atomic replacement.
 
-- [ ] **Step 1: Write failing precedence and writer tests**
+- [x] **Step 1: Write failing precedence and writer tests**
 
 Cover embedded-only, global overrides, workspace overrides, repo/module map merging, default-selection replacement, source attribution, invalid-file preservation, and `0600` global writes.
 
@@ -358,13 +358,13 @@ func TestLoadEffectiveTracksWorkspaceSource(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run config tests and verify failure**
+- [x] **Step 2: Run config tests and verify failure**
 
 Run: `go test ./internal/config -count=1`
 
 Expected: FAIL because layered APIs do not exist.
 
-- [ ] **Step 3: Implement field-aware merging and source tracking**
+- [x] **Step 3: Implement field-aware merging and source tracking**
 
 Use pointer-bearing override DTOs so omitted booleans and empty values differ from explicit values. Merge embedded, global, and workspace documents in order. Validate the effective result with the existing rules plus default-module membership checks.
 
@@ -377,13 +377,13 @@ type Effective struct { Config Config `json:"config"`; Sources SourceMap `json:"
 
 Writers marshal only the selected layer, reject credential-bearing URL userinfo, validate a simulated effective merge, and atomically replace the destination.
 
-- [ ] **Step 4: Run config and full regression tests**
+- [x] **Step 4: Run config and full regression tests**
 
 Run: `go test ./internal/config ./... -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit layered configuration**
+- [x] **Step 5: Commit layered configuration**
 
 ```bash
 git add internal/config
