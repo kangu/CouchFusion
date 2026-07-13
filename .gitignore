@@ -19,3 +19,6 @@ bin/
 *.log
 tmp/
 logs/
+
+# Superpowers visual brainstorming companion
+.superpowers/
