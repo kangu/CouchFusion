@@ -22,39 +22,208 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/gitutil"
 )
 
-// RunInit performs workspace initialization.
-func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
-	root, err := resolvePath(targetPath)
+type InitRequest struct {
+	Root        string
+	LayerBranch string
+	Force       bool
+}
+
+type CreateSiteRequest struct {
+	Root    string
+	Name    string
+	Modules []string
+	Branch  string
+	Force   bool
+	Auth    *AuthCredentials
+}
+
+type CreateLayerRequest struct {
+	Root   string
+	Name   string
+	Branch string
+	Force  bool
+}
+
+type EventLevel string
+
+const (
+	EventInfo    EventLevel = "info"
+	EventSuccess EventLevel = "success"
+)
+
+type Event struct {
+	Code    string
+	Message string
+	Level   EventLevel
+}
+
+type EventSink interface {
+	Emit(Event)
+}
+
+type CloneFunc func(context.Context, string, string, string, string, bool, ...gitutil.CloneOption) error
+type ApplyLayerParametersFunc func(context.Context, string, []string) error
+
+type Dependencies struct {
+	Clone                CloneFunc
+	ApplyLayerParameters ApplyLayerParametersFunc
+	Events               EventSink
+}
+
+func (d Dependencies) withDefaults() Dependencies {
+	if d.Clone == nil {
+		d.Clone = gitutil.Clone
+	}
+	if d.ApplyLayerParameters == nil {
+		d.ApplyLayerParameters = func(ctx context.Context, targetDir string, modules []string) error {
+			return applyLayerParameters(ctx, targetDir, modules, false)
+		}
+	}
+	return d
+}
+
+func (d Dependencies) emit(level EventLevel, code, message string) {
+	if d.Events != nil {
+		d.Events.Emit(Event{Level: level, Code: code, Message: message})
+	}
+}
+
+func Init(ctx context.Context, cfg *config.Config, request InitRequest, dependencies Dependencies) error {
+	dependencies = dependencies.withDefaults()
+	root, err := resolveExplicitRoot(request.Root)
 	if err != nil {
 		return err
 	}
+	if cfg == nil {
+		return errors.New("config is required")
+	}
 
+	dependencies.emit(EventInfo, "workspace.init.started", "Initializing workspace")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("failed to create target path: %w", err)
 	}
 
-	appsDir := filepath.Join(root, "apps")
-	layersDir := filepath.Join(root, "layers")
-
-	if err := ensureDir(appsDir); err != nil {
+	if err := ensureDir(filepath.Join(root, "apps")); err != nil {
 		return err
 	}
-
-	if err := prepareForClone(layersDir, force); err != nil {
+	layersDir := filepath.Join(root, "layers")
+	if err := prepareForClone(layersDir, request.Force); err != nil {
 		return err
 	}
 
 	repo := cfg.Repos["init"]
 	branch := repo.Branch
-	if strings.TrimSpace(overrideLayerBranch) != "" {
-		branch = overrideLayerBranch
+	if strings.TrimSpace(request.LayerBranch) != "" {
+		branch = request.LayerBranch
 	}
+	if err := dependencies.Clone(ctx, repo.URL, branch, layersDir, repo.Protocol, repo.AuthPrompt); err != nil {
+		return err
+	}
+	dependencies.emit(EventSuccess, "workspace.init.completed", "Workspace initialized")
+	return nil
+}
 
-	if err := gitutil.Clone(ctx, repo.URL, branch, layersDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
+func CreateSite(ctx context.Context, cfg *config.Config, request CreateSiteRequest, dependencies Dependencies) error {
+	dependencies = dependencies.withDefaults()
+	root, err := resolveExplicitRoot(request.Root)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return errors.New("config is required")
+	}
+	if err := checkInitialized(root); err != nil {
 		return err
 	}
 
+	name := sanitizeName(request.Name)
+	if name == "" {
+		return errors.New("app name cannot be empty")
+	}
+	if err := validateModules(cfg, request.Modules); err != nil {
+		return err
+	}
+	targetDir := filepath.Join(root, "apps", name)
+	if err := prepareForClone(targetDir, request.Force); err != nil {
+		return err
+	}
+
+	repo := cfg.Repos["new"]
+	branch := repo.Branch
+	if strings.TrimSpace(request.Branch) != "" {
+		branch = request.Branch
+	}
+	dependencies.emit(EventInfo, "site.clone.started", "Cloning site starter")
+	if err := dependencies.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt); err != nil {
+		return err
+	}
+	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
+		return err
+	}
+	if err := updateLayerDependencies(targetDir, request.Modules); err != nil {
+		return err
+	}
+	if request.Auth != nil {
+		ctx = WithAuthCredentials(ctx, request.Auth.Username, request.Auth.Password)
+	}
+	if err := dependencies.ApplyLayerParameters(ctx, targetDir, request.Modules); err != nil {
+		return err
+	}
+	if err := updateNuxtExtends(targetDir, request.Modules); err != nil {
+		return err
+	}
+	if err := writeAppMetadata(targetDir, name, request.Modules); err != nil {
+		return err
+	}
+	if err := writeModuleSetup(targetDir, cfg, request.Modules); err != nil {
+		return err
+	}
+	dependencies.emit(EventSuccess, "site.create.completed", "Site created")
 	return nil
+}
+
+func CreateLayer(ctx context.Context, cfg *config.Config, request CreateLayerRequest, dependencies Dependencies) error {
+	dependencies = dependencies.withDefaults()
+	root, err := resolveExplicitRoot(request.Root)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return errors.New("config is required")
+	}
+	if err := checkInitialized(root); err != nil {
+		return err
+	}
+
+	name := sanitizeName(request.Name)
+	if name == "" {
+		return errors.New("layer name cannot be empty")
+	}
+	targetDir := filepath.Join(root, "layers", name)
+	if err := prepareForClone(targetDir, request.Force); err != nil {
+		return err
+	}
+
+	repo := cfg.Repos["create_layer"]
+	branch := repo.Branch
+	if strings.TrimSpace(request.Branch) != "" {
+		branch = request.Branch
+	}
+	dependencies.emit(EventInfo, "layer.clone.started", "Cloning layer starter")
+	if err := dependencies.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt); err != nil {
+		return err
+	}
+	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
+		return err
+	}
+	dependencies.emit(EventSuccess, "layer.create.completed", "Layer created")
+	return nil
+}
+
+// RunInit performs workspace initialization.
+func RunInit(ctx context.Context, cfg *config.Config, targetPath, overrideLayerBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
+	clone := cloneWithOptions(cloneOpts)
+	return Init(ctx, cfg, InitRequest{Root: targetPath, LayerBranch: overrideLayerBranch, Force: force}, Dependencies{Clone: clone})
 }
 
 // ResolveAppCreationInputs handles name/module selection logic.
@@ -109,52 +278,13 @@ func RunNew(ctx context.Context, cfg *config.Config, appName string, modules []s
 	if err != nil {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
-	appsDir := filepath.Join(root, "apps")
-
-	if err := checkInitialized(root); err != nil {
-		return err
-	}
-
-	targetDir := filepath.Join(appsDir, appName)
-	if err := prepareForClone(targetDir, force); err != nil {
-		return err
-	}
-
-	repo := cfg.Repos["new"]
-	branch := repo.Branch
-	if strings.TrimSpace(overrideBranch) != "" {
-		branch = overrideBranch
-	}
-
-	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
-		return err
-	}
-
-	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
-		return err
-	}
-
-	if err := updateLayerDependencies(targetDir, modules); err != nil {
-		return err
-	}
-
-	if err := applyLayerParameters(ctx, targetDir, modules); err != nil {
-		return err
-	}
-
-	if err := updateNuxtExtends(targetDir, modules); err != nil {
-		return err
-	}
-
-	if err := writeAppMetadata(targetDir, appName, modules); err != nil {
-		return err
-	}
-
-	if err := writeModuleSetup(targetDir, cfg, modules); err != nil {
-		return err
-	}
-
-	return nil
+	clone := cloneWithOptions(cloneOpts)
+	return CreateSite(ctx, cfg, CreateSiteRequest{Root: root, Name: appName, Modules: modules, Branch: overrideBranch, Force: force}, Dependencies{
+		Clone: clone,
+		ApplyLayerParameters: func(ctx context.Context, targetDir string, modules []string) error {
+			return applyLayerParameters(ctx, targetDir, modules, true)
+		},
+	})
 }
 
 // RunCreateLayer clones a new layer repository under /layers.
@@ -164,30 +294,29 @@ func RunCreateLayer(ctx context.Context, cfg *config.Config, layerName string, o
 		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
 
-	if err := checkInitialized(root); err != nil {
-		return err
-	}
+	return CreateLayer(ctx, cfg, CreateLayerRequest{Root: root, Name: layerName, Branch: overrideBranch, Force: force}, Dependencies{Clone: cloneWithOptions(cloneOpts)})
+}
 
-	layersDir := filepath.Join(root, "layers")
-	targetDir := filepath.Join(layersDir, layerName)
-	if err := prepareForClone(targetDir, force); err != nil {
-		return err
+func cloneWithOptions(cloneOpts []gitutil.CloneOption) CloneFunc {
+	return func(ctx context.Context, repoURL, branch, targetDir, protocol string, authPrompt bool, opts ...gitutil.CloneOption) error {
+		combined := append(append([]gitutil.CloneOption{}, cloneOpts...), opts...)
+		return gitutil.Clone(ctx, repoURL, branch, targetDir, protocol, authPrompt, combined...)
 	}
+}
 
-	repo := cfg.Repos["create_layer"]
-	branch := repo.Branch
-	if strings.TrimSpace(overrideBranch) != "" {
-		branch = overrideBranch
+func resolveExplicitRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", errors.New("workspace root is required")
 	}
+	return resolvePath(root)
+}
 
-	if err := gitutil.Clone(ctx, repo.URL, branch, targetDir, repo.Protocol, repo.AuthPrompt, cloneOpts...); err != nil {
-		return err
+func validateModules(cfg *config.Config, modules []string) error {
+	for _, module := range modules {
+		if _, ok := cfg.Modules[module]; !ok {
+			return fmt.Errorf("module '%s' not found in config", module)
+		}
 	}
-
-	if err := reinitializeGitRepo(ctx, targetDir); err != nil {
-		return err
-	}
-
 	return nil
 }
 

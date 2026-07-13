@@ -209,7 +209,7 @@ git commit -m "refactor: add testable CLI command boundary"
 - Produces request types with explicit `Root string`; web callers cannot set `Force` true.
 - Produces `workspace.EventSink` for safe structured progress.
 
-- [ ] **Step 1: Write failing explicit-root and non-destructive tests**
+- [x] **Step 1: Write failing explicit-root and non-destructive tests**
 
 Use `t.TempDir`, fixture `apps/layers`, and an injected fake cloner. Verify creation uses `request.Root` even after changing process cwd, rejects existing non-empty targets when `Force` is false, and never prompts when credentials are supplied in the request context.
 
@@ -227,13 +227,13 @@ func TestCreateSiteUsesExplicitRoot(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the focused workspace tests and verify failure**
+- [x] **Step 2: Run the focused workspace tests and verify failure**
 
 Run: `go test ./internal/workspace -run 'Test(CreateSite|CreateLayer|Init)' -count=1`
 
 Expected: FAIL because the request/dependency APIs do not exist.
 
-- [ ] **Step 3: Implement requests, dependencies, and event sink**
+- [x] **Step 3: Implement requests, dependencies, and event sink**
 
 ```go
 type InitRequest struct { Root, LayerBranch string; Force bool }
@@ -255,13 +255,13 @@ type Dependencies struct {
 
 Default missing dependencies to current production adapters. Move stdin collection into CLI/TUI adapters; application functions validate all required values and return typed errors. Keep legacy `RunInit`, `RunNew`, and `RunCreateLayer` wrappers temporarily so existing callers stay green.
 
-- [ ] **Step 4: Update TUI callers and run regression tests**
+- [x] **Step 4: Update TUI callers and run regression tests**
 
 Run: `go test ./internal/workspace ./... -count=1`
 
 Expected: PASS, including prior TUI-independent tests.
 
-- [ ] **Step 5: Commit explicit-root provisioning**
+- [x] **Step 5: Commit explicit-root provisioning**
 
 ```bash
 git add internal/workspace
