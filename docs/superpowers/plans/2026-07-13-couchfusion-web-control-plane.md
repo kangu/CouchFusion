@@ -404,7 +404,7 @@ git commit -m "feat: add layered CouchFusion configuration"
 - Produces: `project.Catalog.Tasks(site Site) []Task`.
 - Produces task IDs resolved server-side to exact Bun commands.
 
-- [ ] **Step 1: Write failing safe-inspection tests**
+- [x] **Step 1: Write failing safe-inspection tests**
 
 Create filesystem fixtures for valid/malformed metadata, sites/layers sorting, missing roots, direct-child-only listing, symlink escape rejection, dependency state, and package scripts.
 
@@ -418,13 +418,13 @@ func TestCatalogRejectsUndeclaredTask(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run project tests and verify failure**
+- [x] **Step 2: Run project tests and verify failure**
 
 Run: `go test ./internal/project -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement read-only inspection and task resolution**
+- [x] **Step 3: Implement read-only inspection and task resolution**
 
 Use `os.ReadDir` direct children, `json.Decoder`, canonical path containment, and warning accumulation. Define task commands internally:
 
@@ -440,13 +440,13 @@ func (Catalog) Resolve(site Site, taskID string) (Command, error) {
 }
 ```
 
-- [ ] **Step 4: Run project tests**
+- [x] **Step 4: Run project tests**
 
 Run: `go test -race ./internal/project -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit project inspection**
+- [x] **Step 5: Commit project inspection**
 
 ```bash
 git add internal/project
