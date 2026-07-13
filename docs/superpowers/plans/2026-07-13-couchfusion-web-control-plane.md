@@ -279,7 +279,7 @@ git commit -m "refactor: make workspace provisioning explicit and reusable"
 - Produces: `List`, `Register`, `Forget`, `Relink`, and `Touch` operations.
 - Consumes: filesystem validation of direct `apps` and `layers` directories.
 
-- [ ] **Step 1: Write failing registry tests**
+- [x] **Step 1: Write failing registry tests**
 
 Cover `0600` persistence, stable IDs, canonical roots, duplicate rejection, invalid workspace rejection, missing-root list behavior, forget-without-delete, and relink.
 
@@ -294,13 +294,13 @@ func TestForgetDoesNotDeleteWorkspace(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run registry tests and verify failure**
+- [x] **Step 2: Run registry tests and verify failure**
 
 Run: `go test ./internal/registry -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement atomic registry persistence**
+- [x] **Step 3: Implement atomic registry persistence**
 
 ```go
 type Entry struct {
@@ -317,13 +317,13 @@ type Service struct { Store Store; Now func() time.Time; NewID func() (string, e
 
 Canonicalize with `filepath.Abs`, `filepath.Clean`, and `filepath.EvalSymlinks` when the root exists. Persist JSON through a same-directory temporary file, `Chmod(0600)`, `Sync`, close, and rename. Create the parent directory with `0700`.
 
-- [ ] **Step 4: Run registry tests and race check**
+- [x] **Step 4: Run registry tests and race check**
 
 Run: `go test -race ./internal/registry -count=1`
 
 Expected: PASS with no race report.
 
-- [ ] **Step 5: Commit registry support**
+- [x] **Step 5: Commit registry support**
 
 ```bash
 git add internal/registry
