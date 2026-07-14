@@ -31,6 +31,8 @@ type layerResultMsg struct {
 	err error
 }
 
+type CreateLayerOperation func(context.Context, string, string, bool, *ui.LogBuffer) error
+
 type createLayerModel struct {
 	ctx  context.Context
 	cfg  *config.Config
@@ -40,15 +42,28 @@ type createLayerModel struct {
 	branchInput textinput.Model
 	force       bool
 
-	spinner spinner.Model
-	step    layerStep
-	err     error
-	aborted bool
-	done    bool
-	layer   string
+	spinner   spinner.Model
+	step      layerStep
+	err       error
+	aborted   bool
+	done      bool
+	layer     string
+	operation CreateLayerOperation
 }
 
 func newCreateLayerModel(ctx context.Context, cfg *config.Config, nameHint, branchHint string, force bool, logs *ui.LogBuffer) *createLayerModel {
+	return newCreateLayerModelWithOperation(ctx, cfg, nameHint, branchHint, force, logs, nil)
+}
+
+func newCreateLayerModelWithOperation(ctx context.Context, cfg *config.Config, nameHint, branchHint string, force bool, logs *ui.LogBuffer, operation CreateLayerOperation) *createLayerModel {
+	if operation == nil {
+		operation = func(ctx context.Context, name, branch string, force bool, logs *ui.LogBuffer) error {
+			logWriter := logs.Writer(ui.Info)
+			return RunCreateLayer(ctx, cfg, name, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
+				logs.Infof(format, args...)
+			}))
+		}
+	}
 	name := textinput.New()
 	name.Placeholder = "layer-name"
 	name.CharLimit = 64
@@ -75,6 +90,7 @@ func newCreateLayerModel(ctx context.Context, cfg *config.Config, nameHint, bran
 		force:       force,
 		spinner:     spin,
 		step:        layerStepName,
+		operation:   operation,
 	}
 }
 
@@ -199,7 +215,6 @@ func (m *createLayerModel) runCreateLayerCmd() tea.Cmd {
 	name := m.layer
 	branch := strings.TrimSpace(m.branchInput.Value())
 	force := m.force
-	cfg := m.cfg
 	ctx := m.ctx
 	logs := m.logs
 
@@ -212,10 +227,7 @@ func (m *createLayerModel) runCreateLayerCmd() tea.Cmd {
 			logs.Warnf("Force flag enabled; existing directory may be reused if empty.")
 		}
 
-		logWriter := logs.Writer(ui.Info)
-		err := RunCreateLayer(ctx, cfg, name, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
-			logs.Infof(format, args...)
-		}))
+		err := m.operation(ctx, name, branch, force, logs)
 		if err != nil {
 			return layerResultMsg{err: err}
 		}
@@ -313,8 +325,12 @@ func (m *createLayerModel) Result() (string, error) {
 }
 
 func RunCreateLayerTUI(ctx context.Context, cfg *config.Config, nameHint, branchHint string, force bool) (string, error) {
+	return RunCreateLayerTUIWithOperation(ctx, cfg, nameHint, branchHint, force, nil)
+}
+
+func RunCreateLayerTUIWithOperation(ctx context.Context, cfg *config.Config, nameHint, branchHint string, force bool, operation CreateLayerOperation) (string, error) {
 	logs := ui.NewLogBuffer(128)
-	model := newCreateLayerModel(ctx, cfg, nameHint, branchHint, force, logs)
+	model := newCreateLayerModelWithOperation(ctx, cfg, nameHint, branchHint, force, logs, operation)
 	root := ui.NewRootModel("Create Layer", "Scaffold a new reusable layer inside /layers.", model, logs, nil)
 	final, err := ui.Run(root, tea.WithAltScreen())
 	if err != nil {

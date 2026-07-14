@@ -65,7 +65,15 @@ func dispatch(ctx context.Context, name string, args []string, command Command) 
 	if command == nil {
 		return ExitError{Code: 1, Err: fmt.Errorf("%s command is unavailable", name)}
 	}
-	return command(ctx, args)
+	err := command(ctx, args)
+	if err == nil {
+		return nil
+	}
+	var exitError ExitError
+	if errors.As(err, &exitError) {
+		return err
+	}
+	return ExitError{Code: 1, Err: err}
 }
 
 func (streams IO) withDefaults() IO {

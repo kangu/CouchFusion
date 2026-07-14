@@ -576,7 +576,7 @@ git commit -m "feat: manage CouchFusion site processes"
 - Produces: typed error codes `validation`, `conflict`, `not_found`, `unavailable`, `filesystem`, `git`, `process`, `config`, and `internal`.
 - Consumes: registry, config, project, jobs, processes, workspace, Git/Bun/CouchDB managers.
 
-- [ ] **Step 1: Write failing service orchestration tests**
+- [x] **Step 1: Write failing service orchestration tests**
 
 Test initialize-and-register success/failure, site/layer jobs, health without installation, explicit install jobs, task job/process routing, workspace forget safety, and error mapping with fakes.
 
@@ -590,27 +590,27 @@ func TestInitializeRegistersOnlyAfterProvisioningSuccess(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run app tests and verify failure**
+- [x] **Step 2: Run app tests and verify failure**
 
 Run: `go test ./internal/app -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement the composition service**
+- [x] **Step 3: Implement the composition service**
 
 Define narrow interfaces per dependency and immutable request DTOs. Convert lower-level errors once at the application boundary. Route finite work to `jobs.Manager`, long-running `dev/preview` tasks to `processes.Manager`, and read operations directly to inspectors.
 
-- [ ] **Step 4: Move CLI commands onto the service**
+- [x] **Step 4: Move CLI commands onto the service**
 
 Make `cli.Run` parse flags and collect terminal inputs, then call `app.Service`. Keep Bubble Tea as a CLI presentation adapter. Remove `logging.Fatalf` and workflow-level `os.Exit` from reusable paths.
 
-- [ ] **Step 5: Run all backend tests**
+- [x] **Step 5: Run all backend tests**
 
 Run: `go test -race ./... -count=1 && go vet ./...`
 
 Expected: PASS with no race or vet diagnostics.
 
-- [ ] **Step 6: Commit shared application services**
+- [x] **Step 6: Commit shared application services**
 
 ```bash
 git add internal/app internal/cli main.go internal/workspace

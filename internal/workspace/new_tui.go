@@ -36,6 +36,8 @@ type newAppResultMsg struct {
 	err error
 }
 
+type CreateSiteOperation func(context.Context, string, []string, string, bool, string, string, *ui.LogBuffer) error
+
 type newAppModel struct {
 	ctx    context.Context
 	cfg    *config.Config
@@ -62,12 +64,28 @@ type newAppModel struct {
 	spinner spinner.Model
 	status  string
 
-	err     error
-	aborted bool
-	done    bool
+	err       error
+	aborted   bool
+	done      bool
+	operation CreateSiteOperation
 }
 
 func newAppModelWithDefaults(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer) *newAppModel {
+	return newAppModelWithOperation(ctx, cfg, nameHint, moduleHints, branch, force, logs, nil)
+}
+
+func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer, operation CreateSiteOperation) *newAppModel {
+	if operation == nil {
+		operation = func(ctx context.Context, name string, modules []string, branch string, force bool, username, password string, logs *ui.LogBuffer) error {
+			if username != "" && password != "" {
+				ctx = WithAuthCredentials(ctx, username, password)
+			}
+			logWriter := logs.Writer(ui.Info)
+			return RunNew(ctx, cfg, name, modules, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
+				logs.Infof(format, args...)
+			}))
+		}
+	}
 	defaults := cfg.DefaultModuleSelection()
 	modulesList := availableModules(cfg)
 
@@ -116,6 +134,7 @@ func newAppModelWithDefaults(ctx context.Context, cfg *config.Config, nameHint s
 		authUserInput: authUser,
 		authPassInput: authPass,
 		spinner:       spin,
+		operation:     operation,
 	}
 
 	if sanitizedName != "" {
@@ -307,7 +326,6 @@ func (m *newAppModel) runCreateCmd() tea.Cmd {
 	modules := append([]string{}, m.modules...)
 	branch := m.branch
 	force := m.force
-	cfg := m.cfg
 	ctx := m.ctx
 	logs := m.logs
 
@@ -318,21 +336,16 @@ func (m *newAppModel) runCreateCmd() tea.Cmd {
 		logs.Infof("Target directory: %s", targetDir)
 		logs.Infof("Selected modules: %s", strings.Join(modules, ", "))
 
-		cmdCtx := ctx
 		if containsModule(modules, "auth") {
 			if m.authUsername != "" && m.authPassword != "" {
 				logs.Infof("Using provided CouchDB admin user '%s'", m.authUsername)
-				cmdCtx = WithAuthCredentials(cmdCtx, m.authUsername, m.authPassword)
 			} else {
 				logs.Warnf("Auth module selected; CouchDB credentials will be requested during setup.")
 			}
 		}
 
-		logWriter := logs.Writer(ui.Info)
 		logs.Infof("Cloning starter repository...")
-		err := RunNew(cmdCtx, cfg, name, modules, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
-			logs.Infof(format, args...)
-		}))
+		err := m.operation(ctx, name, modules, branch, force, m.authUsername, m.authPassword, logs)
 		if err != nil {
 			return newAppResultMsg{err: err}
 		}
@@ -547,10 +560,14 @@ func (m *newAppModel) Result() (string, []string, error) {
 
 // RunNewTUI runs the interactive Bubble Tea experience for scaffolding a new app.
 func RunNewTUI(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool) (string, []string, error) {
+	return RunNewTUIWithOperation(ctx, cfg, nameHint, modulesHint, branch, force, nil)
+}
+
+func RunNewTUIWithOperation(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool, operation CreateSiteOperation) (string, []string, error) {
 	logBuffer := ui.NewLogBuffer(128)
 
 	initialModules := parseModules(modulesHint)
-	model := newAppModelWithDefaults(ctx, cfg, nameHint, initialModules, branch, force, logBuffer)
+	model := newAppModelWithOperation(ctx, cfg, nameHint, initialModules, branch, force, logBuffer, operation)
 
 	root := ui.NewRootModel("Create Nuxt App", "Scaffold a new Nuxt application with CouchFusion layers.", model, logBuffer, nil)
 	finalModel, err := ui.Run(root, tea.WithAltScreen())

@@ -90,6 +90,10 @@ func TestRunReturnsCommandError(t *testing.T) {
 	if !errors.Is(err, want) {
 		t.Fatalf("Run() error = %v, want %v", err, want)
 	}
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("Run() error = %#v, want ExitError code 1", err)
+	}
 }
 
 func TestRunRejectsUnavailableCommand(t *testing.T) {

@@ -6,45 +6,61 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/checks"
 	"github.com/nuxt-apps/couchfusion/internal/cli"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
+	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
+	"github.com/nuxt-apps/couchfusion/internal/ui"
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
 
 const version = cli.Version
 
 func main() {
-	err := cli.Run(context.Background(), os.Args[1:], cli.IO{
+	os.Exit(runMain())
+}
+
+func runMain() int {
+	service, err := app.NewDefaultService("")
+	if err != nil {
+		logging.Errorf("%v", err)
+		return 1
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = service.Shutdown(ctx)
+	}()
+
+	err = cli.Run(context.Background(), os.Args[1:], cli.IO{
 		In:  os.Stdin,
 		Out: os.Stdout,
 		Err: os.Stderr,
 	}, cli.Commands{
-		Init: func(_ context.Context, args []string) error {
-			runInit(args)
-			return nil
+		Init: func(ctx context.Context, args []string) error {
+			return runInit(ctx, service, args)
 		},
-		New: func(_ context.Context, args []string) error {
-			runNew(args)
-			return nil
+		New: func(ctx context.Context, args []string) error {
+			return runNew(ctx, service, args)
 		},
-		CreateLayer: func(_ context.Context, args []string) error {
-			runCreateLayer(args)
-			return nil
+		CreateLayer: func(ctx context.Context, args []string) error {
+			return runCreateLayer(ctx, service, args)
 		},
 	})
 	if err == nil {
-		return
+		return 0
 	}
 
 	logging.Errorf("%v", err)
@@ -53,9 +69,9 @@ func main() {
 		printUsage()
 	}
 	if errors.As(err, &exitErr) {
-		os.Exit(exitErr.Code)
+		return exitErr.Code
 	}
-	os.Exit(1)
+	return 1
 }
 
 func printUsage() {
@@ -66,34 +82,36 @@ func printUsage() {
 	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force] [--yes]")
 }
 
-func runInit(args []string) {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
+func runInit(ctx context.Context, service *app.Service, args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "", "Path to config file")
 	targetPath := fs.String("path", ".", "Target directory to initialize")
 	layerBranch := fs.String("layers-branch", "", "Override branch for layers clone")
 	force := fs.Bool("force", false, "Allow reinitialization when directories exist")
 	yes := addYesFlags(fs)
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return cli.ExitError{Code: 2, Err: err}
+	}
 
 	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
-		logging.Fatalf("failed to load config: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if usedDefaultConfig {
 		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
-	ctx := context.Background()
 	if err := ensureGit(ctx, *yes); err != nil {
-		logging.Fatalf("git preflight failed: %v", err)
+		return fmt.Errorf("git preflight failed: %w", err)
 	}
 
 	if err := ensureBun(ctx, *yes); err != nil {
-		logging.Fatalf("bun preflight failed: %v", err)
+		return fmt.Errorf("bun preflight failed: %w", err)
 	}
 
 	if err := ensureCouchDB(ctx, *yes); err != nil {
-		logging.Fatalf("couchdb preflight failed: %v", err)
+		return fmt.Errorf("couchdb preflight failed: %w", err)
 	}
 
 	warnings := checks.Run(ctx)
@@ -102,62 +120,79 @@ func runInit(args []string) {
 	}
 
 	if workspace.ShouldUseTUI() {
-		target, err := workspace.RunInitTUI(ctx, cfg, *targetPath, *layerBranch, *force)
+		target, err := workspace.RunInitTUIWithOperation(ctx, cfg, *targetPath, *layerBranch, *force, func(ctx context.Context, root, branch string, force bool, logs *ui.LogBuffer) error {
+			started, err := service.InitializeWorkspace(ctx, app.InitializeWorkspaceRequest{Root: root, LayerBranch: branch, Force: force, ConfigPath: *configPath}, "cli")
+			if err != nil {
+				return err
+			}
+			return waitForJobWithEvents(ctx, service, started.ID, func(event jobs.Event) {
+				logJobEvent(logs, event)
+			})
+		})
 		if err != nil {
 			if errors.Is(err, workspace.ErrAborted) {
 				logging.Warnf("init cancelled by user")
-				return
+				return nil
 			}
-			logging.Fatalf("init failed: %v", err)
+			return fmt.Errorf("init failed: %w", err)
 		}
 		logging.Infof("Initialization complete at %s", target)
-		return
+		return nil
 	}
 
-	if err := workspace.RunInit(ctx, cfg, *targetPath, *layerBranch, *force); err != nil {
-		logging.Fatalf("init failed: %v", err)
+	started, err := service.InitializeWorkspace(ctx, app.InitializeWorkspaceRequest{
+		Root: *targetPath, LayerBranch: *layerBranch, Force: *force, ConfigPath: *configPath,
+	}, "cli")
+	if err != nil {
+		return fmt.Errorf("init failed: %w", err)
+	}
+	if err := waitForJob(ctx, service, started.ID); err != nil {
+		return fmt.Errorf("init failed: %w", err)
 	}
 
 	logging.Infof("Initialization complete.")
+	return nil
 }
 
-func runNew(args []string) {
-	fs := flag.NewFlagSet("new", flag.ExitOnError)
+func runNew(ctx context.Context, service *app.Service, args []string) error {
+	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "", "Path to config file")
 	name := fs.String("name", "", "Name of the new app")
 	modules := fs.String("modules", "", "Comma-separated module list")
 	branch := fs.String("branch", "", "Override starter branch")
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	yes := addYesFlags(fs)
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return cli.ExitError{Code: 2, Err: err}
+	}
 
 	if *name == "" && len(fs.Args()) > 0 {
 		*name = fs.Args()[0]
 	}
 
 	if err := workspace.EnsureCurrentWorkspace(); err != nil {
-		logging.Fatalf("workspace validation failed: %v", err)
+		return fmt.Errorf("workspace validation failed: %w", err)
 	}
 
 	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
-		logging.Fatalf("failed to load config: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if usedDefaultConfig {
 		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
-	ctx := context.Background()
 	if err := ensureGit(ctx, *yes); err != nil {
-		logging.Fatalf("git preflight failed: %v", err)
+		return fmt.Errorf("git preflight failed: %w", err)
 	}
 
 	if err := ensureBun(ctx, *yes); err != nil {
-		logging.Fatalf("bun preflight failed: %v", err)
+		return fmt.Errorf("bun preflight failed: %w", err)
 	}
 
 	if err := ensureCouchDB(ctx, *yes); err != nil {
-		logging.Fatalf("couchdb preflight failed: %v", err)
+		return fmt.Errorf("couchdb preflight failed: %w", err)
 	}
 
 	warnings := checks.Run(ctx)
@@ -166,61 +201,86 @@ func runNew(args []string) {
 	}
 
 	if workspace.ShouldUseTUI() {
-		appName, selectedModules, err := workspace.RunNewTUI(ctx, cfg, *name, *modules, *branch, *force)
+		appName, selectedModules, err := workspace.RunNewTUIWithOperation(ctx, cfg, *name, *modules, *branch, *force, func(ctx context.Context, name string, modules []string, branch string, force bool, username, password string, logs *ui.LogBuffer) error {
+			root, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			started, err := service.CreateSiteAtRoot(ctx, root, app.CreateSiteRequest{Name: name, Modules: modules, Branch: branch, Force: force, Username: username, Password: password, ConfigPath: *configPath}, "cli")
+			if err != nil {
+				return err
+			}
+			return waitForJobWithEvents(ctx, service, started.ID, func(event jobs.Event) {
+				logJobEvent(logs, event)
+			})
+		})
 		if err != nil {
 			if errors.Is(err, workspace.ErrAborted) {
 				logging.Warnf("new cancelled by user")
-				return
+				return nil
 			}
-			logging.Fatalf("new failed: %v", err)
+			return fmt.Errorf("new failed: %w", err)
 		}
 
 		logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))
-		return
+		return nil
 	}
 
 	appName, selectedModules, err := workspace.ResolveAppCreationInputs(cfg, *name, *modules)
 	if err != nil {
-		logging.Fatalf("input error: %v", err)
+		return fmt.Errorf("input error: %w", err)
 	}
-
-	if err := workspace.RunNew(ctx, cfg, appName, selectedModules, *branch, *force); err != nil {
-		logging.Fatalf("new failed: %v", err)
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determine workspace root: %w", err)
+	}
+	started, err := service.CreateSiteAtRoot(ctx, root, app.CreateSiteRequest{
+		Name: appName, Modules: selectedModules, Branch: *branch, Force: *force, ConfigPath: *configPath,
+	}, "cli")
+	if err != nil {
+		return fmt.Errorf("new failed: %w", err)
+	}
+	if err := waitForJob(ctx, service, started.ID); err != nil {
+		return fmt.Errorf("new failed: %w", err)
 	}
 
 	logging.Infof("App '%s' created with modules: %s", appName, strings.Join(selectedModules, ", "))
+	return nil
 }
 
-func runCreateLayer(args []string) {
-	fs := flag.NewFlagSet("create_layer", flag.ExitOnError)
+func runCreateLayer(ctx context.Context, service *app.Service, args []string) error {
+	fs := flag.NewFlagSet("create_layer", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "", "Path to config file")
 	name := fs.String("name", "", "Name of the new layer")
 	branch := fs.String("branch", "", "Override starter branch")
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	yes := addYesFlags(fs)
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return cli.ExitError{Code: 2, Err: err}
+	}
 
 	cfg, usedDefaultConfig, err := config.Load(*configPath)
 	if err != nil {
-		logging.Fatalf("failed to load config: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if usedDefaultConfig {
 		logging.Warnf("No ~/.couchfusion/config.yaml found; using embedded default configuration.")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 
 	if err := ensureGit(ctx, *yes); err != nil {
-		logging.Fatalf("git preflight failed: %v", err)
+		return fmt.Errorf("git preflight failed: %w", err)
 	}
 
 	if err := ensureBun(ctx, *yes); err != nil {
-		logging.Fatalf("bun preflight failed: %v", err)
+		return fmt.Errorf("bun preflight failed: %w", err)
 	}
 
 	if err := ensureCouchDB(ctx, *yes); err != nil {
-		logging.Fatalf("couchdb preflight failed: %v", err)
+		return fmt.Errorf("couchdb preflight failed: %w", err)
 	}
 
 	warnings := checks.Run(ctx)
@@ -229,28 +289,112 @@ func runCreateLayer(args []string) {
 	}
 
 	if workspace.ShouldUseTUI() {
-		layerName, err := workspace.RunCreateLayerTUI(ctx, cfg, *name, *branch, *force)
+		layerName, err := workspace.RunCreateLayerTUIWithOperation(ctx, cfg, *name, *branch, *force, func(ctx context.Context, name, branch string, force bool, logs *ui.LogBuffer) error {
+			root, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			started, err := service.CreateLayerAtRoot(ctx, root, app.CreateLayerRequest{Name: name, Branch: branch, Force: force, ConfigPath: *configPath}, "cli")
+			if err != nil {
+				return err
+			}
+			return waitForJobWithEvents(ctx, service, started.ID, func(event jobs.Event) {
+				logJobEvent(logs, event)
+			})
+		})
 		if err != nil {
 			if errors.Is(err, workspace.ErrAborted) {
 				logging.Warnf("create_layer cancelled by user")
-				return
+				return nil
 			}
-			logging.Fatalf("create_layer failed: %v", err)
+			return fmt.Errorf("create_layer failed: %w", err)
 		}
 		logging.Infof("Layer '%s' created.", layerName)
-		return
+		return nil
 	}
 
 	layerName, err := workspace.ResolveLayerName(*name)
 	if err != nil {
-		logging.Fatalf("input error: %v", err)
+		return fmt.Errorf("input error: %w", err)
 	}
-
-	if err := workspace.RunCreateLayer(ctx, cfg, layerName, *branch, *force); err != nil {
-		logging.Fatalf("create_layer failed: %v", err)
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determine workspace root: %w", err)
+	}
+	started, err := service.CreateLayerAtRoot(ctx, root, app.CreateLayerRequest{
+		Name: layerName, Branch: *branch, Force: *force, ConfigPath: *configPath,
+	}, "cli")
+	if err != nil {
+		return fmt.Errorf("create_layer failed: %w", err)
+	}
+	if err := waitForJob(ctx, service, started.ID); err != nil {
+		return fmt.Errorf("create_layer failed: %w", err)
 	}
 
 	logging.Infof("Layer '%s' created.", layerName)
+	return nil
+}
+
+func waitForJob(ctx context.Context, service *app.Service, id string) error {
+	return waitForJobWithEvents(ctx, service, id, func(event jobs.Event) {
+		switch event.Level {
+		case "error":
+			logging.Errorf("%s", event.Text)
+		case "warn":
+			logging.Warnf("%s", event.Text)
+		default:
+			logging.Infof("%s", event.Text)
+		}
+	})
+}
+
+func waitForJobWithEvents(ctx context.Context, service *app.Service, id string, onEvent func(jobs.Event)) error {
+	events, unsubscribe, err := service.SubscribeJob(id, 0)
+	if err != nil {
+		return err
+	}
+	defer unsubscribe()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = service.CancelJob(id)
+			return ctx.Err()
+		case event, ok := <-events:
+			if !ok {
+				snapshot, err := service.Job(id)
+				if err != nil {
+					return err
+				}
+				switch snapshot.Status {
+				case jobs.Succeeded:
+					return nil
+				case jobs.Cancelled:
+					return context.Canceled
+				default:
+					if snapshot.Error != nil {
+						return errors.New(snapshot.Error.Message)
+					}
+					return errors.New("job failed")
+				}
+			}
+			if onEvent != nil {
+				onEvent(event)
+			}
+		}
+	}
+}
+
+func logJobEvent(logs *ui.LogBuffer, event jobs.Event) {
+	switch event.Level {
+	case "error":
+		logs.Errorf("%s", event.Text)
+	case "warn":
+		logs.Warnf("%s", event.Text)
+	case "success":
+		logs.Successf("%s", event.Text)
+	default:
+		logs.Infof("%s", event.Text)
+	}
 }
 
 func init() {

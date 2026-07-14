@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"strings"
@@ -8,6 +9,23 @@ import (
 
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
 )
+
+func TestWorkflowFlagErrorsReturnWithoutExiting(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "init", run: func() error { return runInit(context.Background(), nil, []string{"--unknown"}) }},
+		{name: "new", run: func() error { return runNew(context.Background(), nil, []string{"--unknown"}) }},
+		{name: "create layer", run: func() error { return runCreateLayer(context.Background(), nil, []string{"--unknown"}) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); err == nil {
+				t.Fatal("expected flag parsing error")
+			}
+		})
+	}
+}
 
 func TestAddYesFlagsAcceptsLongAndShortForms(t *testing.T) {
 	for _, args := range [][]string{{"--yes"}, {"-y"}} {
