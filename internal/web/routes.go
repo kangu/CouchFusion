@@ -27,7 +27,10 @@ func (s *Server) routes() http.Handler {
 			writeError(writer, http.StatusNotFound, "not_found", "The requested API route was not found")
 		})
 	}
-	static := staticHandler()
+	frontend := staticHandler()
+	if s.options.FrontendHandler != nil {
+		frontend = s.options.FrontendHandler
+	}
 
 	root := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/" && request.Method == http.MethodGet && request.URL.Query().Has("token") {
@@ -48,7 +51,7 @@ func (s *Server) routes() http.Handler {
 			s.serveAPI(api, writer, request)
 			return
 		}
-		static.ServeHTTP(writer, request)
+		frontend.ServeHTTP(writer, request)
 	})
 	return s.recoverPanics(s.securityHeaders(s.validateHost(root)))
 }

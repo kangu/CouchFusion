@@ -18,12 +18,13 @@ import (
 const DefaultMaxBodyBytes int64 = 1 << 20
 
 type Options struct {
-	Port         int
-	MaxBodyBytes int64
-	APIHandler   http.Handler
-	Application  Application
-	Listener     net.Listener
-	Random       io.Reader
+	Port            int
+	MaxBodyBytes    int64
+	APIHandler      http.Handler
+	FrontendHandler http.Handler
+	Application     Application
+	Listener        net.Listener
+	Random          io.Reader
 }
 
 type LaunchInfo struct {

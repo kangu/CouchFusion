@@ -56,7 +56,7 @@
 - Consumes: `randomToken(io.Reader)`, the existing authenticated route boundary, and a trusted internal `*url.URL`.
 - Produces: `func NewDevelopmentProxy(target *url.URL, random io.Reader) (http.Handler, error)` and `web.Options.FrontendHandler http.Handler`.
 
-- [ ] **Step 1: Write failing frontend-injection and HTML-security tests**
+- [x] **Step 1: Write failing frontend-injection and HTML-security tests**
 
 Add tests that construct an upstream `httptest.Server`, inject the proxy, authenticate through the existing launch-token helper, and verify that API traffic never reaches the frontend:
 
@@ -124,13 +124,13 @@ func TestDevelopmentProxyAddsNonceWithoutBufferingCSS(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the web tests and verify the red state**
+- [x] **Step 2: Run the web tests and verify the red state**
 
 Run: `go test ./internal/web -run 'TestDevelopment' -count=1`
 
 Expected: FAIL because `Options.FrontendHandler` and `NewDevelopmentProxy` do not exist.
 
-- [ ] **Step 3: Add the injectable frontend boundary**
+- [x] **Step 3: Add the injectable frontend boundary**
 
 Add to `internal/web/server.go`:
 
@@ -157,7 +157,7 @@ if s.options.FrontendHandler != nil {
 
 After authentication and API dispatch, call `frontend.ServeHTTP(writer, request)`.
 
-- [ ] **Step 4: Implement the nonce-aware reverse proxy**
+- [x] **Step 4: Implement the nonce-aware reverse proxy**
 
 Create `NewDevelopmentProxy` with `httputil.ReverseProxy`. Reject nil or non-loopback targets. Use `Rewrite` to set the target URL, preserve forwarding headers, and remove `Accept-Encoding` so HTML can be safely rewritten. In `ModifyResponse`, return immediately for non-HTML content; for HTML, read and close the body, generate a nonce, apply it to every `<script` tag, replace the body and content length, delete stale `ETag` and `Content-Encoding`, and set:
 
@@ -167,11 +167,11 @@ const developmentCSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'no
 
 Return proxy failures as `502 Bad Gateway` without exposing the target address.
 
-- [ ] **Step 5: Add a real WebSocket-upgrade forwarding test**
+- [x] **Step 5: Add a real WebSocket-upgrade forwarding test**
 
 Use two real loopback `httptest.Server` instances. The upstream handler must hijack an upgrade request, return `101 Switching Protocols`, read `ping`, and write `pong`. Dial the authenticated Go server with `net.Dial`, include the session cookie plus upgrade headers, then assert the `101` response and `pong` payload. This proves the standard-library proxy preserves the HMR transport rather than testing an HTTP approximation.
 
-- [ ] **Step 6: Run and commit Task 1**
+- [x] **Step 6: Run and commit Task 1**
 
 Run:
 
