@@ -98,13 +98,14 @@ type InitializeWorkspaceRequest struct {
 }
 
 type CreateSiteRequest struct {
-	Name       string
-	Modules    []string
-	Branch     string
-	Force      bool
-	Username   string
-	Password   string
-	ConfigPath string
+	Name          string
+	Modules       []string
+	DBLoginPrefix string
+	Branch        string
+	Force         bool
+	Username      string
+	Password      string
+	ConfigPath    string
 }
 
 type CreateLayerRequest struct {

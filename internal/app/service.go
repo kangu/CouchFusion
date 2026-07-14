@@ -187,8 +187,8 @@ func (s *Service) InstallDependency(ctx context.Context, component, sessionID st
 }
 
 func (s *Service) CreateSite(ctx context.Context, workspaceID string, request CreateSiteRequest, sessionID string) (jobs.Snapshot, error) {
-	if strings.TrimSpace(request.Name) == "" {
-		return jobs.Snapshot{}, ValidationError("name", "Site name is required")
+	if err := validateCreateSiteRequest(request); err != nil {
+		return jobs.Snapshot{}, err
 	}
 	entry, err := s.workspaceEntry(ctx, workspaceID)
 	if err != nil {
@@ -198,13 +198,23 @@ func (s *Service) CreateSite(ctx context.Context, workspaceID string, request Cr
 }
 
 func (s *Service) CreateSiteAtRoot(ctx context.Context, root string, request CreateSiteRequest, sessionID string) (jobs.Snapshot, error) {
-	if strings.TrimSpace(request.Name) == "" {
-		return jobs.Snapshot{}, ValidationError("name", "Site name is required")
+	if err := validateCreateSiteRequest(request); err != nil {
+		return jobs.Snapshot{}, err
 	}
 	if strings.TrimSpace(root) == "" {
 		return jobs.Snapshot{}, ValidationError("root", "Workspace root is required")
 	}
 	return s.startSiteJob(ctx, root, root, request, sessionID)
+}
+
+func validateCreateSiteRequest(request CreateSiteRequest) error {
+	if strings.TrimSpace(request.Name) == "" {
+		return ValidationError("name", "Site name is required")
+	}
+	if err := workspace.ValidateDBLoginPrefix(request.DBLoginPrefix); err != nil {
+		return ValidationError("dbLoginPrefix", err.Error())
+	}
+	return nil
 }
 
 func (s *Service) startSiteJob(ctx context.Context, workspaceLock, root string, request CreateSiteRequest, sessionID string) (jobs.Snapshot, error) {
@@ -449,7 +459,7 @@ func (workspaceProvisioner) CreateSite(ctx context.Context, cfg config.Config, r
 	if request.Username != "" || request.Password != "" {
 		auth = &workspace.AuthCredentials{Username: request.Username, Password: request.Password}
 	}
-	return workspace.CreateSite(ctx, &cfg, workspace.CreateSiteRequest{Root: root, Name: request.Name, Modules: append([]string{}, request.Modules...), Branch: request.Branch, Force: request.Force, Auth: auth}, workspace.Dependencies{Events: workspaceEventReporter{reporter: reporter}})
+	return workspace.CreateSite(ctx, &cfg, workspace.CreateSiteRequest{Root: root, Name: request.Name, Modules: append([]string{}, request.Modules...), DBLoginPrefix: request.DBLoginPrefix, Branch: request.Branch, Force: request.Force, Auth: auth}, workspace.Dependencies{Events: workspaceEventReporter{reporter: reporter}})
 }
 
 func (workspaceProvisioner) CreateLayer(ctx context.Context, cfg config.Config, root string, request CreateLayerRequest, reporter jobs.Reporter) error {

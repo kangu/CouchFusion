@@ -54,7 +54,7 @@ func TestSiteAndLayerProvisioningRunAsWorkspaceJobs(t *testing.T) {
 	provisioner := &provisionerFake{}
 	service := newServiceForTest(t, Dependencies{Registry: registry, Provisioner: provisioner})
 
-	site, err := service.CreateSite(context.Background(), "w1", CreateSiteRequest{Name: "shop", Modules: []string{"auth"}}, "browser")
+	site, err := service.CreateSite(context.Background(), "w1", CreateSiteRequest{Name: "shop", Modules: []string{"auth"}, DBLoginPrefix: "ac"}, "browser")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,27 @@ func TestSiteAndLayerProvisioningRunAsWorkspaceJobs(t *testing.T) {
 	if provisioner.siteRoot != "/workspace" || provisioner.layerRoot != "/workspace" {
 		t.Fatalf("provision roots = %q, %q", provisioner.siteRoot, provisioner.layerRoot)
 	}
+	if provisioner.siteRequest.DBLoginPrefix != "ac" {
+		t.Fatalf("database login prefix = %q, want ac", provisioner.siteRequest.DBLoginPrefix)
+	}
+}
+
+func TestCreateSiteValidatesDBLoginPrefixBeforeStartingJob(t *testing.T) {
+	registry := &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}}
+	provisioner := &provisionerFake{}
+	service := newServiceForTest(t, Dependencies{Registry: registry, Provisioner: provisioner})
+
+	_, err := service.CreateSite(context.Background(), "w1", CreateSiteRequest{Name: "shop", DBLoginPrefix: "A1"}, "browser")
+	var validation *Error
+	if !errors.As(err, &validation) || validation.Code != ErrorValidation {
+		t.Fatalf("CreateSite() error = %#v, want validation error", err)
+	}
+	if validation.Fields["dbLoginPrefix"] == "" {
+		t.Fatalf("validation fields = %#v, want dbLoginPrefix message", validation.Fields)
+	}
+	if provisioner.siteCalls != 0 {
+		t.Fatalf("provisioner calls = %d, want 0", provisioner.siteCalls)
+	}
 }
 
 func TestCLIProvisioningUsesExplicitRootWithoutImplicitRegistration(t *testing.T) {
@@ -78,7 +99,7 @@ func TestCLIProvisioningUsesExplicitRootWithoutImplicitRegistration(t *testing.T
 	provisioner := &provisionerFake{}
 	service := newServiceForTest(t, Dependencies{Registry: registry, Provisioner: provisioner})
 
-	site, err := service.CreateSiteAtRoot(context.Background(), "/workspace", CreateSiteRequest{Name: "shop", ConfigPath: "/config.yaml"}, "cli")
+	site, err := service.CreateSiteAtRoot(context.Background(), "/workspace", CreateSiteRequest{Name: "shop", DBLoginPrefix: "ns", ConfigPath: "/config.yaml"}, "cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,6 +405,7 @@ type provisionerFake struct {
 	siteCalls       int
 	layerCalls      int
 	siteRoot        string
+	siteRequest     CreateSiteRequest
 	layerRoot       string
 }
 
@@ -392,9 +414,10 @@ func (f *provisionerFake) Initialize(context.Context, config.Config, InitializeW
 	return f.initializeErr
 }
 
-func (f *provisionerFake) CreateSite(_ context.Context, _ config.Config, root string, _ CreateSiteRequest, _ jobs.Reporter) error {
+func (f *provisionerFake) CreateSite(_ context.Context, _ config.Config, root string, request CreateSiteRequest, _ jobs.Reporter) error {
 	f.siteCalls++
 	f.siteRoot = root
+	f.siteRequest = request
 	return nil
 }
 

@@ -63,7 +63,7 @@ func TestConfigHealthAndProvisioningRoutes(t *testing.T) {
 		{method: http.MethodPut, path: "/api/v1/workspaces/w1/config", body: `{"workspace":{"defaultRoot":"/sites"}}`, status: http.StatusOK, call: "config.put"},
 		{method: http.MethodGet, path: "/api/v1/workspaces/w1/health", status: http.StatusOK, call: "health"},
 		{method: http.MethodPost, path: "/api/v1/system/dependencies/couchdb/install", body: `{}`, status: http.StatusAccepted, call: "dependency.install"},
-		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites", body: `{"name":"shop","modules":["auth"]}`, status: http.StatusAccepted, call: "site.create"},
+		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites", body: `{"name":"shop","modules":["auth"],"dbLoginPrefix":"ac"}`, status: http.StatusAccepted, call: "site.create"},
 		{method: http.MethodPost, path: "/api/v1/workspaces/w1/layers", body: `{"name":"content"}`, status: http.StatusAccepted, call: "layer.create"},
 	}
 	for _, test := range tests {
@@ -74,6 +74,9 @@ func TestConfigHealthAndProvisioningRoutes(t *testing.T) {
 		if application.calls[test.call] == 0 {
 			t.Fatalf("application call %q was not made", test.call)
 		}
+	}
+	if application.siteRequest.DBLoginPrefix != "ac" {
+		t.Fatalf("database login prefix = %q, want ac", application.siteRequest.DBLoginPrefix)
 	}
 }
 
@@ -234,6 +237,7 @@ type apiApplicationStub struct {
 	entry       registry.Entry
 	workspace   project.Workspace
 	site        project.Site
+	siteRequest app.CreateSiteRequest
 	job         jobs.Snapshot
 	process     processes.Snapshot
 }
@@ -295,8 +299,9 @@ func (s *apiApplicationStub) InstallDependency(context.Context, string, string) 
 	s.calls["dependency.install"]++
 	return s.job, s.errors["dependency.install"]
 }
-func (s *apiApplicationStub) CreateSite(context.Context, string, app.CreateSiteRequest, string) (jobs.Snapshot, error) {
+func (s *apiApplicationStub) CreateSite(_ context.Context, _ string, request app.CreateSiteRequest, _ string) (jobs.Snapshot, error) {
 	s.calls["site.create"]++
+	s.siteRequest = request
 	return s.job, s.errors["site.create"]
 }
 func (s *apiApplicationStub) CreateLayer(context.Context, string, app.CreateLayerRequest, string) (jobs.Snapshot, error) {

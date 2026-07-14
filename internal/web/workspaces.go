@@ -267,18 +267,19 @@ func (h apiHandler) createSite(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	var input struct {
-		Name     string   `json:"name"`
-		Modules  []string `json:"modules"`
-		Branch   string   `json:"branch"`
-		Force    bool     `json:"force"`
-		Username string   `json:"username"`
-		Password string   `json:"password"`
+		Name          string   `json:"name"`
+		Modules       []string `json:"modules"`
+		DBLoginPrefix string   `json:"dbLoginPrefix"`
+		Branch        string   `json:"branch"`
+		Force         bool     `json:"force"`
+		Username      string   `json:"username"`
+		Password      string   `json:"password"`
 	}
 	if !decodeRequest(writer, request, &input) {
 		return
 	}
 	sessionID, _ := SessionID(request.Context())
-	job, err := h.application.CreateSite(request.Context(), workspaceID, app.CreateSiteRequest{Name: input.Name, Modules: append([]string{}, input.Modules...), Branch: input.Branch, Force: input.Force, Username: input.Username, Password: input.Password}, sessionID)
+	job, err := h.application.CreateSite(request.Context(), workspaceID, app.CreateSiteRequest{Name: input.Name, Modules: append([]string{}, input.Modules...), DBLoginPrefix: input.DBLoginPrefix, Branch: input.Branch, Force: input.Force, Username: input.Username, Password: input.Password}, sessionID)
 	if err != nil {
 		writeApplicationError(writer, err)
 		return
