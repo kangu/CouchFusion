@@ -17,7 +17,7 @@ const workspaceNavigation = computed(() => activeWorkspaceId.value ? [
   { label: 'Overview', to: `/workspaces/${activeWorkspaceId.value}` },
   { label: 'Sites', to: `/workspaces/${activeWorkspaceId.value}/sites` },
   { label: 'Layers', to: `/workspaces/${activeWorkspaceId.value}/layers` },
-  { label: 'Configuration', to: `/workspaces/${activeWorkspaceId.value}/configuration` },
+  { label: 'Configuration', to: `/workspaces/${activeWorkspaceId.value}/config` },
 ] : [])
 </script>
 

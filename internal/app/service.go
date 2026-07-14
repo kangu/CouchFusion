@@ -493,11 +493,25 @@ func (h systemHealth) Check(ctx context.Context, _ string) (Health, error) {
 	if err != nil {
 		return Health{}, err
 	}
+	nodeStatus := probeCommand(ctx, "node", "--version")
 	return Health{
 		Git:     DependencyHealth{Available: gitStatus.Available, Version: gitStatus.Version, Path: gitStatus.Path},
 		Bun:     DependencyHealth{Available: bunStatus.Available, Version: bunStatus.Version, Path: bunStatus.Path},
+		Node:    nodeStatus,
 		CouchDB: DependencyHealth{Available: couchStatus.Running, Version: couchStatus.Version, URL: couchStatus.URL},
 	}, nil
+}
+
+func probeCommand(ctx context.Context, name string, args ...string) DependencyHealth {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return DependencyHealth{Available: false, Problem: name + " was not found on PATH"}
+	}
+	output, err := exec.CommandContext(ctx, path, args...).Output()
+	if err != nil {
+		return DependencyHealth{Available: false, Path: path, Problem: name + " did not report a version"}
+	}
+	return DependencyHealth{Available: true, Version: strings.TrimSpace(string(output)), Path: path}
 }
 
 type systemInstaller struct{}

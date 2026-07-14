@@ -780,7 +780,7 @@ Run: `cd web && bun run test:run && bun run typecheck && bun run generate`
 
 Expected: tests and typecheck PASS; `.output/public/index.html` exists.
 
-- [ ] **Step 7: Commit the Nuxt foundation**
+- [x] **Step 7: Commit the Nuxt foundation**
 
 ```bash
 git add web
@@ -815,29 +815,29 @@ git commit -m "feat: scaffold embedded CouchFusion Nuxt UI"
 - Consumes: all phase-1 API DTOs and composables from Task 11.
 - Produces: all phase-1 browser interactions from the acceptance criteria.
 
-- [ ] **Step 1: Write failing component-flow tests**
+- [x] **Step 1: Write failing component-flow tests**
 
 Cover explicit register/initialize, unavailable workspace, forget copy, site wizard review, existing-target conflict, task controls, process status/logs/URLs, layered source badges, config validation, health repair confirmation, job cancellation, and reconnect state.
 
-- [ ] **Step 2: Run focused component tests and verify failure**
+- [x] **Step 2: Run focused component tests and verify failure**
 
 Run: `cd web && bun run test:run -- workspaces site-detail config activity`
 
 Expected: FAIL because pages/components do not exist.
 
-- [ ] **Step 3: Implement workspace launcher and overview**
+- [x] **Step 3: Implement workspace launcher and overview**
 
 Render explicit cards with name, canonical path, availability, last opened time, and actions. Registration accepts a user-entered absolute path; initialization collects path/name/branch and shows a review step. “Forget workspace” copy states that files remain untouched.
 
-- [ ] **Step 4: Implement site/layer provisioning and detail flows**
+- [x] **Step 4: Implement site/layer provisioning and detail flows**
 
 Use multi-step dialogs with field validation, module choices, review, job progress, and success navigation. Site detail exposes curated task buttons, process lifecycle, detected URL links, dependency/Git/layer summaries, and bounded logs.
 
-- [ ] **Step 5: Implement config, activity, and system flows**
+- [x] **Step 5: Implement config, activity, and system flows**
 
 Show effective values with `embedded`, `global`, or `workspace` source badges. Save structured global/workspace forms only after review. Activity merges finite jobs and live processes. System shows independent Git/Bun/Node/CouchDB health cards and explicit repair confirmation.
 
-- [ ] **Step 6: Run frontend test and accessibility verification**
+- [x] **Step 6: Run frontend test and accessibility verification**
 
 Run: `cd web && bun run test:run && bun run typecheck && bun run generate`
 

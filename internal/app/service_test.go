@@ -98,7 +98,7 @@ func TestCLIProvisioningUsesExplicitRootWithoutImplicitRegistration(t *testing.T
 }
 
 func TestHealthInspectionDoesNotInstallDependencies(t *testing.T) {
-	health := &healthFake{result: Health{Git: DependencyHealth{Available: false}, Bun: DependencyHealth{Available: true}, CouchDB: DependencyHealth{Available: false}}}
+	health := &healthFake{result: Health{Git: DependencyHealth{Available: false}, Bun: DependencyHealth{Available: true}, Node: DependencyHealth{Available: true}, CouchDB: DependencyHealth{Available: false}}}
 	installer := &installerFake{}
 	service := newServiceForTest(t, Dependencies{Health: health, Installer: installer})
 
@@ -106,7 +106,7 @@ func TestHealthInspectionDoesNotInstallDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Bun.Available != true || health.calls != 1 {
+	if !result.Bun.Available || !result.Node.Available || health.calls != 1 {
 		t.Fatalf("health = %#v, calls = %d", result, health.calls)
 	}
 	if installer.calls != 0 {

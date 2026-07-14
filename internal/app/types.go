@@ -125,6 +125,7 @@ type DependencyHealth struct {
 type Health struct {
 	Git     DependencyHealth `json:"git"`
 	Bun     DependencyHealth `json:"bun"`
+	Node    DependencyHealth `json:"node"`
 	CouchDB DependencyHealth `json:"couchdb"`
 }
 

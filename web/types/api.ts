@@ -34,6 +34,82 @@ export interface WorkspaceSummary {
   lastOpenedAt: string
 }
 
+export interface Warning {
+  code: string
+  message: string
+}
+
+export interface Site {
+  id: string
+  name: string
+  root: string
+  packageName?: string
+  packageManager?: string
+  modules: string[]
+  scripts: Record<string, string>
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+  dependenciesInstalled: boolean
+  lockfiles: string[]
+  warnings: Warning[]
+}
+
+export interface Layer {
+  id: string
+  name: string
+  root: string
+}
+
+export interface WorkspaceDetail {
+  id: string
+  name: string
+  root: string
+  available: boolean
+  problem?: string
+  sites: Site[]
+  layers: Layer[]
+  warnings: Warning[]
+}
+
+export interface Task {
+  id: string
+  name: string
+  kind: string
+  longRunning: boolean
+}
+
+export type ConfigSource = 'embedded' | 'global' | 'workspace'
+
+export interface EffectiveConfig {
+  config: {
+    repos: Record<string, { url: string; branch: string; protocol: string; authPrompt: boolean }>
+    modules: Record<string, { description: string; extends: string }>
+    workspace: { defaultRoot: string }
+    prompts: { defaultLayerSelection: string[] }
+  }
+  sources: Record<string, ConfigSource>
+}
+
+export interface DependencyHealth {
+  available: boolean
+  version?: string
+  path?: string
+  url?: string
+  problem?: string
+}
+
+export interface SystemHealth {
+  git: DependencyHealth
+  bun: DependencyHealth
+  node: DependencyHealth
+  couchdb: DependencyHealth
+}
+
+export interface TaskRunResult {
+  job?: JobSnapshot
+  process?: ProcessSnapshot
+}
+
 export type ActivityStatus = 'queued' | 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled' | 'exited' | 'stopped'
 
 export interface ActivityEvent {
