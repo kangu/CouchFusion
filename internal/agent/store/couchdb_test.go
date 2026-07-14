@@ -150,6 +150,7 @@ func TestConversationDocumentPersistsOnlyApprovedMetadata(t *testing.T) {
 	document.Baseline = []BaselineEntry{{Path: "app/components/content/Hero.vue", Status: "tracked", SHA256: "abc"}}
 	document.ChangedFiles = []ChangedFile{{Path: "app/components/content/Hero.vue", Kind: "modified", BaselineDirty: true}}
 	document.LastTurn = &LastTurn{Status: "completed", Summary: "bounded summary"}
+	document.Registry = &RegistryResult{State: "failed", Problem: "Registry rebuild failed"}
 	encoded, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)

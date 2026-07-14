@@ -56,6 +56,12 @@ type LastTurn struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+type RegistryResult struct {
+	State                string `json:"state"`
+	Problem              string `json:"problem,omitempty"`
+	GeneratedComponentID string `json:"generatedComponentId,omitempty"`
+}
+
 type Document struct {
 	ID                   string          `json:"_id"`
 	Revision             string          `json:"_rev,omitempty"`
@@ -72,6 +78,7 @@ type Document struct {
 	Baseline             []BaselineEntry `json:"baseline,omitempty"`
 	ChangedFiles         []ChangedFile   `json:"changedFiles,omitempty"`
 	LastTurn             *LastTurn       `json:"lastTurn,omitempty"`
+	Registry             *RegistryResult `json:"registry,omitempty"`
 	CreatedAt            time.Time       `json:"createdAt"`
 	UpdatedAt            time.Time       `json:"updatedAt"`
 	ReadOnly             bool            `json:"-"`

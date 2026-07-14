@@ -233,6 +233,115 @@ func TestRecoveryMarksInterruptedRevalidatesAndReadsThread(t *testing.T) {
 	}
 }
 
+func TestRegistryCompletionSkipsHookWithoutRegistryInputs(t *testing.T) {
+	compareCalls := 0
+	hook := &fakeCompletionHook{}
+	manager, repository, _, events, _ := newTestManager(t, Options{
+		Compare: func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error) {
+			compareCalls++
+			return []model.ChangedFile{{Path: "README.md", Kind: model.ChangeModified}}, nil
+		},
+		Completion: hook,
+	})
+	conversation := createTestConversation(t, manager, "workspace-1", "site-1")
+	document := repository.document(conversation.ID)
+	completeTurn(events, document.CodexThreadID, conversation.ActiveTurn.ID, "completed")
+	ready := waitForStatus(t, manager, conversation.ID, model.ConversationReady)
+	if compareCalls != 1 || hook.calls != 0 {
+		t.Fatalf("compare calls = %d, hook calls = %d", compareCalls, hook.calls)
+	}
+	if ready.Registry.State != model.RegistryNotNeeded || len(ready.ChangedFiles) != 1 {
+		t.Fatalf("ready = %#v", ready)
+	}
+}
+
+func TestRegistryCompletionRunsWithClearedTurnAndHeldLease(t *testing.T) {
+	leases := mutationlease.NewManager()
+	var manager *Manager
+	var conversationID string
+	hook := &fakeCompletionHook{complete: func(_ context.Context, request CompletionRequest) model.RegistryResult {
+		snapshot, err := manager.Get(context.Background(), conversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.ActiveTurn != nil || snapshot.PendingInteraction != nil || snapshot.Status != model.ConversationRebuildingRegistry {
+			t.Fatalf("snapshot during hook = %#v", snapshot)
+		}
+		if release, err := leases.Acquire(request.WorkspaceID, "other", "job"); err == nil {
+			release()
+			t.Fatal("workspace lease was released before completion hook")
+		}
+		if request.SiteRoot != "/workspace/apps/site-1" || len(request.ChangedFiles) != 1 {
+			t.Fatalf("completion request = %#v", request)
+		}
+		return model.RegistryResult{State: model.RegistrySucceeded, GeneratedComponentID: "testimonial-carousel"}
+	}}
+	manager, repository, _, events, _ := newTestManager(t, Options{
+		Leases: leases,
+		Compare: func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error) {
+			return []model.ChangedFile{{Path: "app/components/content/TestimonialCarousel.vue", Kind: model.ChangeAdded}}, nil
+		},
+		Completion: hook,
+	})
+	conversation := createTestConversation(t, manager, "workspace-1", "site-1")
+	conversationID = conversation.ID
+	document := repository.document(conversation.ID)
+	subscription, err := manager.Subscribe(context.Background(), conversation.ID, conversation.Sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completeTurn(events, document.CodexThreadID, conversation.ActiveTurn.ID, "completed")
+	ready := waitForStatus(t, manager, conversation.ID, model.ConversationReady)
+	if hook.calls != 1 || ready.Registry.State != model.RegistrySucceeded || ready.GeneratedComponentID != "testimonial-carousel" {
+		t.Fatalf("ready = %#v, hook calls = %d", ready, hook.calls)
+	}
+	assertEventTypes(t, subscription, model.EventRegistryStarted, model.EventRegistryCompleted)
+	if persisted := repository.document(conversation.ID); persisted.Status != store.StatusReady || persisted.Registry == nil || persisted.Registry.State != string(model.RegistrySucceeded) {
+		t.Fatalf("persisted = %#v", persisted)
+	}
+	if release, err := leases.Acquire("workspace-1", "other", "job"); err != nil {
+		t.Fatalf("workspace lease remains held after completion: %v", err)
+	} else {
+		release()
+	}
+}
+
+func TestRegistryCompletionFailurePreservesReadyConversationAndFiles(t *testing.T) {
+	hook := &fakeCompletionHook{complete: func(context.Context, CompletionRequest) model.RegistryResult {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}}
+	manager, repository, _, events, _ := newTestManager(t, Options{
+		Compare: func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error) {
+			return []model.ChangedFile{{Path: "app/components/content/Hero.vue", Kind: model.ChangeModified, BaselineDirty: true}}, nil
+		},
+		Completion: hook,
+	})
+	conversation := createTestConversation(t, manager, "workspace-1", "site-1")
+	document := repository.document(conversation.ID)
+	subscription, _ := manager.Subscribe(context.Background(), conversation.ID, conversation.Sequence)
+	completeTurn(events, document.CodexThreadID, conversation.ActiveTurn.ID, "completed")
+	ready := waitForStatus(t, manager, conversation.ID, model.ConversationReady)
+	if ready.LastTurn == nil || ready.LastTurn.Status != model.TurnCompleted || ready.Registry.State != model.RegistryFailed || len(ready.ChangedFiles) != 1 {
+		t.Fatalf("ready = %#v", ready)
+	}
+	assertEventTypes(t, subscription, model.EventRegistryStarted, model.EventRegistryFailed)
+}
+
+func TestChangedFilesCompareFailureBecomesRegistryWarning(t *testing.T) {
+	manager, repository, _, events, _ := newTestManager(t, Options{
+		Compare: func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error) {
+			return nil, errors.New("compare failed")
+		},
+	})
+	conversation := createTestConversation(t, manager, "workspace-1", "site-1")
+	document := repository.document(conversation.ID)
+	completeTurn(events, document.CodexThreadID, conversation.ActiveTurn.ID, "completed")
+	ready := waitForStatus(t, manager, conversation.ID, model.ConversationReady)
+	if ready.Registry.State != model.RegistryFailed || ready.LastTurn.Status != model.TurnCompleted {
+		t.Fatalf("ready = %#v", ready)
+	}
+}
+
 func newTestManager(t *testing.T, override Options) (*Manager, *fakeRepository, *fakeClient, chan protocol.Notification, chan protocol.ServerRequest) {
 	t.Helper()
 	repository := newFakeRepository()
@@ -247,6 +356,7 @@ func newTestManager(t *testing.T, override Options) (*Manager, *fakeRepository, 
 		Events:      events,
 		Requests:    requests,
 		Capture:     fakeCapture,
+		Compare:     func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error) { return nil, nil },
 		Fingerprint: baseline.Fingerprint,
 		ID:          func() string { return fmt.Sprintf("conversation-%d", repository.count()+1) },
 	}
@@ -258,6 +368,15 @@ func newTestManager(t *testing.T, override Options) (*Manager, *fakeRepository, 
 	}
 	if override.RuntimeGeneration != nil {
 		options.RuntimeGeneration = override.RuntimeGeneration
+	}
+	if override.Leases != nil {
+		options.Leases = override.Leases
+	}
+	if override.Compare != nil {
+		options.Compare = override.Compare
+	}
+	if override.Completion != nil {
+		options.Completion = override.Completion
 	}
 	manager := NewManager(options)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
@@ -351,6 +470,35 @@ func assertStatusOrder(t *testing.T, got []model.ConversationStatus, want ...mod
 	if index != len(want) {
 		t.Fatalf("statuses = %#v, missing ordered %#v", got, want[index:])
 	}
+}
+
+func assertEventTypes(t *testing.T, events <-chan model.Event, want ...model.EventType) {
+	t.Helper()
+	index := 0
+	deadline := time.After(2 * time.Second)
+	for index < len(want) {
+		select {
+		case event := <-events:
+			if event.Type == want[index] {
+				index++
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for event types %#v from index %d", want, index)
+		}
+	}
+}
+
+type fakeCompletionHook struct {
+	calls    int
+	complete func(context.Context, CompletionRequest) model.RegistryResult
+}
+
+func (h *fakeCompletionHook) Complete(ctx context.Context, request CompletionRequest) model.RegistryResult {
+	h.calls++
+	if h.complete != nil {
+		return h.complete(ctx, request)
+	}
+	return model.RegistryResult{State: model.RegistrySucceeded}
 }
 
 func assertThreadPolicy(t *testing.T, client *fakeClient) {

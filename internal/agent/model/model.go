@@ -124,6 +124,21 @@ type LastTurn struct {
 	Summary string     `json:"summary,omitempty"`
 }
 
+type RegistryState string
+
+const (
+	RegistryNotNeeded RegistryState = "not_needed"
+	RegistryRunning   RegistryState = "running"
+	RegistrySucceeded RegistryState = "succeeded"
+	RegistryFailed    RegistryState = "failed"
+)
+
+type RegistryResult struct {
+	State                RegistryState `json:"state"`
+	Problem              string        `json:"problem,omitempty"`
+	GeneratedComponentID string        `json:"generatedComponentId,omitempty"`
+}
+
 type Conversation struct {
 	ID                   string             `json:"id"`
 	WorkspaceID          string             `json:"workspaceId"`
@@ -136,6 +151,7 @@ type Conversation struct {
 	PendingInteraction   *Interaction       `json:"pendingInteraction,omitempty"`
 	ChangedFiles         []ChangedFile      `json:"changedFiles,omitempty"`
 	GeneratedComponentID string             `json:"generatedComponentId,omitempty"`
+	Registry             RegistryResult     `json:"registry"`
 	Sequence             uint64             `json:"sequence"`
 	BindingValid         bool               `json:"bindingValid"`
 	ReadOnly             bool               `json:"readOnly,omitempty"`

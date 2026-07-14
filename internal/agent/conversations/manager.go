@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +44,19 @@ type RPCClient interface {
 
 type ClientProvider func(context.Context) (RPCClient, error)
 type CaptureFunc func(context.Context, string) (baseline.Snapshot, error)
+type CompareFunc func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error)
 type FingerprintFunc func(string, string, string, string) string
+
+type CompletionRequest struct {
+	WorkspaceID  string
+	SiteID       string
+	SiteRoot     string
+	ChangedFiles []model.ChangedFile
+}
+
+type CompletionHook interface {
+	Complete(context.Context, CompletionRequest) model.RegistryResult
+}
 
 type Options struct {
 	Repository        store.Repository
@@ -53,7 +66,9 @@ type Options struct {
 	Events            <-chan protocol.Notification
 	Requests          <-chan protocol.ServerRequest
 	Capture           CaptureFunc
+	Compare           CompareFunc
 	Fingerprint       FingerprintFunc
+	Completion        CompletionHook
 	ShutdownClient    func(context.Context) error
 	RuntimeGeneration func() uint64
 	EventLimit        int
@@ -129,6 +144,9 @@ func NewManager(options Options) *Manager {
 	}
 	if options.Capture == nil {
 		options.Capture = baseline.Capture
+	}
+	if options.Compare == nil {
+		options.Compare = baseline.Compare
 	}
 	if options.Fingerprint == nil {
 		options.Fingerprint = baseline.Fingerprint
@@ -630,11 +648,7 @@ func (m *Manager) handleTurnCompleted(params protocol.TurnNotification) {
 	state.mu.Unlock()
 	switch strings.ToLower(params.Turn.Status) {
 	case "completed":
-		m.setLastTurn(state, model.TurnCompleted)
-		_ = m.transition(m.ctx, state, model.ConversationCompleted, model.EventTurnCompleted, nil)
-		_ = m.transition(m.ctx, state, model.ConversationRebuildingRegistry, model.EventRegistryStarted, nil)
-		m.clearActiveTurn(state)
-		_ = m.transition(m.ctx, state, model.ConversationReady, model.EventRegistryCompleted, nil)
+		m.completeSuccessfulTurn(state)
 	case "interrupted", "cancelled", "canceled":
 		m.setLastTurn(state, model.TurnInterrupted)
 		_ = m.transition(m.ctx, state, model.ConversationInterrupted, model.EventConversationInterrupted, nil)
@@ -647,6 +661,93 @@ func (m *Manager) handleTurnCompleted(params protocol.TurnNotification) {
 		_ = m.transition(m.ctx, state, model.ConversationReady, model.EventTurnCompleted, nil)
 	}
 	m.releaseStateLease(state)
+}
+
+func (m *Manager) completeSuccessfulTurn(state *conversationState) {
+	m.setLastTurn(state, model.TurnCompleted)
+	if err := m.transition(m.ctx, state, model.ConversationCompleted, model.EventTurnCompleted, nil); err != nil {
+		m.clearActiveTurn(state)
+		return
+	}
+	state.mu.RLock()
+	siteRoot, snapshot := state.siteRoot, state.baseline
+	state.mu.RUnlock()
+	changes, err := m.options.Compare(m.ctx, siteRoot, snapshot)
+	if err != nil {
+		m.clearActiveTurn(state)
+		result := model.RegistryResult{State: model.RegistryFailed, Problem: "Changed files could not be evaluated"}
+		_ = m.persistCompletion(m.ctx, state, nil, result)
+		_ = m.transition(m.ctx, state, model.ConversationReady, model.EventRegistryFailed, nil)
+		return
+	}
+	if err := m.persistCompletion(m.ctx, state, changes, model.RegistryResult{}); err != nil {
+		m.clearActiveTurn(state)
+		_ = m.transition(m.ctx, state, model.ConversationReady, model.EventRegistryFailed, nil)
+		return
+	}
+	m.clearActiveTurn(state)
+	if !hasRegistryInputs(changes) {
+		result := model.RegistryResult{State: model.RegistryNotNeeded}
+		_ = m.transition(m.ctx, state, model.ConversationRebuildingRegistry, model.EventTurnCompleted, nil)
+		_ = m.persistCompletion(m.ctx, state, changes, result)
+		_ = m.transition(m.ctx, state, model.ConversationReady, model.EventRegistryCompleted, nil)
+		return
+	}
+	running := model.RegistryResult{State: model.RegistryRunning}
+	_ = m.persistCompletion(m.ctx, state, changes, running)
+	if err := m.transition(m.ctx, state, model.ConversationRebuildingRegistry, model.EventRegistryStarted, nil); err != nil {
+		return
+	}
+	result := model.RegistryResult{State: model.RegistryFailed, Problem: "Registry completion is unavailable"}
+	if m.options.Completion != nil {
+		state.mu.RLock()
+		request := CompletionRequest{
+			WorkspaceID: state.conversation.WorkspaceID, SiteID: state.conversation.SiteID,
+			SiteRoot: state.siteRoot, ChangedFiles: append([]model.ChangedFile(nil), changes...),
+		}
+		state.mu.RUnlock()
+		result = normalizeRegistryResult(m.options.Completion.Complete(m.ctx, request))
+	}
+	_ = m.persistCompletion(m.ctx, state, changes, result)
+	eventType := model.EventRegistryCompleted
+	if result.State == model.RegistryFailed {
+		eventType = model.EventRegistryFailed
+	}
+	_ = m.transition(m.ctx, state, model.ConversationReady, eventType, nil)
+}
+
+func (m *Manager) persistCompletion(ctx context.Context, state *conversationState, changes []model.ChangedFile, result model.RegistryResult) error {
+	state.mu.RLock()
+	document := state.document
+	state.mu.RUnlock()
+	if changes != nil {
+		document.ChangedFiles = storeChangedFiles(changes)
+	}
+	if result.State != "" {
+		document.Registry = &store.RegistryResult{
+			State: string(result.State), Problem: result.Problem, GeneratedComponentID: result.GeneratedComponentID,
+		}
+		if result.GeneratedComponentID != "" {
+			document.GeneratedComponentID = result.GeneratedComponentID
+		}
+	}
+	updated, err := m.options.Repository.Update(ctx, document)
+	if err != nil {
+		return err
+	}
+	state.mu.Lock()
+	state.document = updated
+	if changes != nil {
+		state.conversation.ChangedFiles = append([]model.ChangedFile(nil), changes...)
+	}
+	if result.State != "" {
+		state.conversation.Registry = result
+		if result.GeneratedComponentID != "" {
+			state.conversation.GeneratedComponentID = result.GeneratedComponentID
+		}
+	}
+	state.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) transition(ctx context.Context, state *conversationState, status model.ConversationStatus, eventType model.EventType, item *model.ConversationItem) error {
@@ -919,10 +1020,17 @@ func documentConversation(document store.Document, bindingValid bool) model.Conv
 		ID: document.ConversationID, WorkspaceID: document.WorkspaceID, SiteID: document.SiteID,
 		Title: document.Title, Status: model.ConversationStatus(document.Status),
 		GeneratedComponentID: document.GeneratedComponentID, BindingValid: bindingValid,
+		Registry: model.RegistryResult{State: model.RegistryNotNeeded},
 		ReadOnly: document.ReadOnly || !bindingValid, CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt,
 	}
 	if document.LastTurn != nil {
 		conversation.LastTurn = &model.LastTurn{Status: model.TurnStatus(document.LastTurn.Status), Summary: document.LastTurn.Summary}
+	}
+	if document.Registry != nil {
+		conversation.Registry = model.RegistryResult{
+			State: model.RegistryState(document.Registry.State), Problem: document.Registry.Problem,
+			GeneratedComponentID: document.Registry.GeneratedComponentID,
+		}
 	}
 	for _, changed := range document.ChangedFiles {
 		conversation.ChangedFiles = append(conversation.ChangedFiles, model.ChangedFile{
@@ -930,6 +1038,58 @@ func documentConversation(document store.Document, bindingValid bool) model.Conv
 		})
 	}
 	return conversation
+}
+
+func storeChangedFiles(changes []model.ChangedFile) []store.ChangedFile {
+	result := make([]store.ChangedFile, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, store.ChangedFile{Path: change.Path, Kind: string(change.Kind), BaselineDirty: change.BaselineDirty})
+	}
+	return result
+}
+
+func hasRegistryInputs(changes []model.ChangedFile) bool {
+	for _, change := range changes {
+		path := filepath.ToSlash(change.Path)
+		lower := strings.ToLower(path)
+		contentComponent := strings.HasSuffix(lower, ".vue") &&
+			(strings.Contains(path, "/components/content/") || strings.HasPrefix(path, "components/content/") || strings.HasPrefix(path, "app/components/content/"))
+		registryArtifact := strings.Contains(lower, "content-builder/") &&
+			(strings.Contains(lower, "component-definitions.") || strings.Contains(lower, "component-registry."))
+		if contentComponent || registryArtifact {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRegistryResult(result model.RegistryResult) model.RegistryResult {
+	result.GeneratedComponentID = boundedUTF8(strings.TrimSpace(result.GeneratedComponentID), 256)
+	if !safeComponentID(result.GeneratedComponentID) {
+		result.GeneratedComponentID = ""
+	}
+	switch result.State {
+	case model.RegistrySucceeded:
+		result.Problem = ""
+		return result
+	case model.RegistryFailed:
+		result.Problem = "Registry rebuild failed"
+		result.GeneratedComponentID = ""
+		return result
+	default:
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry completion returned an invalid result"}
+	}
+}
+
+func safeComponentID(value string) bool {
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func storeBaseline(snapshot baseline.Snapshot) []store.BaselineEntry {
