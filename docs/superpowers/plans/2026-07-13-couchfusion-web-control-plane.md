@@ -465,7 +465,7 @@ git commit -m "feat: inspect CouchFusion projects and tasks"
 - Produces: bounded `jobs.Event` streams with monotonic IDs.
 - Produces: memory-only one-time `SecretHandoff` scoped to initiating session.
 
-- [ ] **Step 1: Write failing job-state tests**
+- [x] **Step 1: Write failing job-state tests**
 
 Cover success, failure, panic recovery, cancellation, workspace conflict, browser-independent execution, bounded events, redaction, subscriber replay, shutdown, and one-time secret consumption.
 
@@ -482,13 +482,13 @@ func TestManagerRejectsConcurrentWorkspaceMutation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run jobs tests and verify failure**
+- [x] **Step 2: Run jobs tests and verify failure**
 
 Run: `go test ./internal/jobs -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement synchronized state and redaction**
+- [x] **Step 3: Implement synchronized state and redaction**
 
 ```go
 type Status string
@@ -500,13 +500,13 @@ type Request struct { Type, WorkspaceID, SiteID, SessionID string; Run func(cont
 
 Guard maps and ring buffers with a mutex, execute each job in its own goroutine, recover panics at the job boundary, and redact URL userinfo plus configured secret keys before storage. The secret handoff is never part of `Snapshot`.
 
-- [ ] **Step 4: Run race-enabled job tests**
+- [x] **Step 4: Run race-enabled job tests**
 
 Run: `go test -race ./internal/jobs -count=1`
 
 Expected: PASS with no race report.
 
-- [ ] **Step 5: Commit the job engine**
+- [x] **Step 5: Commit the job engine**
 
 ```bash
 git add internal/jobs
