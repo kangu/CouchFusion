@@ -22,6 +22,7 @@ type Commands struct {
 	Init        Command
 	New         Command
 	CreateLayer Command
+	UI          Command
 }
 
 type ExitError struct {
@@ -56,6 +57,8 @@ func Run(ctx context.Context, args []string, streams IO, commands Commands) erro
 		return dispatch(ctx, "new", args[1:], commands.New)
 	case "create_layer":
 		return dispatch(ctx, "create_layer", args[1:], commands.CreateLayer)
+	case "ui":
+		return dispatch(ctx, "ui", args[1:], commands.UI)
 	default:
 		return ExitError{Code: 2, Err: fmt.Errorf("unknown command: %s", args[0])}
 	}

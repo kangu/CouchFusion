@@ -843,7 +843,7 @@ Run: `cd web && bun run test:run && bun run typecheck && bun run generate`
 
 Expected: PASS with no Vue/TypeScript errors.
 
-- [ ] **Step 7: Commit phase-1 UI flows**
+- [x] **Step 7: Commit phase-1 UI flows**
 
 ```bash
 git add web
@@ -865,21 +865,21 @@ git commit -m "feat: add CouchFusion workspace and site UI"
 - Consumes: generated files copied into `internal/web/dist`.
 - Produces: graceful signal shutdown and browser launch.
 
-- [ ] **Step 1: Write failing UI command tests**
+- [x] **Step 1: Write failing UI command tests**
 
 Inject listener, browser opener, and server factory. Test default random port, explicit port, `--no-open`, invalid port, loopback URL, cancellation shutdown, and process manager shutdown.
 
-- [ ] **Step 2: Run CLI UI tests and verify failure**
+- [x] **Step 2: Run CLI UI tests and verify failure**
 
 Run: `go test ./internal/cli -run 'TestUI' -count=1`
 
 Expected: FAIL because UI dispatch does not exist.
 
-- [ ] **Step 3: Implement asset copy/embed and UI lifecycle**
+- [x] **Step 3: Implement asset copy/embed and UI lifecycle**
 
 Embed `dist/*` with `//go:embed all:dist`. Add `ui` dispatch to `cli.Run`, construct application services, start the server, open the tokenized URL with OS-specific commands, and wait for context cancellation. Opening failure is a warning with the URL, not a server failure.
 
-- [ ] **Step 4: Build and smoke-test one binary**
+- [x] **Step 4: Build and smoke-test one binary**
 
 Run: `cd web && bun run generate && rm -rf ../internal/web/dist/* && cp -R .output/public/. ../internal/web/dist/ && cd .. && go test ./... -count=1 && go build -o /tmp/couchfusion-ui . && /tmp/couchfusion-ui version`
 

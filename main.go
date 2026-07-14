@@ -7,8 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -23,6 +26,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
 	"github.com/nuxt-apps/couchfusion/internal/ui"
+	webserver "github.com/nuxt-apps/couchfusion/internal/web"
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
 )
 
@@ -33,6 +37,8 @@ func main() {
 }
 
 func runMain() int {
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	service, err := app.NewDefaultService("")
 	if err != nil {
 		logging.Errorf("%v", err)
@@ -44,11 +50,12 @@ func runMain() int {
 		_ = service.Shutdown(ctx)
 	}()
 
-	err = cli.Run(context.Background(), os.Args[1:], cli.IO{
+	streams := cli.IO{
 		In:  os.Stdin,
 		Out: os.Stdout,
 		Err: os.Stderr,
-	}, cli.Commands{
+	}
+	err = cli.Run(ctx, os.Args[1:], streams, cli.Commands{
 		Init: func(ctx context.Context, args []string) error {
 			return runInit(ctx, service, args)
 		},
@@ -57,6 +64,22 @@ func runMain() int {
 		},
 		CreateLayer: func(ctx context.Context, args []string) error {
 			return runCreateLayer(ctx, service, args)
+		},
+		UI: func(ctx context.Context, args []string) error {
+			return cli.RunUI(ctx, args, streams, cli.UIOptions{NewServer: func(listener net.Listener, configPath string) (cli.UIServer, cli.UIApplication, error) {
+				uiApplication, err := app.NewDefaultService(configPath)
+				if err != nil {
+					return nil, nil, err
+				}
+				server, err := webserver.NewServer(webserver.Options{Listener: listener, Application: uiApplication})
+				if err != nil {
+					shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					_ = uiApplication.Shutdown(shutdownContext)
+					return nil, nil, err
+				}
+				return server, uiApplication, nil
+			}})
 		},
 	})
 	if err == nil {
@@ -80,6 +103,7 @@ func printUsage() {
 	fmt.Println("  couchfusion init [--config path] [--path dir] [--layers-branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion new [--config path] [--name app] [--modules m1,m2] [--branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force] [--yes]")
+	fmt.Println("  couchfusion ui [--port 0] [--no-open] [--config path]")
 }
 
 func runInit(ctx context.Context, service *app.Service, args []string) error {

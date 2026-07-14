@@ -141,7 +141,7 @@ func TestResponsesSetSecurityHeadersAndAuthenticatedSPAFallback(t *testing.T) {
 		t.Fatal("plaintext launch token retained after exchange")
 	}
 	recorder := performRequest(server, http.MethodGet, "/workspaces/example", nil, cookie)
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<!doctype html>") {
+	if recorder.Code != http.StatusOK || !strings.Contains(strings.ToLower(recorder.Body.String()), "<!doctype html>") {
 		t.Fatalf("SPA response = %d: %s", recorder.Code, recorder.Body.String())
 	}
 	for header, want := range map[string]string{
