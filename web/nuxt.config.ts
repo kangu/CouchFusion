@@ -3,6 +3,7 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
   modules: ['@vueuse/nuxt'],
+  ignore: ['e2e/fixtures/**'],
   components: [{ path: '~/components', pathPrefix: false }],
   css: ['~/assets/css/main.css'],
   typescript: {
@@ -12,6 +13,9 @@ export default defineNuxtConfig({
   vite: {
     server: {
       strictPort: true,
+      watch: {
+        ignored: ['**/e2e/fixtures/**'],
+      },
     },
   },
   app: {

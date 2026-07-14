@@ -457,7 +457,7 @@ git commit -m "feat: add fullscreen component previews"
 **Interfaces:**
 - Produces browser acceptance for explicit start, fullscreen render, desktop/mobile sizing, concurrent dev ownership, CSS HMR, close, and stop.
 
-- [ ] **Step 1: Add the failing browser scenario**
+- [x] **Step 1: Add the failing browser scenario**
 
 Use the existing fixture workspace, adding a minimal Content-layer component and `dev` script if absent. The test must:
 
@@ -473,13 +473,13 @@ await expect.poll(async () => preview.locator('[data-render-frame]').evaluate(el
 
 Then edit only a fixture CSS declaration, wait for the render frame's computed style to change without iframe navigation or server restart, restore the fixture in `finally`, close, and stop the host.
 
-- [ ] **Step 2: Run and verify the scenario fails before fixture/harness completion**
+- [x] **Step 2: Run and verify the scenario fails before fixture/harness completion**
 
 Run: `cd web && bun run e2e -- component-preview.spec.ts`
 
 Expected: FAIL at the first unavailable preview behavior or fixture requirement.
 
-- [ ] **Step 3: Complete acceptance wiring and manual guide**
+- [x] **Step 3: Complete acceptance wiring and manual guide**
 
 Extend the Go acceptance fixture to expose the adjacent Content layer and wait for preview cleanup. In `docs/ui-server.md`, add:
 
@@ -493,7 +493,7 @@ Extend the Go acceptance fixture to expose the adjacent Content layer and wait f
 
 Include troubleshooting for missing `dev`, host timeout, invalid/stale registry, and Nuxt compile errors.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 Run: `cd /Users/radu/Projects/nuxt-apps/layers/content && bunx vitest run tests/builder/component-preview-primitives.spec.ts tests/builder/component-preview-pages.spec.ts tests/server/component-preview-registration.spec.ts`
 
@@ -505,7 +505,9 @@ Run: `cd /Users/radu/Projects/nuxt-apps/cli-init/web && bun run test:run && bun 
 
 Expected: every command PASS; browser test observes the CSS change through HMR.
 
-- [ ] **Step 5: Commit acceptance and documentation**
+Verification note (2026-07-14): Go race tests/vet, UI unit tests/typecheck/generate, all three browser suites, and the focused Content preview tests pass. A consuming-app `nuxi typecheck` was also run and remains non-green because of the Content/Database layers' pre-existing strict-TypeScript backlog outside the preview files.
+
+- [x] **Step 5: Commit acceptance and documentation**
 
 ```bash
 git add web/tests/e2e/component-preview.spec.ts web/playwright.config.ts internal/web/acceptance_test.go docs/ui-server.md
@@ -514,10 +516,10 @@ git commit -m "test: cover component preview workflow"
 
 ## Final Review
 
-- [ ] Confirm `git status --short` in both repositories contains no unintended changes.
-- [ ] Confirm no JSON response, event, log, or failure message contains `COUCHFUSION_PREVIEW_TOKEN` or its value.
-- [ ] Confirm ordinary `script:dev` and `component-preview` process owners run concurrently.
-- [ ] Confirm preview routes return 404 when the preview flag is absent or token is wrong.
-- [ ] Confirm the iframe is `375px` in mobile mode and native CSS HMR updates without rotating the CouchFusion UI token.
-- [ ] Use `superpowers:verification-before-completion` before reporting completion.
-- [ ] Use `superpowers:requesting-code-review` before branch handoff.
+- [x] Confirm `git status --short` in both repositories contains no unintended changes.
+- [x] Confirm no JSON response, event, log, or failure message contains `COUCHFUSION_PREVIEW_TOKEN` or its value.
+- [x] Confirm ordinary `script:dev` and `component-preview` process owners run concurrently.
+- [x] Confirm preview routes return 404 when the preview flag is absent or token is wrong.
+- [x] Confirm the iframe is `375px` in mobile mode and native CSS HMR updates without rotating the CouchFusion UI token.
+- [x] Use `superpowers:verification-before-completion` before reporting completion.
+- [x] Use `superpowers:requesting-code-review` before branch handoff.

@@ -44,6 +44,8 @@ The UI provides workspace, site, layer, configuration, activity, and system-heal
 
 The server accepts only loopback hosts, exchanges the launch token for an HTTP-only same-site session cookie, and rejects foreign origins. It is a local control plane, not a remotely deployable admin panel.
 
+See the concise [UI server guide](./docs/ui-server.md) for the component preview workflow and troubleshooting.
+
 #### Develop the workbench UI with HMR
 
 From the CouchFusion source checkout:

@@ -11,7 +11,8 @@
     "test:run": "vitest run",
     "typecheck": "nuxt typecheck",
     "e2e": "playwright test",
-    "e2e:hmr": "playwright test --config playwright.hmr.config.ts"
+    "e2e:hmr": "playwright test --config playwright.hmr.config.ts",
+    "e2e:preview": "playwright test --config playwright.preview.config.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.3.0",
@@ -24,6 +25,7 @@
     "@vitejs/plugin-vue": "^6.0.3",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.10.6",
+    "pinia": "^3.0.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10",
     "vue-tsc": "^3.3.7"

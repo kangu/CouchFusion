@@ -1,0 +1,8 @@
+{
+  "name": "couchfusion-component-preview-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "PORT=4999 ../../../node_modules/.bin/nuxt dev --host"
+  }
+}
