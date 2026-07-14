@@ -95,6 +95,13 @@ func TestUpdateDBLoginPrefixRejectsUnsafeConfig(t *testing.T) {
 			if string(got) != contents {
 				t.Fatalf("config changed on failure\ngot: %s\nwant: %s", got, contents)
 			}
+			matches, err := filepath.Glob(filepath.Join(targetDir, ".nuxt.config.ts-*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) != 0 {
+				t.Fatalf("temporary files remain: %v", matches)
+			}
 		})
 	}
 }

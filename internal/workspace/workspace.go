@@ -281,13 +281,13 @@ func ResolveAppCreationInputs(cfg *config.Config, providedName, providedModules 
 }
 
 // RunNew scaffolds a new application directory and clones starter repo.
-func RunNew(ctx context.Context, cfg *config.Config, appName string, modules []string, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
+func RunNew(ctx context.Context, cfg *config.Config, appName string, modules []string, dbLoginPrefix, overrideBranch string, force bool, cloneOpts ...gitutil.CloneOption) error {
 	root, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("unable to determine current working directory: %w", err)
 	}
 	clone := cloneWithOptions(cloneOpts)
-	return CreateSite(ctx, cfg, CreateSiteRequest{Root: root, Name: appName, Modules: modules, Branch: overrideBranch, Force: force}, Dependencies{
+	return CreateSite(ctx, cfg, CreateSiteRequest{Root: root, Name: appName, Modules: modules, DBLoginPrefix: dbLoginPrefix, Branch: overrideBranch, Force: force}, Dependencies{
 		Clone: clone,
 		ApplyLayerParameters: func(ctx context.Context, targetDir string, modules []string) error {
 			return applyLayerParameters(ctx, targetDir, modules, true)

@@ -9,6 +9,12 @@ describe('site provisioning wizard', () => {
     const form = wrapper.get('form')
 
     expect(prefix.element.value).toBe('')
+    expect(prefix.attributes()).toMatchObject({
+      required: '',
+      minlength: '2',
+      maxlength: '2',
+      pattern: '[a-z]{2}',
+    })
     expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(true)
 
     await wrapper.get('[name="name"]').setValue('catalog')

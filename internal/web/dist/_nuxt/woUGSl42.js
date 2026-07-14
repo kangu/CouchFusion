@@ -1,0 +1,1 @@
+import{I as i,B as s,J as c}from"./DQVlvJg1.js";import{u as n}from"./qcU01ZHO.js";import"./Ce9LlEmu.js";const f=i(async o=>{let e,t;const r=String(o.params.workspaceId||"");if(!r)return s("/");const a=n();if(a.ready.value||([e,t]=c(()=>a.validate()),e=await e,t()),!a.select(r))return s("/")});export{f as default};

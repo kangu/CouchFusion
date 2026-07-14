@@ -117,7 +117,7 @@ func printUsage() {
 	fmt.Println("couchfusion " + version)
 	fmt.Println("Usage:")
 	fmt.Println("  couchfusion init [--config path] [--path dir] [--layers-branch name] [--force] [--yes]")
-	fmt.Println("  couchfusion new [--config path] [--name app] [--modules m1,m2] [--branch name] [--force] [--yes]")
+	fmt.Println("  couchfusion new [--config path] [--name app] [--modules m1,m2] [--db-login-prefix ab] [--branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion ui [--port 0] [--no-open] [--config path] [--dev]")
 }
@@ -200,6 +200,7 @@ func runNew(ctx context.Context, service *app.Service, args []string) error {
 	configPath := fs.String("config", "", "Path to config file")
 	name := fs.String("name", "", "Name of the new app")
 	modules := fs.String("modules", "", "Comma-separated module list")
+	dbLoginPrefix := fs.String("db-login-prefix", "", "Two lowercase letters used for database login names")
 	branch := fs.String("branch", "", "Override starter branch")
 	force := fs.Bool("force", false, "Allow overwriting empty existing directories")
 	yes := addYesFlags(fs)
@@ -241,12 +242,12 @@ func runNew(ctx context.Context, service *app.Service, args []string) error {
 	}
 
 	if workspace.ShouldUseTUI() {
-		appName, selectedModules, err := workspace.RunNewTUIWithOperation(ctx, cfg, *name, *modules, *branch, *force, func(ctx context.Context, name string, modules []string, branch string, force bool, username, password string, logs *ui.LogBuffer) error {
+		appName, selectedModules, err := workspace.RunNewTUIWithOperation(ctx, cfg, *name, *modules, *dbLoginPrefix, *branch, *force, func(ctx context.Context, name string, modules []string, branch string, force bool, dbLoginPrefix, username, password string, logs *ui.LogBuffer) error {
 			root, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			started, err := service.CreateSiteAtRoot(ctx, root, app.CreateSiteRequest{Name: name, Modules: modules, Branch: branch, Force: force, Username: username, Password: password, ConfigPath: *configPath}, "cli")
+			started, err := service.CreateSiteAtRoot(ctx, root, app.CreateSiteRequest{Name: name, Modules: modules, DBLoginPrefix: dbLoginPrefix, Branch: branch, Force: force, Username: username, Password: password, ConfigPath: *configPath}, "cli")
 			if err != nil {
 				return err
 			}
@@ -275,7 +276,7 @@ func runNew(ctx context.Context, service *app.Service, args []string) error {
 		return fmt.Errorf("determine workspace root: %w", err)
 	}
 	started, err := service.CreateSiteAtRoot(ctx, root, app.CreateSiteRequest{
-		Name: appName, Modules: selectedModules, Branch: *branch, Force: *force, ConfigPath: *configPath,
+		Name: appName, Modules: selectedModules, DBLoginPrefix: *dbLoginPrefix, Branch: *branch, Force: *force, ConfigPath: *configPath,
 	}, "cli")
 	if err != nil {
 		return fmt.Errorf("new failed: %w", err)

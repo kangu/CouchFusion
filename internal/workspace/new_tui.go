@@ -36,7 +36,7 @@ type newAppResultMsg struct {
 	err error
 }
 
-type CreateSiteOperation func(context.Context, string, []string, string, bool, string, string, *ui.LogBuffer) error
+type CreateSiteOperation func(context.Context, string, []string, string, bool, string, string, string, *ui.LogBuffer) error
 
 type newAppModel struct {
 	ctx    context.Context
@@ -49,8 +49,12 @@ type newAppModel struct {
 	step newAppStep
 
 	nameInput     textinput.Model
+	prefixInput   textinput.Model
+	nameField     int
 	nameError     string
+	prefixError   string
 	appName       string
+	dbLoginPrefix string
 	moduleView    moduleSelectModel
 	modules       []string
 	defaults      []string
@@ -70,18 +74,18 @@ type newAppModel struct {
 	operation CreateSiteOperation
 }
 
-func newAppModelWithDefaults(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer) *newAppModel {
-	return newAppModelWithOperation(ctx, cfg, nameHint, moduleHints, branch, force, logs, nil)
+func newAppModelWithDefaults(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, dbLoginPrefixHint, branch string, force bool, logs *ui.LogBuffer) *newAppModel {
+	return newAppModelWithOperation(ctx, cfg, nameHint, moduleHints, dbLoginPrefixHint, branch, force, logs, nil)
 }
 
-func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, branch string, force bool, logs *ui.LogBuffer, operation CreateSiteOperation) *newAppModel {
+func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint string, moduleHints []string, dbLoginPrefixHint, branch string, force bool, logs *ui.LogBuffer, operation CreateSiteOperation) *newAppModel {
 	if operation == nil {
-		operation = func(ctx context.Context, name string, modules []string, branch string, force bool, username, password string, logs *ui.LogBuffer) error {
+		operation = func(ctx context.Context, name string, modules []string, branch string, force bool, dbLoginPrefix, username, password string, logs *ui.LogBuffer) error {
 			if username != "" && password != "" {
 				ctx = WithAuthCredentials(ctx, username, password)
 			}
 			logWriter := logs.Writer(ui.Info)
-			return RunNew(ctx, cfg, name, modules, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
+			return RunNew(ctx, cfg, name, modules, dbLoginPrefix, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
 				logs.Infof(format, args...)
 			}))
 		}
@@ -99,6 +103,10 @@ func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint 
 	nameInput.CharLimit = 64
 	nameInput.Prompt = ""
 	nameInput.Focus()
+	prefixInput := textinput.New()
+	prefixInput.Placeholder = "ac"
+	prefixInput.CharLimit = 2
+	prefixInput.Prompt = ""
 
 	authUser := textinput.New()
 	authUser.Placeholder = "CouchDB admin username"
@@ -117,6 +125,10 @@ func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint 
 		nameInput.SetValue(sanitizedName)
 		nameInput.CursorEnd()
 	}
+	if ValidateDBLoginPrefix(dbLoginPrefixHint) == nil {
+		prefixInput.SetValue(dbLoginPrefixHint)
+		prefixInput.CursorEnd()
+	}
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
@@ -129,6 +141,7 @@ func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint 
 		force:         force,
 		logs:          logs,
 		nameInput:     nameInput,
+		prefixInput:   prefixInput,
 		moduleView:    newModuleSelectModel(modulesList, initialModules),
 		defaults:      defaults,
 		authUserInput: authUser,
@@ -137,11 +150,16 @@ func newAppModelWithOperation(ctx context.Context, cfg *config.Config, nameHint 
 		operation:     operation,
 	}
 
-	if sanitizedName != "" {
+	if sanitizedName != "" && ValidateDBLoginPrefix(dbLoginPrefixHint) == nil {
 		model.appName = sanitizedName
+		model.dbLoginPrefix = dbLoginPrefixHint
 		model.step = stepModules
 	} else {
 		model.step = stepName
+		if sanitizedName != "" {
+			model.nameField = 1
+			model.focusNameField()
+		}
 	}
 
 	return model
@@ -199,23 +217,49 @@ func (m *newAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *newAppModel) updateNameStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		m.aborted = true
 		return m, tea.Quit
+	case "tab", "down", "right":
+		m.nameField = (m.nameField + 1) % 2
+		m.focusNameField()
+		return m, nil
+	case "shift+tab", "up", "left":
+		if m.nameField == 0 {
+			m.nameField = 1
+		} else {
+			m.nameField = 0
+		}
+		m.focusNameField()
+		return m, nil
 	case "enter":
 		value := sanitizeName(m.nameInput.Value())
 		if value == "" {
 			m.nameError = "Name cannot be empty."
+		} else {
+			m.nameError = ""
+		}
+		prefix := m.prefixInput.Value()
+		if err := ValidateDBLoginPrefix(prefix); err != nil {
+			m.prefixError = err.Error() + "."
+		} else {
+			m.prefixError = ""
+		}
+		if m.nameError != "" || m.prefixError != "" {
 			return m, nil
 		}
 		m.appName = value
-		m.nameError = ""
+		m.dbLoginPrefix = prefix
 		m.step = stepModules
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.nameInput, cmd = m.nameInput.Update(msg)
+	if m.nameField == 0 {
+		m.nameInput, cmd = m.nameInput.Update(msg)
+	} else {
+		m.prefixInput, cmd = m.prefixInput.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -326,8 +370,11 @@ func (m *newAppModel) runCreateCmd() tea.Cmd {
 	modules := append([]string{}, m.modules...)
 	branch := m.branch
 	force := m.force
+	dbLoginPrefix := m.dbLoginPrefix
 	ctx := m.ctx
 	logs := m.logs
+	authUsername := m.authUsername
+	authPassword := m.authPassword
 
 	root, _ := os.Getwd()
 	targetDir := filepath.Join(root, "apps", name)
@@ -337,15 +384,15 @@ func (m *newAppModel) runCreateCmd() tea.Cmd {
 		logs.Infof("Selected modules: %s", strings.Join(modules, ", "))
 
 		if containsModule(modules, "auth") {
-			if m.authUsername != "" && m.authPassword != "" {
-				logs.Infof("Using provided CouchDB admin user '%s'", m.authUsername)
+			if authUsername != "" && authPassword != "" {
+				logs.Infof("Using provided CouchDB admin user '%s'", authUsername)
 			} else {
 				logs.Warnf("Auth module selected; CouchDB credentials will be requested during setup.")
 			}
 		}
 
 		logs.Infof("Cloning starter repository...")
-		err := m.operation(ctx, name, modules, branch, force, m.authUsername, m.authPassword, logs)
+		err := m.operation(ctx, name, modules, branch, force, dbLoginPrefix, authUsername, authPassword, logs)
 		if err != nil {
 			return newAppResultMsg{err: err}
 		}
@@ -380,6 +427,16 @@ func (m *newAppModel) focusAuthField() {
 	}
 }
 
+func (m *newAppModel) focusNameField() {
+	m.nameInput.Blur()
+	m.prefixInput.Blur()
+	if m.nameField == 0 {
+		m.nameInput.Focus()
+	} else {
+		m.prefixInput.Focus()
+	}
+}
+
 func (m *newAppModel) View() string {
 	switch m.step {
 	case stepName:
@@ -402,20 +459,24 @@ func (m *newAppModel) View() string {
 }
 
 func (m *newAppModel) viewNameStep() string {
-	errorLine := ""
+	errorLines := []string{}
 	if m.nameError != "" {
-		errorLine = ui.LogError.Render(m.nameError)
+		errorLines = append(errorLines, ui.LogError.Render(m.nameError))
+	}
+	if m.prefixError != "" {
+		errorLines = append(errorLines, ui.LogError.Render(m.prefixError))
 	}
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	lines := []string{
 		ui.Title.Render("Name your application"),
-		ui.Subtitle.Render("Provide a URL-friendly name. We'll clean up spaces and uppercase letters automatically."),
+		ui.Subtitle.Render("Choose the app name and its two-letter database login prefix."),
 		"",
-		ui.Content.Render("> "+m.nameInput.View()),
+		ui.Content.Render("App name : " + m.nameInput.View()),
+		ui.Content.Render("Database : " + m.prefixInput.View() + "-"),
 		"",
-		errorLine,
-	)
+	}
+	lines = append(lines, errorLines...)
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return ui.Content.Render(content)
 }
 
@@ -453,6 +514,7 @@ func (m *newAppModel) viewSummaryStep() string {
 	}
 	lines := []string{
 		fmt.Sprintf("App Name   : %s", ui.Content.Render(m.appName)),
+		fmt.Sprintf("Database   : %s", ui.Content.Render(m.dbLoginPrefix+"-")),
 		fmt.Sprintf("Modules    : %s", ui.Content.Render(strings.Join(modList, ", "))),
 		fmt.Sprintf("Branch     : %s", branchLabel(m.branch)),
 		fmt.Sprintf("Force      : %v", m.force),
@@ -526,7 +588,7 @@ func branchLabel(branch string) string {
 func (m *newAppModel) Hints() []string {
 	switch m.step {
 	case stepName:
-		return []string{"Type to edit name", "Enter to continue", "Ctrl+C to cancel"}
+		return []string{"Tab switch field", "Enter to continue", "Ctrl+C to cancel"}
 	case stepModules:
 		return []string{"↑/↓ move", "Space toggle", "Enter accept", "b back", "Ctrl+C cancel"}
 	case stepAuth:
@@ -559,15 +621,15 @@ func (m *newAppModel) Result() (string, []string, error) {
 }
 
 // RunNewTUI runs the interactive Bubble Tea experience for scaffolding a new app.
-func RunNewTUI(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool) (string, []string, error) {
-	return RunNewTUIWithOperation(ctx, cfg, nameHint, modulesHint, branch, force, nil)
+func RunNewTUI(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, dbLoginPrefixHint string, branch string, force bool) (string, []string, error) {
+	return RunNewTUIWithOperation(ctx, cfg, nameHint, modulesHint, dbLoginPrefixHint, branch, force, nil)
 }
 
-func RunNewTUIWithOperation(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, branch string, force bool, operation CreateSiteOperation) (string, []string, error) {
+func RunNewTUIWithOperation(ctx context.Context, cfg *config.Config, nameHint string, modulesHint string, dbLoginPrefixHint string, branch string, force bool, operation CreateSiteOperation) (string, []string, error) {
 	logBuffer := ui.NewLogBuffer(128)
 
 	initialModules := parseModules(modulesHint)
-	model := newAppModelWithOperation(ctx, cfg, nameHint, initialModules, branch, force, logBuffer, operation)
+	model := newAppModelWithOperation(ctx, cfg, nameHint, initialModules, dbLoginPrefixHint, branch, force, logBuffer, operation)
 
 	root := ui.NewRootModel("Create Nuxt App", "Scaffold a new Nuxt application with CouchFusion layers.", model, logBuffer, nil)
 	finalModel, err := ui.Run(root, tea.WithAltScreen())

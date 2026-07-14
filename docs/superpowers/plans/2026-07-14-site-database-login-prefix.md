@@ -1,6 +1,6 @@
 # Site Database Login Prefix Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Require a two-letter database login prefix during site creation and atomically replace the cloned starter's single `dbLoginPrefix` string with the user value plus `-`.
 
@@ -32,7 +32,7 @@
 - Produces: `func ValidateDBLoginPrefix(string) error` and `func updateDBLoginPrefix(string, string) error`.
 - Extends: `workspace.CreateSiteRequest` with `DBLoginPrefix string`.
 
-- [ ] **Step 1: Write failing validator and editor tests**
+- [x] **Step 1: Write failing validator and editor tests**
 
 Test `ValidateDBLoginPrefix` with `ab` as the only valid representative and `""`, `a`, `abc`, `Aq`, `a1`, `a-`, and `éa` as invalid. Test single and double quotes, byte preservation, file mode preservation, missing property, duplicate property, non-string property, and missing file.
 
@@ -45,25 +45,25 @@ want := strings.Replace(before, "'ns-'", "'ac-'", 1)
 
 For every failure, assert no `.nuxt.config.ts-*` temporary file remains in the directory.
 
-- [ ] **Step 2: Run the tests and verify the red state**
+- [x] **Step 2: Run the tests and verify the red state**
 
 Run: `go test ./internal/workspace -run 'Test(ValidateDBLoginPrefix|UpdateDBLoginPrefix)' -count=1`
 
 Expected: FAIL because the validator and editor do not exist.
 
-- [ ] **Step 3: Implement validation and guarded matching**
+- [x] **Step 3: Implement validation and guarded matching**
 
 Use an anchored regexp for validation. For editing, count property occurrences with `(?m)\bdbLoginPrefix\s*:` and require exactly one. Match the value with single- and double-quoted alternatives, identify only the captured value byte range, and construct the result as `before + prefix + "-" + after`. A non-string property returns `dbLoginPrefix must be a quoted string`; missing and duplicate properties receive distinct errors.
 
-- [ ] **Step 4: Implement the atomic writer**
+- [x] **Step 4: Implement the atomic writer**
 
 Read the original mode with `os.Stat`. Use `os.CreateTemp(filepath.Dir(path), ".nuxt.config.ts-*")`, `Chmod(original.Perm())`, write all bytes, `Sync`, `Close`, and `os.Rename`. Defer cleanup unless rename succeeds. Wrap errors with the target filename but never include file contents.
 
-- [ ] **Step 5: Write the failing provisioning integration test**
+- [x] **Step 5: Write the failing provisioning integration test**
 
 Update `fakeClone.scaffoldSite` to create a representative `nuxt.config.ts` containing `dbLoginPrefix: 'ns-'`. Add a site test that passes `DBLoginPrefix: "ac"`, reads the cloned file, expects `dbLoginPrefix: 'ac-'`, and records the `site.config.database_prefix` event. Add an invalid-prefix test proving `clone.calls == 0`.
 
-- [ ] **Step 6: Wire the request, mutation, and event**
+- [x] **Step 6: Wire the request, mutation, and event**
 
 Add `DBLoginPrefix` to `workspace.CreateSiteRequest`, validate before `prepareForClone`, call `updateDBLoginPrefix` immediately after `updateNuxtExtends`, then emit:
 
@@ -71,7 +71,7 @@ Add `DBLoginPrefix` to `workspace.CreateSiteRequest`, validate before `prepareFo
 dependencies.emit(EventSuccess, "site.config.database_prefix", "Database login prefix configured")
 ```
 
-- [ ] **Step 7: Verify and commit Task 1**
+- [x] **Step 7: Verify and commit Task 1**
 
 Run:
 
@@ -99,11 +99,11 @@ Commit: `feat: configure site database login prefix`
 - Consumes: `workspace.ValidateDBLoginPrefix` and `workspace.CreateSiteRequest.DBLoginPrefix`.
 - Extends: `app.CreateSiteRequest` and POST JSON with `DBLoginPrefix string` / `dbLoginPrefix`.
 
-- [ ] **Step 1: Write failing application validation tests**
+- [x] **Step 1: Write failing application validation tests**
 
 Extend the successful service test with `DBLoginPrefix: "ac"` and record the provisioner request. Add a table test covering blank, uppercase, numeric, short, and long input. Assert every invalid request returns a validation error for `dbLoginPrefix` and starts zero jobs.
 
-- [ ] **Step 2: Write the failing API propagation test**
+- [x] **Step 2: Write the failing API propagation test**
 
 Change the API request fixture to:
 
@@ -113,13 +113,13 @@ Change the API request fixture to:
 
 Record the request in `apiApplicationStub.CreateSite` and assert `DBLoginPrefix == "ac"`.
 
-- [ ] **Step 3: Run the tests and verify the red state**
+- [x] **Step 3: Run the tests and verify the red state**
 
 Run: `go test ./internal/app ./internal/web -run 'Test.*(CreateSite|Site)' -count=1`
 
 Expected: FAIL because the application and HTTP request types do not expose the prefix.
 
-- [ ] **Step 4: Implement application validation and propagation**
+- [x] **Step 4: Implement application validation and propagation**
 
 Add the field to `app.CreateSiteRequest`. In both `CreateSite` and `CreateSiteAtRoot`, call `workspace.ValidateDBLoginPrefix`; map failures to:
 
@@ -129,11 +129,11 @@ ValidationError("dbLoginPrefix", "Database login prefix must contain exactly two
 
 Pass the value through `workspaceProvisioner.CreateSite`.
 
-- [ ] **Step 5: Decode the JSON field and update the fixture**
+- [x] **Step 5: Decode the JSON field and update the fixture**
 
 Add `DBLoginPrefix string \`json:"dbLoginPrefix"\`` to the create-site input and pass it into `app.CreateSiteRequest`. Ensure the deterministic testserver accepts and records requests containing the field so browser tests remain representative.
 
-- [ ] **Step 6: Verify and commit Task 2**
+- [x] **Step 6: Verify and commit Task 2**
 
 Run:
 
@@ -159,7 +159,7 @@ Commit: `feat: propagate site database prefix`
 - Produces submit payload `{ name, modules, branch, force, dbLoginPrefix }`.
 - Consumes API JSON field `dbLoginPrefix`.
 
-- [ ] **Step 1: Write the failing wizard test**
+- [x] **Step 1: Write the failing wizard test**
 
 Mount the open wizard and assert `[name="dbLoginPrefix"]` starts blank and has `required`, `minlength="2"`, `maxlength="2"`, and `pattern="[a-z]{2}"`. Submit step one while blank and assert the wizard remains on step 1. Enter `ac`, advance through modules, assert review contains `ac-`, submit, and expect:
 
@@ -167,21 +167,21 @@ Mount the open wizard and assert `[name="dbLoginPrefix"]` starts blank and has `
 expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ dbLoginPrefix: 'ac' })
 ```
 
-- [ ] **Step 2: Run the unit test and verify the red state**
+- [x] **Step 2: Run the unit test and verify the red state**
 
 Run: `cd web && bun run test:run -- site-wizard`
 
 Expected: FAIL because the input and payload field are absent.
 
-- [ ] **Step 3: Implement the wizard field and validation**
+- [x] **Step 3: Implement the wizard field and validation**
 
 Extend the form and emitted type with `dbLoginPrefix`. Render the blank input and helper text on step 1. Track validity with `/^[a-z]{2}$/` and disable/guard Continue until name and prefix are valid. Render `${form.dbLoginPrefix}-` in review and emit the raw value.
 
-- [ ] **Step 4: Propagate the page payload and extend E2E**
+- [x] **Step 4: Propagate the page payload and extend E2E**
 
 Update the page callback type. In the browser journey, fill `Database login prefix` with `ac` before Continue and retain the existing successful provisioning assertions.
 
-- [ ] **Step 5: Verify and commit Task 3**
+- [x] **Step 5: Verify and commit Task 3**
 
 Run:
 
@@ -214,21 +214,21 @@ Commit: `feat: collect database prefix in site wizard`
 - Adds: `couchfusion new --db-login-prefix ac`.
 - Extends: `CreateSiteOperation` with the raw prefix before credential arguments.
 
-- [ ] **Step 1: Write failing TUI model tests**
+- [x] **Step 1: Write failing TUI model tests**
 
 Construct `newAppModelWithOperation`, assert the prefix input starts blank with a two-character limit, and send Enter with an invalid prefix to remain on `stepName`. Fill `ac`, advance, and invoke the operation from the running command; assert the operation receives `ac`. Assert the summary contains `Database : ac-`.
 
-- [ ] **Step 2: Run the TUI test and verify the red state**
+- [x] **Step 2: Run the TUI test and verify the red state**
 
 Run: `go test ./internal/workspace -run 'TestNewApp.*Prefix' -count=1`
 
 Expected: FAIL because the model and operation lack the prefix.
 
-- [ ] **Step 3: Implement the TUI field**
+- [x] **Step 3: Implement the TUI field**
 
 Add `prefixInput`, focus index, error, and `dbLoginPrefix` to `newAppModel`. The name step switches fields with Tab/arrow keys, requires a sanitized name and `ValidateDBLoginPrefix(prefix) == nil`, displays both inputs, includes `Database : <prefix>-` in the summary, and passes the prefix to `CreateSiteOperation`.
 
-- [ ] **Step 4: Add and propagate the CLI flag**
+- [x] **Step 4: Add and propagate the CLI flag**
 
 Parse:
 
@@ -238,11 +238,11 @@ dbLoginPrefix := fs.String("db-login-prefix", "", "Two lowercase letters used fo
 
 Pass it as the TUI hint and into both `app.CreateSiteRequest` paths. Update root usage text to mention the flag. Non-TUI invalid or missing values are rejected by the application service before a job starts.
 
-- [ ] **Step 5: Update documentation and record results**
+- [x] **Step 5: Update documentation and record results**
 
 Document the web field and CLI example `couchfusion new --name shop --db-login-prefix ac`. Record the atomic edit behavior, validation, events, and exact verification results in the implementation-results file.
 
-- [ ] **Step 6: Run the complete release gate**
+- [x] **Step 6: Run the complete release gate**
 
 Run:
 
@@ -261,7 +261,7 @@ git diff --check
 
 Expected: all Go, frontend, generation, and browser checks PASS.
 
-- [ ] **Step 7: Mark the plan complete and commit**
+- [x] **Step 7: Mark the plan complete and commit**
 
 Mark every checkbox complete and commit:
 

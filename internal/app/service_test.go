@@ -77,20 +77,24 @@ func TestSiteAndLayerProvisioningRunAsWorkspaceJobs(t *testing.T) {
 }
 
 func TestCreateSiteValidatesDBLoginPrefixBeforeStartingJob(t *testing.T) {
-	registry := &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}}
-	provisioner := &provisionerFake{}
-	service := newServiceForTest(t, Dependencies{Registry: registry, Provisioner: provisioner})
+	for _, prefix := range []string{"", "Aq", "a1", "a", "abc"} {
+		t.Run(prefix, func(t *testing.T) {
+			registry := &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}}
+			provisioner := &provisionerFake{}
+			service := newServiceForTest(t, Dependencies{Registry: registry, Provisioner: provisioner})
 
-	_, err := service.CreateSite(context.Background(), "w1", CreateSiteRequest{Name: "shop", DBLoginPrefix: "A1"}, "browser")
-	var validation *Error
-	if !errors.As(err, &validation) || validation.Code != ErrorValidation {
-		t.Fatalf("CreateSite() error = %#v, want validation error", err)
-	}
-	if validation.Fields["dbLoginPrefix"] == "" {
-		t.Fatalf("validation fields = %#v, want dbLoginPrefix message", validation.Fields)
-	}
-	if provisioner.siteCalls != 0 {
-		t.Fatalf("provisioner calls = %d, want 0", provisioner.siteCalls)
+			_, err := service.CreateSite(context.Background(), "w1", CreateSiteRequest{Name: "shop", DBLoginPrefix: prefix}, "browser")
+			var validation *Error
+			if !errors.As(err, &validation) || validation.Code != ErrorValidation {
+				t.Fatalf("CreateSite() error = %#v, want validation error", err)
+			}
+			if validation.Fields["dbLoginPrefix"] == "" {
+				t.Fatalf("validation fields = %#v, want dbLoginPrefix message", validation.Fields)
+			}
+			if provisioner.siteCalls != 0 {
+				t.Fatalf("provisioner calls = %d, want 0", provisioner.siteCalls)
+			}
+		})
 	}
 }
 

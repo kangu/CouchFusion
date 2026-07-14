@@ -23,8 +23,8 @@ func TestInitTUIRunsInjectedApplicationOperation(t *testing.T) {
 func TestNewSiteTUIRunsInjectedApplicationOperation(t *testing.T) {
 	called := false
 	cfg := &config.Config{Modules: map[string]config.ModuleConfig{}, Prompts: config.PromptConfig{}}
-	model := newAppModelWithOperation(context.Background(), cfg, "shop", []string{"content"}, "preview", true, ui.NewLogBuffer(20), func(_ context.Context, name string, modules []string, branch string, force bool, _, _ string, _ *ui.LogBuffer) error {
-		called = name == "shop" && len(modules) == 1 && modules[0] == "content" && branch == "preview" && force
+	model := newAppModelWithOperation(context.Background(), cfg, "shop", []string{"content"}, "ac", "preview", true, ui.NewLogBuffer(20), func(_ context.Context, name string, modules []string, branch string, force bool, prefix, _, _ string, _ *ui.LogBuffer) error {
+		called = name == "shop" && len(modules) == 1 && modules[0] == "content" && prefix == "ac" && branch == "preview" && force
 		return nil
 	})
 	model.appName = "shop"
