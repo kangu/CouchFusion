@@ -18,3 +18,17 @@ type AgentReadiness struct {
 	AccountType string               `json:"accountType,omitempty"`
 	Problem     string               `json:"problem,omitempty"`
 }
+
+type ChangeKind string
+
+const (
+	ChangeAdded    ChangeKind = "added"
+	ChangeModified ChangeKind = "modified"
+	ChangeDeleted  ChangeKind = "deleted"
+)
+
+type ChangedFile struct {
+	Path          string     `json:"path"`
+	Kind          ChangeKind `json:"kind"`
+	BaselineDirty bool       `json:"baselineDirty,omitempty"`
+}
