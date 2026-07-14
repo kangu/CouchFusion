@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nuxt-apps/couchfusion/internal/config"
@@ -19,9 +20,10 @@ func TestCreateSiteUsesExplicitRoot(t *testing.T) {
 	clone := &fakeClone{scaffoldSite: true}
 
 	err := CreateSite(context.Background(), testWorkspaceConfig(), CreateSiteRequest{
-		Root:    root,
-		Name:    "alpha",
-		Modules: []string{"content"},
+		Root:          root,
+		Name:          "alpha",
+		Modules:       []string{"content"},
+		DBLoginPrefix: "ns",
 	}, Dependencies{Clone: clone.Clone})
 
 	if err != nil {
@@ -85,8 +87,9 @@ func TestCreateSiteRejectsExistingNonEmptyTargetWithoutCallingClone(t *testing.T
 	clone := &fakeClone{scaffoldSite: true}
 
 	err := CreateSite(context.Background(), testWorkspaceConfig(), CreateSiteRequest{
-		Root: root,
-		Name: "alpha",
+		Root:          root,
+		Name:          "alpha",
+		DBLoginPrefix: "ns",
 	}, Dependencies{Clone: clone.Clone})
 
 	if err == nil {
@@ -106,10 +109,11 @@ func TestCreateSitePassesCredentialsWithoutTerminalInput(t *testing.T) {
 	var got AuthCredentials
 
 	err := CreateSite(context.Background(), testWorkspaceConfig(), CreateSiteRequest{
-		Root:    root,
-		Name:    "alpha",
-		Modules: []string{"auth"},
-		Auth:    &AuthCredentials{Username: "admin", Password: "secret"},
+		Root:          root,
+		Name:          "alpha",
+		Modules:       []string{"auth"},
+		DBLoginPrefix: "ns",
+		Auth:          &AuthCredentials{Username: "admin", Password: "secret"},
 	}, Dependencies{
 		Clone: clone.Clone,
 		ApplyLayerParameters: func(ctx context.Context, _ string, modules []string) error {
@@ -133,6 +137,50 @@ func TestCreateSitePassesCredentialsWithoutTerminalInput(t *testing.T) {
 	}
 }
 
+func TestCreateSiteRejectsInvalidDBLoginPrefixBeforeClone(t *testing.T) {
+	root := newWorkspaceFixture(t)
+	clone := &fakeClone{scaffoldSite: true}
+
+	err := CreateSite(context.Background(), testWorkspaceConfig(), CreateSiteRequest{
+		Root:          root,
+		Name:          "alpha",
+		DBLoginPrefix: "A1",
+	}, Dependencies{Clone: clone.Clone})
+
+	if err == nil {
+		t.Fatal("CreateSite() error = nil, want database login prefix validation error")
+	}
+	if clone.calls != 0 {
+		t.Fatalf("clone calls = %d, want 0", clone.calls)
+	}
+}
+
+func TestCreateSiteConfiguresDBLoginPrefixAfterClone(t *testing.T) {
+	root := newWorkspaceFixture(t)
+	clone := &fakeClone{scaffoldSite: true}
+	events := &recordingEventSink{}
+
+	err := CreateSite(context.Background(), testWorkspaceConfig(), CreateSiteRequest{
+		Root:          root,
+		Name:          "alpha",
+		DBLoginPrefix: "ac",
+	}, Dependencies{Clone: clone.Clone, Events: events})
+
+	if err != nil {
+		t.Fatalf("CreateSite() error = %v", err)
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "apps", "alpha", "nuxt.config.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "dbLoginPrefix: 'ac-'") {
+		t.Fatalf("nuxt.config.ts does not contain configured prefix:\n%s", contents)
+	}
+	if !events.contains(Event{Level: EventSuccess, Code: "site.config.database_prefix", Message: "Database login prefix configured"}) {
+		t.Fatalf("events = %#v, want database prefix success event", events.events)
+	}
+}
+
 type fakeClone struct {
 	calls        int
 	target       string
@@ -151,7 +199,24 @@ func (f *fakeClone) Clone(_ context.Context, _, _, targetDir, _ string, _ bool, 
 	if err := os.WriteFile(filepath.Join(targetDir, "package.json"), []byte("{\"dependencies\":{}}\n"), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(targetDir, "nuxt.config.ts"), []byte("export default defineNuxtConfig({ extends: [] })\n"), 0o644)
+	return os.WriteFile(filepath.Join(targetDir, "nuxt.config.ts"), []byte("export default defineNuxtConfig({ extends: [], runtimeConfig: { dbLoginPrefix: 'ns-' } })\n"), 0o644)
+}
+
+type recordingEventSink struct {
+	events []Event
+}
+
+func (s *recordingEventSink) Emit(event Event) {
+	s.events = append(s.events, event)
+}
+
+func (s *recordingEventSink) contains(want Event) bool {
+	for _, event := range s.events {
+		if event == want {
+			return true
+		}
+	}
+	return false
 }
 
 func newWorkspaceFixture(t *testing.T) string {

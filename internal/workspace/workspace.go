@@ -29,12 +29,13 @@ type InitRequest struct {
 }
 
 type CreateSiteRequest struct {
-	Root    string
-	Name    string
-	Modules []string
-	Branch  string
-	Force   bool
-	Auth    *AuthCredentials
+	Root          string
+	Name          string
+	Modules       []string
+	DBLoginPrefix string
+	Branch        string
+	Force         bool
+	Auth          *AuthCredentials
 }
 
 type CreateLayerRequest struct {
@@ -140,6 +141,9 @@ func CreateSite(ctx context.Context, cfg *config.Config, request CreateSiteReque
 	if name == "" {
 		return errors.New("app name cannot be empty")
 	}
+	if err := ValidateDBLoginPrefix(request.DBLoginPrefix); err != nil {
+		return err
+	}
 	if err := validateModules(cfg, request.Modules); err != nil {
 		return err
 	}
@@ -172,6 +176,10 @@ func CreateSite(ctx context.Context, cfg *config.Config, request CreateSiteReque
 	if err := updateNuxtExtends(targetDir, request.Modules); err != nil {
 		return err
 	}
+	if err := updateDBLoginPrefix(targetDir, request.DBLoginPrefix); err != nil {
+		return err
+	}
+	dependencies.emit(EventSuccess, "site.config.database_prefix", "Database login prefix configured")
 	if err := writeAppMetadata(targetDir, name, request.Modules); err != nil {
 		return err
 	}
