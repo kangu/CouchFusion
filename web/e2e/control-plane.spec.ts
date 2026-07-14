@@ -21,6 +21,7 @@ test('controls an explicit CouchFusion workspace from one local UI', async ({ pa
   await page.getByRole('link', { name: 'Sites', exact: true }).click()
   await page.getByRole('button', { name: 'Create site' }).click()
   await page.getByLabel('Site name').fill('catalog')
+  await page.getByLabel('Database login prefix').fill('ac')
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.getByRole('checkbox', { name: 'content' }).check()
   await page.getByRole('button', { name: 'Continue' }).click()
