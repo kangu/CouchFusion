@@ -517,7 +517,7 @@ git commit -m "test: cover component preview workflow"
 ## Final Review
 
 - [x] Confirm `git status --short` in both repositories contains no unintended changes.
-- [x] Confirm no JSON response, event, log, or failure message contains `COUCHFUSION_PREVIEW_TOKEN` or its value.
+- [x] Confirm JSON exposes the token only inside the required ready URL, never as a standalone field, and no event, log, or failure message contains `COUCHFUSION_PREVIEW_TOKEN` or its value.
 - [x] Confirm ordinary `script:dev` and `component-preview` process owners run concurrently.
 - [x] Confirm preview routes return 404 when the preview flag is absent or token is wrong.
 - [x] Confirm the iframe is `375px` in mobile mode and native CSS HMR updates without rotating the CouchFusion UI token.
