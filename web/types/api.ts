@@ -78,6 +78,24 @@ export interface Task {
   longRunning: boolean
 }
 
+export type ComponentRegistryStatus = 'ready' | 'stale' | 'missing' | 'invalid'
+
+export interface ContentComponent {
+  id: string
+  label: string
+  description: string
+  source: string
+  propCount: number
+  allowChildren: boolean
+}
+
+export interface ComponentRegistryResponse {
+  status: ComponentRegistryStatus
+  components: ContentComponent[]
+  problem?: string
+  canRebuild: boolean
+}
+
 export type ConfigSource = 'embedded' | 'global' | 'workspace'
 
 export interface EffectiveConfig {
