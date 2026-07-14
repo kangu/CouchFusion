@@ -218,7 +218,7 @@ func (p *Process) Done() <-chan error
 func (p *Process) Shutdown(context.Context) error
 ```
 
-- [ ] **Step 1: Write failing preflight tests**
+- [x] **Step 1: Write failing preflight tests**
 
 Add table-driven tests for the exact source and dependency errors, using a temporary root and an internal `lookPath` dependency overridden from the same package test:
 
@@ -246,13 +246,13 @@ func TestStartValidatesFrontendCheckout(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the package test and verify failure**
+- [x] **Step 2: Run the package test and verify failure**
 
 Run: `go test ./internal/devui -count=1`
 
 Expected: FAIL because `internal/devui` and `Start` do not exist.
 
-- [ ] **Step 3: Implement preflight, port reservation, and startup**
+- [x] **Step 3: Implement preflight, port reservation, and startup**
 
 In `Start`:
 
@@ -266,7 +266,7 @@ In `Start`:
 
 Keep injectable package variables for `lookPath`, `listen`, `commandContext`, and `httpClient` so unit tests can use the Go test binary as a controlled child without shell scripts.
 
-- [ ] **Step 4: Write lifecycle tests with a helper subprocess**
+- [x] **Step 4: Write lifecycle tests with a helper subprocess**
 
 Use the standard Go helper-process pattern. The helper reads the requested port from `COUCHFUSION_DEVUI_HELPER_PORT`, serves loopback HTTP, prints `ready`, and either waits for interruption or exits immediately based on `COUCHFUSION_DEVUI_HELPER_MODE`.
 
@@ -298,7 +298,7 @@ func TestProcessReportsUnexpectedExit(t *testing.T) {
 
 Also verify startup timeout cleans up the helper and that two calls to `Shutdown` are safe.
 
-- [ ] **Step 5: Configure strict Vite port behavior**
+- [x] **Step 5: Configure strict Vite port behavior**
 
 Add to `web/nuxt.config.ts`:
 
@@ -312,7 +312,7 @@ vite: {
 
 The reverse proxy forwards the default Vite WebSocket path, so no separate public HMR port or host is configured.
 
-- [ ] **Step 6: Run and commit Task 2**
+- [x] **Step 6: Run and commit Task 2**
 
 Run:
 

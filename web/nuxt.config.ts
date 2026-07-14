@@ -9,6 +9,11 @@ export default defineNuxtConfig({
     strict: true,
     typeCheck: true,
   },
+  vite: {
+    server: {
+      strictPort: true,
+    },
+  },
   app: {
     head: {
       title: 'CouchFusion Workbench',
