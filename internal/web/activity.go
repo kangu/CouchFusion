@@ -67,6 +67,34 @@ func (h apiHandler) processEvents(writer http.ResponseWriter, request *http.Requ
 	})
 }
 
+func (h apiHandler) agentConversationEvents(writer http.ResponseWriter, request *http.Request) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok {
+		return
+	}
+	after, ok := lastEventID(writer, request)
+	if !ok {
+		return
+	}
+	events, err := h.application.SubscribeAgentConversation(request.Context(), conversationID, after)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	serveSSE(writer, request, "conversation", func(send func(uint64, any) bool) {
+		for {
+			select {
+			case <-request.Context().Done():
+				return
+			case event, open := <-events:
+				if !open || !send(event.Sequence, event) {
+					return
+				}
+			}
+		}
+	})
+}
+
 func lastEventID(writer http.ResponseWriter, request *http.Request) (uint64, bool) {
 	value := request.Header.Get("Last-Event-ID")
 	if value == "" {

@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	"github.com/nuxt-apps/couchfusion/internal/agent/prompt"
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
@@ -197,6 +200,107 @@ func TestComponentPreviewHostRoutes(t *testing.T) {
 	}
 }
 
+func TestAgentConversationRoutesUseApplicationService(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+
+	tests := []struct {
+		method string
+		path   string
+		body   string
+		header map[string]string
+		status int
+		call   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", status: http.StatusOK, call: "agent.list"},
+		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", body: `{"prompt":"Build a hero"}`, header: map[string]string{"Idempotency-Key": "create-1"}, status: http.StatusCreated, call: "agent.create"},
+		{method: http.MethodGet, path: "/api/v1/agent-conversations/c1", status: http.StatusOK, call: "agent.get"},
+		{method: http.MethodPost, path: "/api/v1/agent-conversations/c1/turns", body: `{"prompt":"Make it compact"}`, header: map[string]string{"Idempotency-Key": "turn-1"}, status: http.StatusAccepted, call: "agent.turn"},
+		{method: http.MethodPost, path: "/api/v1/agent-conversations/c1/approvals/r1", body: `{"decision":"approve_generation"}`, status: http.StatusNoContent, call: "agent.approval"},
+		{method: http.MethodPost, path: "/api/v1/agent-conversations/c1/questions/r1/answer", body: `{"answers":{"tone":"quiet"}}`, status: http.StatusNoContent, call: "agent.question"},
+		{method: http.MethodPost, path: "/api/v1/agent-conversations/c1/consents", body: `{"kind":"network_access","granted":true}`, status: http.StatusNoContent, call: "agent.consent"},
+		{method: http.MethodPost, path: "/api/v1/agent-conversations/c1/interrupt", body: `{}`, status: http.StatusNoContent, call: "agent.interrupt"},
+	}
+	for _, test := range tests {
+		response := authenticatedAPIRequestWithHeaders(server, cookie, test.method, test.path, test.body, test.header)
+		if response.Code != test.status {
+			t.Fatalf("%s %s status = %d: %s", test.method, test.path, response.Code, response.Body.String())
+		}
+		if application.calls[test.call] == 0 {
+			t.Fatalf("application call %q was not made", test.call)
+		}
+	}
+	if application.agentPrompt.Prompt != "Make it compact" || application.agentPrompt.IdempotencyKey != "turn-1" {
+		t.Fatalf("turn request = %#v", application.agentPrompt)
+	}
+	if application.approvalDecision != conversations.ApprovalApproveGeneration {
+		t.Fatalf("approval decision = %q", application.approvalDecision)
+	}
+	if application.consentRequestID != "r1" || application.consentKind != model.ConsentNetworkAccess || !application.consentGranted {
+		t.Fatalf("consent = %q %q %t", application.consentRequestID, application.consentKind, application.consentGranted)
+	}
+}
+
+func TestAgentConversationRoutesValidateStrictInputs(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+	tests := []struct {
+		name   string
+		path   string
+		body   string
+		header map[string]string
+	}{
+		{name: "unknown field", path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", body: `{"prompt":"hello","cwd":"/tmp"}`, header: map[string]string{"Idempotency-Key": "key"}},
+		{name: "blank prompt", path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", body: `{"prompt":"  "}`, header: map[string]string{"Idempotency-Key": "key"}},
+		{name: "long prompt", path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", body: `{"prompt":"` + strings.Repeat("x", prompt.MaxPromptBytes+1) + `"}`, header: map[string]string{"Idempotency-Key": "key"}},
+		{name: "missing idempotency", path: "/api/v1/workspaces/w1/sites/shop/agent-conversations", body: `{"prompt":"hello"}`},
+		{name: "long idempotency", path: "/api/v1/agent-conversations/c1/turns", body: `{"prompt":"hello"}`, header: map[string]string{"Idempotency-Key": strings.Repeat("k", 129)}},
+		{name: "invalid decision", path: "/api/v1/agent-conversations/c1/approvals/r1", body: `{"decision":"always"}`},
+		{name: "invalid consent", path: "/api/v1/agent-conversations/c1/consents", body: `{"kind":"filesystem","granted":true}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := authenticatedAPIRequestWithHeaders(server, cookie, http.MethodPost, test.path, test.body, test.header)
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAgentConversationIDsAreSafelyPathDecoded(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+	response := authenticatedAPIRequest(server, cookie, http.MethodGet, "/api/v1/agent-conversations/bad%20id", "")
+	if response.Code != http.StatusUnprocessableEntity || application.calls["agent.get"] != 0 {
+		t.Fatalf("response = %d: %s; calls = %d", response.Code, response.Body.String(), application.calls["agent.get"])
+	}
+}
+
+func TestAgentConversationSSEHonorsLastEventID(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+	response := authenticatedAPIRequestWithHeaders(server, cookie, http.MethodGet, "/api/v1/agent-conversations/c1/events", "", map[string]string{"Last-Event-ID": "6"})
+	if response.Code != http.StatusOK || application.lastEventID != 6 {
+		t.Fatalf("response = %d: %s; after = %d", response.Code, response.Body.String(), application.lastEventID)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "id: 7\nevent: conversation\n") || !strings.Contains(body, `"conversationId":"c1"`) {
+		t.Fatalf("SSE body = %s", body)
+	}
+}
+
+func TestAgentConversationResponsesDoNotExposeControlPlaneSecrets(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+	response := authenticatedAPIRequest(server, cookie, http.MethodGet, "/api/v1/agent-conversations/c1", "")
+	for _, forbidden := range []string{"codexThreadId", "cwd", "skillPath", "rpcId", "authorization", "credentials", "Build a secret component"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("response exposes %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
 func TestJobProcessAndSSERoutes(t *testing.T) {
 	application := newAPIApplicationStub()
 	server, cookie := newAuthenticatedAPIServer(t, application)
@@ -332,18 +436,27 @@ type apiApplicationStub struct {
 	components        app.ComponentRegistryView
 	previewHost       preview.View
 	openedComponentID string
+	agentCollection   app.AgentConversationCollection
+	agentConversation model.Conversation
+	agentPrompt       app.AgentPromptRequest
+	approvalDecision  conversations.ApprovalDecision
+	consentRequestID  string
+	consentKind       model.ConsentKind
+	consentGranted    bool
 }
 
 func newAPIApplicationStub() *apiApplicationStub {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	return &apiApplicationStub{
-		calls:     map[string]int{},
-		errors:    map[string]error{},
-		entry:     registry.Entry{ID: "w1", Name: "Demo", Root: "/workspace", Available: true},
-		workspace: project.Workspace{ID: "w1", Name: "Demo", Root: "/workspace", Available: true, Sites: []project.Site{}, Layers: []project.Layer{}, Warnings: []project.Warning{}},
-		site:      project.Site{ID: "shop", Name: "Shop", Root: "/workspace/apps/shop", Modules: []string{"auth"}, Scripts: map[string]string{"dev": "nuxt dev"}, Dependencies: map[string]string{}, DevDependencies: map[string]string{}, Lockfiles: []string{}, Warnings: []project.Warning{}},
-		job:       jobs.Snapshot{ID: "job-1", Type: "site.create", WorkspaceID: "w1", Status: jobs.Running, CreatedAt: now, Events: []jobs.Event{}},
-		process:   processes.Snapshot{ID: "process-1", WorkspaceID: "w1", SiteID: "shop", TaskID: "script:dev", Status: processes.Running, StartedAt: now, URLs: []string{"http://localhost:3000/"}, Events: []processes.Event{}},
+		calls:             map[string]int{},
+		errors:            map[string]error{},
+		entry:             registry.Entry{ID: "w1", Name: "Demo", Root: "/workspace", Available: true},
+		workspace:         project.Workspace{ID: "w1", Name: "Demo", Root: "/workspace", Available: true, Sites: []project.Site{}, Layers: []project.Layer{}, Warnings: []project.Warning{}},
+		site:              project.Site{ID: "shop", Name: "Shop", Root: "/workspace/apps/shop", Modules: []string{"auth"}, Scripts: map[string]string{"dev": "nuxt dev"}, Dependencies: map[string]string{}, DevDependencies: map[string]string{}, Lockfiles: []string{}, Warnings: []project.Warning{}},
+		job:               jobs.Snapshot{ID: "job-1", Type: "site.create", WorkspaceID: "w1", Status: jobs.Running, CreatedAt: now, Events: []jobs.Event{}},
+		process:           processes.Snapshot{ID: "process-1", WorkspaceID: "w1", SiteID: "shop", TaskID: "script:dev", Status: processes.Running, StartedAt: now, URLs: []string{"http://localhost:3000/"}, Events: []processes.Event{}},
+		agentCollection:   app.AgentConversationCollection{Readiness: model.AgentReadiness{Status: model.AgentReady, Available: true}},
+		agentConversation: model.Conversation{ID: "c1", WorkspaceID: "w1", SiteID: "shop", Title: "Hero", Status: model.ConversationWaiting, PendingInteraction: &model.Interaction{RequestID: "r1", Kind: model.InteractionConsent, ConsentKind: model.ConsentNetworkAccess}, Registry: model.RegistryResult{State: model.RegistryNotNeeded}, Sequence: 6, BindingValid: true, CreatedAt: now, UpdatedAt: now},
 	}
 }
 
@@ -479,4 +592,49 @@ func (s *apiApplicationStub) SubscribeJob(_ string, after uint64) (<-chan jobs.E
 func (s *apiApplicationStub) ConsumeJobSecret(string, string) (string, error) {
 	s.calls["job.secret"]++
 	return "generated-password", s.errors["job.secret"]
+}
+
+func (s *apiApplicationStub) AgentConversationList(context.Context, string, string) (app.AgentConversationCollection, error) {
+	s.calls["agent.list"]++
+	return s.agentCollection, s.errors["agent.list"]
+}
+func (s *apiApplicationStub) AgentConversation(context.Context, string) (model.Conversation, error) {
+	s.calls["agent.get"]++
+	return s.agentConversation, s.errors["agent.get"]
+}
+func (s *apiApplicationStub) CreateAgentConversation(_ context.Context, _, _ string, request app.AgentPromptRequest) (model.Conversation, error) {
+	s.calls["agent.create"]++
+	s.agentPrompt = request
+	return s.agentConversation, s.errors["agent.create"]
+}
+func (s *apiApplicationStub) StartAgentTurn(_ context.Context, _ string, request app.AgentPromptRequest) (model.Conversation, error) {
+	s.calls["agent.turn"]++
+	s.agentPrompt = request
+	return s.agentConversation, s.errors["agent.turn"]
+}
+func (s *apiApplicationStub) AnswerAgentQuestion(context.Context, string, string, map[string]string) error {
+	s.calls["agent.question"]++
+	return s.errors["agent.question"]
+}
+func (s *apiApplicationStub) ResolveAgentApproval(_ context.Context, _, _ string, decision conversations.ApprovalDecision) error {
+	s.calls["agent.approval"]++
+	s.approvalDecision = decision
+	return s.errors["agent.approval"]
+}
+func (s *apiApplicationStub) GrantAgentConsent(_ context.Context, _, requestID string, kind model.ConsentKind, granted bool) error {
+	s.calls["agent.consent"]++
+	s.consentRequestID, s.consentKind, s.consentGranted = requestID, kind, granted
+	return s.errors["agent.consent"]
+}
+func (s *apiApplicationStub) InterruptAgentConversation(context.Context, string) error {
+	s.calls["agent.interrupt"]++
+	return s.errors["agent.interrupt"]
+}
+func (s *apiApplicationStub) SubscribeAgentConversation(_ context.Context, _ string, after uint64) (<-chan model.Event, error) {
+	s.calls["agent.events"]++
+	s.lastEventID = after
+	stream := make(chan model.Event, 1)
+	stream <- model.Event{Sequence: 7, Type: model.EventConversationSnapshot, ConversationID: "c1", CreatedAt: time.Now().UTC()}
+	close(stream)
+	return stream, s.errors["agent.events"]
 }

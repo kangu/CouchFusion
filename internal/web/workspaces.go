@@ -9,6 +9,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	agentprompt "github.com/nuxt-apps/couchfusion/internal/agent/prompt"
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
@@ -50,6 +53,15 @@ type Application interface {
 	CancelJob(string) error
 	SubscribeJob(string, uint64) (<-chan jobs.Event, func(), error)
 	ConsumeJobSecret(string, string) (string, error)
+	AgentConversationList(context.Context, string, string) (app.AgentConversationCollection, error)
+	AgentConversation(context.Context, string) (model.Conversation, error)
+	CreateAgentConversation(context.Context, string, string, app.AgentPromptRequest) (model.Conversation, error)
+	StartAgentTurn(context.Context, string, app.AgentPromptRequest) (model.Conversation, error)
+	AnswerAgentQuestion(context.Context, string, string, map[string]string) error
+	ResolveAgentApproval(context.Context, string, string, conversations.ApprovalDecision) error
+	GrantAgentConsent(context.Context, string, string, model.ConsentKind, bool) error
+	InterruptAgentConversation(context.Context, string) error
+	SubscribeAgentConversation(context.Context, string, uint64) (<-chan model.Event, error)
 }
 
 type apiHandler struct {
@@ -100,6 +112,15 @@ func newAPIHandler(application Application) http.Handler {
 	mux.HandleFunc("POST /api/v1/processes/{processId}/stop", handler.stopProcess)
 	mux.HandleFunc("POST /api/v1/processes/{processId}/restart", handler.restartProcess)
 	mux.HandleFunc("GET /api/v1/processes/{processId}/events", handler.processEvents)
+	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/agent-conversations", handler.listAgentConversations)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/agent-conversations", handler.createAgentConversation)
+	mux.HandleFunc("GET /api/v1/agent-conversations/{conversationId}", handler.getAgentConversation)
+	mux.HandleFunc("POST /api/v1/agent-conversations/{conversationId}/turns", handler.startAgentTurn)
+	mux.HandleFunc("POST /api/v1/agent-conversations/{conversationId}/approvals/{requestId}", handler.resolveAgentApproval)
+	mux.HandleFunc("POST /api/v1/agent-conversations/{conversationId}/questions/{requestId}/answer", handler.answerAgentQuestion)
+	mux.HandleFunc("POST /api/v1/agent-conversations/{conversationId}/consents", handler.grantAgentConsent)
+	mux.HandleFunc("POST /api/v1/agent-conversations/{conversationId}/interrupt", handler.interruptAgentConversation)
+	mux.HandleFunc("GET /api/v1/agent-conversations/{conversationId}/events", handler.agentConversationEvents)
 	mux.HandleFunc("/api/v1/", func(writer http.ResponseWriter, _ *http.Request) {
 		writeError(writer, http.StatusNotFound, "not_found", "The requested API route was not found")
 	})
@@ -551,6 +572,185 @@ func (h apiHandler) restartProcess(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeData(writer, http.StatusAccepted, process)
+}
+
+func (h apiHandler) listAgentConversations(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok {
+		return
+	}
+	collection, err := h.application.AgentConversationList(request.Context(), workspaceID, siteID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, collection)
+}
+
+func (h apiHandler) createAgentConversation(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok {
+		return
+	}
+	input, ok := decodeAgentPromptRequest(writer, request)
+	if !ok {
+		return
+	}
+	conversation, err := h.application.CreateAgentConversation(request.Context(), workspaceID, siteID, input)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusCreated, conversation)
+}
+
+func (h apiHandler) getAgentConversation(writer http.ResponseWriter, request *http.Request) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok {
+		return
+	}
+	conversation, err := h.application.AgentConversation(request.Context(), conversationID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, conversation)
+}
+
+func (h apiHandler) startAgentTurn(writer http.ResponseWriter, request *http.Request) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok {
+		return
+	}
+	input, ok := decodeAgentPromptRequest(writer, request)
+	if !ok {
+		return
+	}
+	conversation, err := h.application.StartAgentTurn(request.Context(), conversationID, input)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusAccepted, conversation)
+}
+
+func (h apiHandler) resolveAgentApproval(writer http.ResponseWriter, request *http.Request) {
+	conversationID, requestID, ok := conversationRequestIDs(writer, request)
+	if !ok {
+		return
+	}
+	var input struct {
+		Decision conversations.ApprovalDecision `json:"decision"`
+	}
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	switch input.Decision {
+	case conversations.ApprovalApproveOnce, conversations.ApprovalApproveGeneration, conversations.ApprovalDecline, conversations.ApprovalCancel:
+	default:
+		writeApplicationError(writer, app.ValidationError("decision", "Approval decision is invalid"))
+		return
+	}
+	if err := h.application.ResolveAgentApproval(request.Context(), conversationID, requestID, input.Decision); err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (h apiHandler) answerAgentQuestion(writer http.ResponseWriter, request *http.Request) {
+	conversationID, requestID, ok := conversationRequestIDs(writer, request)
+	if !ok {
+		return
+	}
+	var input struct {
+		Answers map[string]string `json:"answers"`
+	}
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	if input.Answers == nil {
+		writeApplicationError(writer, app.ValidationError("answers", "Question answers are required"))
+		return
+	}
+	if err := h.application.AnswerAgentQuestion(request.Context(), conversationID, requestID, input.Answers); err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (h apiHandler) grantAgentConsent(writer http.ResponseWriter, request *http.Request) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok {
+		return
+	}
+	var input struct {
+		Kind    model.ConsentKind `json:"kind"`
+		Granted bool              `json:"granted"`
+	}
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	if input.Kind != model.ConsentDependencyChange && input.Kind != model.ConsentNetworkAccess {
+		writeApplicationError(writer, app.ValidationError("kind", "Consent kind is invalid"))
+		return
+	}
+	conversation, err := h.application.AgentConversation(request.Context(), conversationID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	if conversation.PendingInteraction == nil || conversation.PendingInteraction.Kind != model.InteractionConsent {
+		writeApplicationError(writer, app.ValidationError("kind", "No consent request is pending"))
+		return
+	}
+	if err := h.application.GrantAgentConsent(request.Context(), conversationID, conversation.PendingInteraction.RequestID, input.Kind, input.Granted); err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (h apiHandler) interruptAgentConversation(writer http.ResponseWriter, request *http.Request) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok || !decodeEmptyRequest(writer, request) {
+		return
+	}
+	if err := h.application.InterruptAgentConversation(request.Context(), conversationID); err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func decodeAgentPromptRequest(writer http.ResponseWriter, request *http.Request) (app.AgentPromptRequest, bool) {
+	var input struct {
+		Prompt string `json:"prompt"`
+	}
+	if !decodeRequest(writer, request, &input) {
+		return app.AgentPromptRequest{}, false
+	}
+	input.Prompt = strings.TrimSpace(input.Prompt)
+	if input.Prompt == "" || len([]byte(input.Prompt)) > agentprompt.MaxPromptBytes {
+		writeApplicationError(writer, app.ValidationError("prompt", "Prompt must contain between 1 and 16384 bytes"))
+		return app.AgentPromptRequest{}, false
+	}
+	key := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
+	if key == "" || len(key) > 128 {
+		writeApplicationError(writer, app.ValidationError("idempotencyKey", "Idempotency-Key must contain between 1 and 128 characters"))
+		return app.AgentPromptRequest{}, false
+	}
+	return app.AgentPromptRequest{Prompt: input.Prompt, IdempotencyKey: key}, true
+}
+
+func conversationRequestIDs(writer http.ResponseWriter, request *http.Request) (string, string, bool) {
+	conversationID, ok := pathID(writer, request, "conversationId")
+	if !ok {
+		return "", "", false
+	}
+	requestID, ok := pathID(writer, request, "requestId")
+	return conversationID, requestID, ok
 }
 
 func decodeEmptyRequest(writer http.ResponseWriter, request *http.Request) bool {

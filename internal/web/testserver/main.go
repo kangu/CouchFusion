@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
@@ -64,11 +66,16 @@ type fixtureApplication struct {
 	process           processes.Snapshot
 	openedComponentID string
 	previewHost       preview.View
+	agentConversation model.Conversation
 }
 
 func newFixtureApplication() *fixtureApplication {
 	now := time.Now().UTC()
-	return &fixtureApplication{entry: registry.Entry{ID: "workspace-e2e", Name: "E2E Workspace", Root: workspaceRoot, Available: true, CreatedAt: now, LastOpenedAt: now}, jobs: map[string]jobs.Snapshot{}}
+	return &fixtureApplication{
+		entry:             registry.Entry{ID: "workspace-e2e", Name: "E2E Workspace", Root: workspaceRoot, Available: true, CreatedAt: now, LastOpenedAt: now},
+		jobs:              map[string]jobs.Snapshot{},
+		agentConversation: model.Conversation{ID: "conversation-e2e", WorkspaceID: "workspace-e2e", SiteID: "shop", Title: "Fixture generation", Status: model.ConversationReady, Registry: model.RegistryResult{State: model.RegistrySucceeded}, BindingValid: true, CreatedAt: now, UpdatedAt: now},
+	}
 }
 
 func (f *fixtureApplication) ListWorkspaces(context.Context) ([]registry.Entry, error) {
@@ -250,6 +257,35 @@ func (f *fixtureApplication) SubscribeJob(id string, _ uint64) (<-chan jobs.Even
 }
 func (f *fixtureApplication) ConsumeJobSecret(string, string) (string, error) {
 	return "", jobs.ErrSecretUnavailable
+}
+
+func (f *fixtureApplication) AgentConversationList(context.Context, string, string) (app.AgentConversationCollection, error) {
+	return app.AgentConversationCollection{Readiness: model.AgentReadiness{Status: model.AgentReady, Available: true}, Conversations: []model.Conversation{f.agentConversation}}, nil
+}
+func (f *fixtureApplication) AgentConversation(context.Context, string) (model.Conversation, error) {
+	return f.agentConversation, nil
+}
+func (f *fixtureApplication) CreateAgentConversation(_ context.Context, _, _ string, _ app.AgentPromptRequest) (model.Conversation, error) {
+	return f.agentConversation, nil
+}
+func (f *fixtureApplication) StartAgentTurn(context.Context, string, app.AgentPromptRequest) (model.Conversation, error) {
+	return f.agentConversation, nil
+}
+func (f *fixtureApplication) AnswerAgentQuestion(context.Context, string, string, map[string]string) error {
+	return nil
+}
+func (f *fixtureApplication) ResolveAgentApproval(context.Context, string, string, conversations.ApprovalDecision) error {
+	return nil
+}
+func (f *fixtureApplication) GrantAgentConsent(context.Context, string, string, model.ConsentKind, bool) error {
+	return nil
+}
+func (f *fixtureApplication) InterruptAgentConversation(context.Context, string) error { return nil }
+func (f *fixtureApplication) SubscribeAgentConversation(context.Context, string, uint64) (<-chan model.Event, error) {
+	stream := make(chan model.Event, 1)
+	stream <- model.Event{Sequence: 1, Type: model.EventConversationSnapshot, ConversationID: f.agentConversation.ID, Snapshot: &f.agentConversation, CreatedAt: time.Now().UTC()}
+	close(stream)
+	return stream, nil
 }
 
 func (f *fixtureApplication) newJob(kind, siteID string) jobs.Snapshot {
