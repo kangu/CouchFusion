@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import LogViewer from '../../../../components/activity/LogViewer.vue'
+import ComponentGenerator from '../../../../components/sites/ComponentGenerator.vue'
 import ComponentRegistryPanel from '../../../../components/sites/ComponentRegistryPanel.vue'
 import ComponentPreviewOverlay from '../../../../components/sites/ComponentPreviewOverlay.vue'
 import TaskList from '../../../../components/sites/TaskList.vue'
+import { useAgentConversation } from '../../../../composables/useAgentConversation'
 import type {
   ActivityEvent,
+  AgentConversation,
+  AgentReadiness,
   ComponentRegistryResponse,
   ComponentPreviewHost,
   ContentComponent,
@@ -22,6 +26,12 @@ const route = useRoute()
 const api = useApi()
 const hub = useActivity()
 const activity = useActivityStore()
+const agent = useAgentConversation()
+const agentReadinessState = agent.readiness
+const agentConversations = agent.conversations
+const agentConversation = agent.conversation
+const agentBusy = agent.busy
+const agentError = agent.error
 const workspaceId = computed(() => String(route.params.workspaceId))
 const siteId = computed(() => String(route.params.siteId))
 const base = computed(() => `/workspaces/${encodeURIComponent(workspaceId.value)}/sites/${encodeURIComponent(siteId.value)}`)
@@ -40,13 +50,33 @@ const registryError = ref('')
 const previewBusy = ref(false)
 const previewingComponent = ref<ContentComponent>()
 const previewReturnFocus = ref<HTMLElement>()
+const registryPanel = ref<{ $el: HTMLElement }>()
 let unsubscribe: (() => void) | undefined
 let previewPoll: ReturnType<typeof setTimeout> | undefined
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
+const agentReadiness = computed<AgentReadiness>(() => agentReadinessState.value || {
+  status: 'restarting', available: false, problem: 'Agent readiness is loading.',
+})
+const agentConversationsView = computed<AgentConversation[]>(() => agentConversations.value as unknown as AgentConversation[])
+const agentConversationView = computed<AgentConversation | undefined>(() => agentConversation.value as AgentConversation | undefined)
 
 onMounted(load)
 onBeforeUnmount(() => {
   unsubscribe?.()
   if (previewPoll) clearTimeout(previewPoll)
+  if (highlightTimer) clearTimeout(highlightTimer)
+  agent.close()
+})
+
+watch(() => ({
+  id: agentConversation.value?.id,
+  state: agentConversation.value?.registry.state,
+  componentId: agentConversation.value?.generatedComponentId || agentConversation.value?.registry.generatedComponentId,
+}), async (current, previous) => {
+  if (!current.id || current.id !== previous?.id || current.state !== 'succeeded' || previous.state === 'succeeded') return
+  await loadComponents()
+  if (current.componentId) await highlightGeneratedComponent(current.componentId)
 })
 
 async function load() {
@@ -57,6 +87,7 @@ async function load() {
     api.get<Task[]>(`${base.value}/tasks`),
     api.get<ComponentRegistryResponse>(`${base.value}/components`),
     api.get<ComponentPreviewHost>(`${base.value}/components/preview-host`),
+    agent.open(workspaceId.value, siteId.value),
   ])
   if (siteResult.status === 'fulfilled') site.value = siteResult.value
   else error.value = message(siteResult.reason, 'Could not inspect site.')
@@ -70,6 +101,40 @@ async function load() {
   } else {
     previewHost.value = { status: 'failed', problem: message(previewResult.reason, 'Could not inspect the preview host.') }
   }
+}
+
+async function createAgentConversation(prompt: string) {
+  await agent.create(prompt)
+}
+
+async function openAgentConversation(conversationId: string) {
+  await agent.open(workspaceId.value, siteId.value, conversationId)
+}
+
+async function answerAgentQuestion(requestId: string, answers: Record<string, string>) {
+  await agent.answer(requestId, answers)
+}
+
+async function approveAgentAction(requestId: string, decision: Parameters<typeof agent.approve>[1]) {
+  await agent.approve(requestId, decision)
+}
+
+async function grantAgentConsent(kind: Parameters<typeof agent.consent>[0], granted: boolean) {
+  await agent.consent(kind, granted)
+}
+
+async function highlightGeneratedComponent(componentId: string) {
+  await nextTick()
+  const trigger = Array.from(registryPanel.value?.$el.querySelectorAll<HTMLElement>('[data-component]') || [])
+    .find(candidate => candidate.dataset.component === componentId)
+  const row = trigger?.closest<HTMLElement>('.component-row')
+  if (!row) return
+  row.classList.add('component-row--generated')
+  row.tabIndex = -1
+  row.focus({ preventScroll: true })
+  row.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => row.classList.remove('component-row--generated'), 4000)
 }
 
 async function loadComponents() {
@@ -272,6 +337,7 @@ function message(cause: unknown, fallback: string) {
         </aside>
 
         <ComponentRegistryPanel
+          ref="registryPanel"
           :registry="registry"
           :rebuilding="rebuilding"
           :opening-id="openingId"
@@ -284,7 +350,32 @@ function message(cause: unknown, fallback: string) {
           @start-preview-host="startPreviewHost"
           @stop-preview-host="stopPreviewHost"
           @preview="previewComponent"
-        />
+        >
+          <template #generator>
+            <ComponentGenerator
+              :readiness="agentReadiness"
+              :conversations="agentConversationsView"
+              :conversation="agentConversationView"
+              :busy="agentBusy"
+              :error="agentError || ''"
+              @create="createAgentConversation"
+              @open="openAgentConversation"
+              @follow-up="agent.followUp"
+              @answer="answerAgentQuestion"
+              @approve="approveAgentAction"
+              @consent="grantAgentConsent"
+              @interrupt="agent.interrupt"
+            />
+            <button
+              v-if="agentConversation?.registry.state === 'failed'"
+              class="compact-button"
+              type="button"
+              data-action="retry-agent-registry"
+              :disabled="rebuilding"
+              @click="rebuildRegistry"
+            >Retry rebuild</button>
+          </template>
+        </ComponentRegistryPanel>
       </div>
 
       <section v-if="activeJob || activeProcess" class="panel panel--dark">

@@ -100,6 +100,8 @@ function preview(componentId: string, event: MouseEvent) {
       </div>
     </header>
 
+    <slot name="generator" />
+
     <p v-if="error" class="notice notice--error component-registry__error" role="alert">{{ error }}</p>
     <p v-if="previewHost.status === 'failed' && previewHost.problem" class="notice notice--error component-registry__error" role="alert">
       {{ previewHost.problem }}
@@ -113,7 +115,7 @@ function preview(componentId: string, event: MouseEvent) {
     <p v-else-if="registry.components.length === 0" class="component-registry__empty">No local content components registered.</p>
 
     <div v-else class="component-ledger">
-      <article v-for="component in registry.components" :key="component.id" class="component-row">
+      <article v-for="component in registry.components" :id="`component-${component.id}`" :key="component.id" class="component-row">
         <div class="component-row__identity">
           <strong>{{ component.label }}</strong>
           <code>{{ component.id }}</code>
@@ -237,6 +239,11 @@ function preview(componentId: string, event: MouseEvent) {
   gap: 1rem;
   padding: .85rem 0;
   border-bottom: 1px solid var(--line-paper);
+}
+
+.component-row--generated {
+  background: rgba(199, 244, 100, .14);
+  box-shadow: inset 3px 0 0 #6d982f;
 }
 
 .component-row__identity,

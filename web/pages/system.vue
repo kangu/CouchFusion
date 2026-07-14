@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import AgentHealthCard from '../components/system/AgentHealthCard.vue'
+import HealthCard from '../components/system/HealthCard.vue'
 import type { JobSnapshot, SystemHealth } from '../types/api'
 const api = useApi(); const selection = useWorkspace(); const activity = useActivityStore(); const health = ref<SystemHealth>(); const busy = ref(''); const error = ref('')
 onMounted(load)
@@ -11,4 +14,4 @@ const cards = computed(() => health.value ? [
   { name: 'CouchDB', component: 'couchdb', health: health.value.couchdb, repairable: true },
 ] : [])
 </script>
-<template><section class="page-sheet"><header class="page-header"><div><p class="eyebrow">Local dependencies</p><h1>System</h1><p>Independent checks for the tools CouchFusion uses. Repairs always require confirmation.</p></div><button class="compact-button" type="button" :disabled="!selection.activeWorkspaceId.value" @click="load">Run checks</button></header><p v-if="error" class="notice notice--error">{{ error }}</p><div v-if="cards.length" class="health-grid"><HealthCard v-for="card in cards" :key="card.component" v-bind="card" :busy="busy === card.component" @repair="repair" /></div><div v-else class="empty-state"><h2>{{ selection.activeWorkspaceId.value ? 'Run a system check.' : 'Select a workspace first.' }}</h2><p>Dependency health is evaluated in the active workspace context.</p></div></section></template>
+<template><section class="page-sheet"><header class="page-header"><div><p class="eyebrow">Local dependencies</p><h1>System</h1><p>Independent checks for the tools CouchFusion uses. Repairs always require confirmation.</p></div><button class="compact-button" type="button" :disabled="!selection.activeWorkspaceId.value" @click="load">Run checks</button></header><p v-if="error" class="notice notice--error">{{ error }}</p><div v-if="cards.length" class="health-grid"><HealthCard v-for="card in cards" :key="card.component" v-bind="card" :busy="busy === card.component" @repair="repair" /><AgentHealthCard v-if="health?.agent" :readiness="health.agent" /></div><div v-else class="empty-state"><h2>{{ selection.activeWorkspaceId.value ? 'Run a system check.' : 'Select a workspace first.' }}</h2><p>Dependency health is evaluated in the active workspace context.</p></div></section></template>

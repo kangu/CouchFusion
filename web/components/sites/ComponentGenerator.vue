@@ -13,7 +13,7 @@ import type {
 const props = defineProps<{
   readiness: AgentReadiness
   conversations: AgentConversation[]
-  conversation?: AgentConversation
+  conversation?: AgentConversation | undefined
   busy: boolean
   error: string
 }>()

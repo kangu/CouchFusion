@@ -59,8 +59,8 @@ export function createAgentConversationClient(options: AgentConversationClientOp
     try {
       const collection = await options.api.get<AgentConversationCollection>(siteCollectionPath())
       if (currentGeneration !== generation) return
-      state.readiness.value = collection.readiness
-      state.conversations.value = collection.conversations
+      if (collection?.readiness) state.readiness.value = collection.readiness
+      state.conversations.value = Array.isArray(collection?.conversations) ? collection.conversations : []
       if (conversationId) {
         const snapshot = await options.api.get<AgentConversation>(conversationPath(conversationId))
         if (currentGeneration !== generation) return
