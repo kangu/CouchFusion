@@ -632,7 +632,7 @@ git commit -m "refactor: share CouchFusion application services"
 - Produces: `Server.Start(ctx) (LaunchInfo, error)` and `Server.Shutdown(ctx) error`.
 - Produces: launch token exchange and authenticated `/api/v1/bootstrap`.
 
-- [ ] **Step 1: Write failing server-security tests**
+- [x] **Step 1: Write failing server-security tests**
 
 Cover loopback address enforcement, token entropy/one-time exchange, `HttpOnly`/`SameSite=Strict` cookie, token-free redirect, origin and host rejection, JSON content type, body limits, CSP/frame headers, unauthenticated API/SSE rejection, and SPA fallback.
 
@@ -649,23 +649,23 @@ func TestMutationRejectsForeignOrigin(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run web tests and verify failure**
+- [x] **Step 2: Run web tests and verify failure**
 
 Run: `go test ./internal/web -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement listener, middleware, and static fallback**
+- [x] **Step 3: Implement listener, middleware, and static fallback**
 
 Use `net.Listen("tcp", "127.0.0.1:<port>")`, `crypto/rand` for a 32-byte token, SHA-256 token storage, strict cookie flags, request limits, explicit timeouts, and a `http.ServeMux`. Serve only embedded assets; unknown non-API GET routes return SPA `index.html`.
 
-- [ ] **Step 4: Run web security tests**
+- [x] **Step 4: Run web security tests**
 
 Run: `go test -race ./internal/web -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the HTTP foundation**
+- [x] **Step 5: Commit the HTTP foundation**
 
 ```bash
 git add internal/web
