@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/appserver"
 	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
 	"github.com/nuxt-apps/couchfusion/internal/agent/model"
 	"github.com/nuxt-apps/couchfusion/internal/app"
@@ -27,6 +29,23 @@ const workspaceRoot = "/tmp/couchfusion-e2e-workspace"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var fakeSupervisor *appserver.Supervisor
+	if binary := os.Getenv("COUCHFUSION_AGENT_FAKE"); os.Getenv("COUCHFUSION_AGENT_E2E") == "1" && binary != "" {
+		fakeSupervisor = appserver.NewSupervisor(appserver.Options{
+			Command: func(commandContext context.Context) *exec.Cmd {
+				command := exec.CommandContext(commandContext, binary)
+				command.Env = append(os.Environ(), "FAKE_AGENT_SCENARIO=component-generation")
+				return command
+			},
+			VersionCommand: func(commandContext context.Context) *exec.Cmd {
+				return exec.CommandContext(commandContext, binary, "--version")
+			},
+		})
+		if _, err := fakeSupervisor.EnsureReady(ctx); err != nil {
+			panic(err)
+		}
+		defer func() { _ = fakeSupervisor.Shutdown(context.Background()) }()
+	}
 	options := webserver.Options{Port: 4178, Application: newFixtureApplication(), Random: zeroReader{}}
 	if rawTarget := os.Getenv("COUCHFUSION_TEST_UI_PROXY"); rawTarget != "" {
 		target, err := url.Parse(rawTarget)
@@ -67,14 +86,18 @@ type fixtureApplication struct {
 	openedComponentID string
 	previewHost       preview.View
 	agentConversation model.Conversation
+	agentScenario     bool
+	recoverOnList     bool
 }
 
 func newFixtureApplication() *fixtureApplication {
 	now := time.Now().UTC()
+	agentScenario := os.Getenv("COUCHFUSION_AGENT_E2E") == "1"
 	return &fixtureApplication{
 		entry:             registry.Entry{ID: "workspace-e2e", Name: "E2E Workspace", Root: workspaceRoot, Available: true, CreatedAt: now, LastOpenedAt: now},
 		jobs:              map[string]jobs.Snapshot{},
 		agentConversation: model.Conversation{ID: "conversation-e2e", WorkspaceID: "workspace-e2e", SiteID: "shop", Title: "Fixture generation", Status: model.ConversationReady, Registry: model.RegistryResult{State: model.RegistrySucceeded}, BindingValid: true, CreatedAt: now, UpdatedAt: now},
+		agentScenario:     agentScenario,
 	}
 }
 
@@ -260,31 +283,120 @@ func (f *fixtureApplication) ConsumeJobSecret(string, string) (string, error) {
 }
 
 func (f *fixtureApplication) AgentConversationList(context.Context, string, string) (app.AgentConversationCollection, error) {
-	return app.AgentConversationCollection{Readiness: model.AgentReadiness{Status: model.AgentReady, Available: true}, Conversations: []model.Conversation{f.agentConversation}}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.agentScenario && f.recoverOnList {
+		f.recoverOnList = false
+		f.agentConversation.Status = model.ConversationInterrupted
+		f.agentConversation.ActiveTurn = nil
+		f.agentConversation.PendingInteraction = nil
+		f.agentConversation.LastTurn = &model.LastTurn{Status: model.TurnInterrupted, Summary: "Interrupted during fixture restart recovery"}
+		f.agentConversation.Sequence++
+		f.agentConversation.UpdatedAt = time.Now().UTC()
+	}
+	conversations := []model.Conversation{}
+	if !f.agentScenario || f.agentConversation.Sequence > 0 {
+		conversations = append(conversations, f.agentConversation)
+	}
+	return app.AgentConversationCollection{Readiness: model.AgentReadiness{Status: model.AgentReady, Available: true, Version: "0.144.4", AccountType: "chatgpt"}, Conversations: conversations}, nil
 }
 func (f *fixtureApplication) AgentConversation(context.Context, string) (model.Conversation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.agentConversation, nil
 }
 func (f *fixtureApplication) CreateAgentConversation(_ context.Context, _, _ string, _ app.AgentPromptRequest) (model.Conversation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.agentScenario {
+		return f.agentConversation, nil
+	}
+	now := time.Now().UTC()
+	f.agentConversation = model.Conversation{
+		ID: "conversation-agent-e2e", WorkspaceID: "workspace-e2e", SiteID: "shop", Title: "Editorial testimonial rail",
+		Status: model.ConversationWaiting, ActiveTurn: &model.ConversationTurn{ID: "turn-1", Status: model.TurnActive, StartedAt: now},
+		Items: []model.ConversationItem{{ID: "user-1", TurnID: "turn-1", Type: "userMessage", Status: "completed", Text: "Create an editorial testimonial rail with useful defaults"}},
+		PendingInteraction: &model.Interaction{RequestID: "question-1", Kind: model.InteractionQuestion, Questions: []model.Question{{
+			ID: "tone", Header: "Visual tone", Question: "Which visual tone?", Options: []model.InteractionOption{{Label: "Quiet"}, {Label: "Bold"}},
+		}}},
+		Registry: model.RegistryResult{State: model.RegistryNotNeeded}, Sequence: 1, BindingValid: true, CreatedAt: now, UpdatedAt: now,
+	}
 	return f.agentConversation, nil
 }
 func (f *fixtureApplication) StartAgentTurn(context.Context, string, app.AgentPromptRequest) (model.Conversation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now().UTC()
+	f.agentConversation.Status = model.ConversationWaiting
+	f.agentConversation.ActiveTurn = &model.ConversationTurn{ID: "turn-2", Status: model.TurnActive, StartedAt: now}
+	f.agentConversation.PendingInteraction = &model.Interaction{
+		RequestID: "follow-up-file", Kind: model.InteractionApproval, Action: model.ApprovalFileChange,
+		Summary: "Apply component file changes", AffectedPaths: []string{"app/components/content/Hero.vue"},
+	}
+	f.agentConversation.Sequence++
+	f.agentConversation.UpdatedAt = now
+	f.recoverOnList = true
 	return f.agentConversation, nil
 }
 func (f *fixtureApplication) AnswerAgentQuestion(context.Context, string, string, map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agentConversation.PendingInteraction = &model.Interaction{
+		RequestID: "file-1", Kind: model.InteractionApproval, Action: model.ApprovalFileChange,
+		Summary: "Apply component file changes", AffectedPaths: []string{"app/components/content/Hero.vue"},
+	}
+	f.agentConversation.Sequence++
+	f.agentConversation.UpdatedAt = time.Now().UTC()
 	return nil
 }
 func (f *fixtureApplication) ResolveAgentApproval(context.Context, string, string, conversations.ApprovalDecision) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.agentConversation.PendingInteraction != nil && f.agentConversation.PendingInteraction.RequestID == "file-1" {
+		f.agentConversation.PendingInteraction = &model.Interaction{
+			RequestID: "dependency-1", Kind: model.InteractionConsent, ConsentKind: model.ConsentDependencyChange,
+			Summary: "Add the carousel helper dependency",
+		}
+		f.agentConversation.Sequence++
+		f.agentConversation.UpdatedAt = time.Now().UTC()
+		return nil
+	}
+	f.agentConversation.Status = model.ConversationReady
+	f.agentConversation.ActiveTurn = nil
+	f.agentConversation.PendingInteraction = nil
+	f.agentConversation.LastTurn = &model.LastTurn{Status: model.TurnCompleted, Summary: "Generated the editorial testimonial rail"}
+	f.agentConversation.Registry = model.RegistryResult{State: model.RegistrySucceeded, GeneratedComponentID: "hero"}
+	f.agentConversation.GeneratedComponentID = "hero"
+	f.agentConversation.ChangedFiles = []model.ChangedFile{
+		{Path: "pre-existing.txt", Kind: model.ChangeModified, BaselineDirty: true},
+		{Path: "app/components/content/Hero.vue", Kind: model.ChangeAdded},
+	}
+	f.agentConversation.Sequence++
+	f.agentConversation.UpdatedAt = time.Now().UTC()
 	return nil
 }
 func (f *fixtureApplication) GrantAgentConsent(context.Context, string, string, model.ConsentKind, bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agentConversation.PendingInteraction = &model.Interaction{
+		RequestID: "dependency-1", Kind: model.InteractionApproval, Action: model.ApprovalCommand,
+		Summary: "Run bun add carousel-helper",
+	}
+	f.agentConversation.Sequence++
+	f.agentConversation.UpdatedAt = time.Now().UTC()
 	return nil
 }
-func (f *fixtureApplication) InterruptAgentConversation(context.Context, string) error { return nil }
+func (f *fixtureApplication) InterruptAgentConversation(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agentConversation.Status = model.ConversationInterrupted
+	f.agentConversation.ActiveTurn = nil
+	f.agentConversation.PendingInteraction = nil
+	f.agentConversation.Sequence++
+	return nil
+}
 func (f *fixtureApplication) SubscribeAgentConversation(context.Context, string, uint64) (<-chan model.Event, error) {
-	stream := make(chan model.Event, 1)
-	stream <- model.Event{Sequence: 1, Type: model.EventConversationSnapshot, ConversationID: f.agentConversation.ID, Snapshot: &f.agentConversation, CreatedAt: time.Now().UTC()}
-	close(stream)
+	stream := make(chan model.Event)
 	return stream, nil
 }
 

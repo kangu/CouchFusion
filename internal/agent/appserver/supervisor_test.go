@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	"github.com/nuxt-apps/couchfusion/internal/agent/protocol"
 )
 
 func TestSupervisorInitializesAccountAndSkillRoot(t *testing.T) {
@@ -137,6 +138,56 @@ func TestSupervisorRestartsAfterUnexpectedExit(t *testing.T) {
 	}
 	if supervisor.Generation() <= initialGeneration {
 		t.Fatalf("generation = %d, want greater than %d after restart", supervisor.Generation(), initialGeneration)
+	}
+}
+
+func TestFakeServerComponentGenerationScenarioUsesRealServerRequests(t *testing.T) {
+	binary := buildFakeServer(t)
+	supervisor := NewSupervisor(Options{
+		Command: func(ctx context.Context) *exec.Cmd {
+			command := exec.CommandContext(ctx, binary)
+			command.Env = append(os.Environ(), "FAKE_AGENT_SCENARIO=component-generation")
+			return command
+		},
+		VersionCommand: func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, binary, "--version") },
+	})
+	t.Cleanup(func() { _ = supervisor.Shutdown(context.Background()) })
+	client, err := supervisor.Client(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var thread protocol.ThreadResponse
+	if err := client.Call(context.Background(), "thread/start", protocol.ThreadStartParams{CWD: t.TempDir()}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	var turn protocol.TurnStartResponse
+	if err := client.Call(context.Background(), "turn/start", protocol.TurnStartParams{ThreadID: thread.Thread.ID}, &turn); err != nil {
+		t.Fatal(err)
+	}
+
+	question := awaitServerRequest(t, supervisor.Requests(), "item/tool/requestUserInput")
+	if err := client.Respond(context.Background(), question.ID, protocol.UserInputResponse{Answers: map[string]string{"tone": "Quiet"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	file := awaitServerRequest(t, supervisor.Requests(), "item/fileChange/requestApproval")
+	if len(file.ID) == 0 || thread.Thread.ID == "" || turn.Turn.ID == "" {
+		t.Fatalf("thread = %#v, turn = %#v, file request = %#v", thread, turn, file)
+	}
+}
+
+func awaitServerRequest(t *testing.T, requests <-chan protocol.ServerRequest, method string) protocol.ServerRequest {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case request := <-requests:
+			if request.Method == method {
+				return request
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %s", method)
+		}
 	}
 }
 
