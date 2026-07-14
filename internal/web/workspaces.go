@@ -33,6 +33,9 @@ type Application interface {
 	CreateLayer(context.Context, string, app.CreateLayerRequest, string) (jobs.Snapshot, error)
 	Site(context.Context, string, string) (project.Site, error)
 	Tasks(context.Context, string, string) ([]project.Task, error)
+	Components(context.Context, string, string) (app.ComponentRegistryView, error)
+	RebuildComponentRegistry(context.Context, string, string, string) (jobs.Snapshot, error)
+	OpenComponentSource(context.Context, string, string, string) error
 	RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error)
 	StartProcess(context.Context, string, string, string) (processes.Snapshot, error)
 	Process(string) (processes.Snapshot, error)
@@ -77,6 +80,9 @@ func newAPIHandler(application Application) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/layers", handler.createLayer)
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}", handler.getSite)
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/tasks", handler.getTasks)
+	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/components", handler.getComponents)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/registry/rebuild", handler.rebuildComponentRegistry)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/{componentId}/open", handler.openComponentSource)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/tasks/{taskId}/run", handler.runTask)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/processes/{taskId}/start", handler.startProcess)
 	mux.HandleFunc("GET /api/v1/jobs/{jobId}", handler.getJob)
@@ -333,6 +339,49 @@ func (h apiHandler) getTasks(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writeData(writer, http.StatusOK, tasks)
+}
+
+func (h apiHandler) getComponents(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok {
+		return
+	}
+	components, err := h.application.Components(request.Context(), workspaceID, siteID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, components)
+}
+
+func (h apiHandler) rebuildComponentRegistry(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok || !decodeEmptyRequest(writer, request) {
+		return
+	}
+	sessionID, _ := SessionID(request.Context())
+	job, err := h.application.RebuildComponentRegistry(request.Context(), workspaceID, siteID, sessionID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusAccepted, job)
+}
+
+func (h apiHandler) openComponentSource(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok || !decodeEmptyRequest(writer, request) {
+		return
+	}
+	componentID, ok := pathID(writer, request, "componentId")
+	if !ok {
+		return
+	}
+	if err := h.application.OpenComponentSource(request.Context(), workspaceID, siteID, componentID); err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (h apiHandler) runTask(writer http.ResponseWriter, request *http.Request) {

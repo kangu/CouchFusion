@@ -108,6 +108,66 @@ func TestTaskAndProcessRoutes(t *testing.T) {
 	}
 }
 
+func TestComponentRoutesUseSafeSiteScopedOperations(t *testing.T) {
+	application := newAPIApplicationStub()
+	application.components = app.ComponentRegistryView{
+		ComponentRegistry: project.ComponentRegistry{
+			Status: project.ComponentRegistryReady,
+			Components: []project.ComponentDefinition{{
+				ID: "hero", Label: "Hero", Description: "Lead block",
+				Source: "app/components/content/Hero.vue", PropCount: 2, AllowChildren: true,
+			}},
+		},
+		CanRebuild: true,
+	}
+	application.job.Type = "component-registry.rebuild"
+	server, cookie := newAuthenticatedAPIServer(t, application)
+
+	list := authenticatedAPIRequest(server, cookie, http.MethodGet, "/api/v1/workspaces/w1/sites/shop/components", "")
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"status":"ready"`) || !strings.Contains(list.Body.String(), `"source":"app/components/content/Hero.vue"`) {
+		t.Fatalf("list response = %d: %s", list.Code, list.Body.String())
+	}
+	rebuild := authenticatedAPIRequest(server, cookie, http.MethodPost, "/api/v1/workspaces/w1/sites/shop/components/registry/rebuild", `{}`)
+	if rebuild.Code != http.StatusAccepted || !strings.Contains(rebuild.Body.String(), `"type":"component-registry.rebuild"`) {
+		t.Fatalf("rebuild response = %d: %s", rebuild.Code, rebuild.Body.String())
+	}
+	open := authenticatedAPIRequest(server, cookie, http.MethodPost, "/api/v1/workspaces/w1/sites/shop/components/hero/open", `{}`)
+	if open.Code != http.StatusNoContent || open.Body.Len() != 0 || application.openedComponentID != "hero" {
+		t.Fatalf("open response = %d: %s; component = %q", open.Code, open.Body.String(), application.openedComponentID)
+	}
+	for _, call := range []string{"components", "components.rebuild", "components.open"} {
+		if application.calls[call] != 1 {
+			t.Fatalf("application call %q count = %d", call, application.calls[call])
+		}
+	}
+}
+
+func TestComponentRoutesValidateIDsAndMapOperationErrors(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+
+	invalidID := authenticatedAPIRequest(server, cookie, http.MethodPost, "/api/v1/workspaces/w1/sites/shop/components/bad%20id/open", `{}`)
+	if invalidID.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid ID response = %d: %s", invalidID.Code, invalidID.Body.String())
+	}
+
+	tests := []struct {
+		err    error
+		status int
+	}{
+		{err: &app.Error{Code: app.ErrorNotFound, Message: "missing"}, status: http.StatusNotFound},
+		{err: &app.Error{Code: app.ErrorValidation, Message: "invalid"}, status: http.StatusUnprocessableEntity},
+		{err: &app.Error{Code: app.ErrorProcess, Message: "unavailable"}, status: http.StatusConflict},
+	}
+	for _, test := range tests {
+		application.errors["components.open"] = test.err
+		response := authenticatedAPIRequest(server, cookie, http.MethodPost, "/api/v1/workspaces/w1/sites/shop/components/hero/open", `{}`)
+		if response.Code != test.status {
+			t.Fatalf("error %v response = %d: %s", test.err, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestJobProcessAndSSERoutes(t *testing.T) {
 	application := newAPIApplicationStub()
 	server, cookie := newAuthenticatedAPIServer(t, application)
@@ -231,15 +291,17 @@ func authenticatedAPIRequestWithHeaders(server *Server, cookie *http.Cookie, met
 }
 
 type apiApplicationStub struct {
-	calls       map[string]int
-	errors      map[string]error
-	lastEventID uint64
-	entry       registry.Entry
-	workspace   project.Workspace
-	site        project.Site
-	siteRequest app.CreateSiteRequest
-	job         jobs.Snapshot
-	process     processes.Snapshot
+	calls             map[string]int
+	errors            map[string]error
+	lastEventID       uint64
+	entry             registry.Entry
+	workspace         project.Workspace
+	site              project.Site
+	siteRequest       app.CreateSiteRequest
+	job               jobs.Snapshot
+	process           processes.Snapshot
+	components        app.ComponentRegistryView
+	openedComponentID string
 }
 
 func newAPIApplicationStub() *apiApplicationStub {
@@ -315,6 +377,19 @@ func (s *apiApplicationStub) Site(context.Context, string, string) (project.Site
 func (s *apiApplicationStub) Tasks(context.Context, string, string) ([]project.Task, error) {
 	s.calls["tasks"]++
 	return []project.Task{{ID: "script:dev", LongRunning: true}}, s.errors["tasks"]
+}
+func (s *apiApplicationStub) Components(context.Context, string, string) (app.ComponentRegistryView, error) {
+	s.calls["components"]++
+	return s.components, s.errors["components"]
+}
+func (s *apiApplicationStub) RebuildComponentRegistry(context.Context, string, string, string) (jobs.Snapshot, error) {
+	s.calls["components.rebuild"]++
+	return s.job, s.errors["components.rebuild"]
+}
+func (s *apiApplicationStub) OpenComponentSource(_ context.Context, _, _, componentID string) error {
+	s.calls["components.open"]++
+	s.openedComponentID = componentID
+	return s.errors["components.open"]
 }
 func (s *apiApplicationStub) RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error) {
 	s.calls["task.run"]++

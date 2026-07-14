@@ -56,11 +56,12 @@ type zeroReader struct{}
 func (zeroReader) Read(value []byte) (int, error) { clear(value); return len(value), nil }
 
 type fixtureApplication struct {
-	mu         sync.Mutex
-	registered bool
-	entry      registry.Entry
-	jobs       map[string]jobs.Snapshot
-	process    processes.Snapshot
+	mu                sync.Mutex
+	registered        bool
+	entry             registry.Entry
+	jobs              map[string]jobs.Snapshot
+	process           processes.Snapshot
+	openedComponentID string
 }
 
 func newFixtureApplication() *fixtureApplication {
@@ -138,7 +139,28 @@ func (f *fixtureApplication) Site(context.Context, string, string) (project.Site
 	return fixtureSite(), nil
 }
 func (f *fixtureApplication) Tasks(context.Context, string, string) ([]project.Task, error) {
-	return []project.Task{{ID: "script:build", Name: "Build", Kind: "script"}, {ID: "script:dev", Name: "Dev server", Kind: "script", LongRunning: true}}, nil
+	return []project.Task{{ID: "script:build", Name: "Build", Kind: "script"}, {ID: "script:dev", Name: "Dev server", Kind: "script", LongRunning: true}, {ID: "script:registry:build", Name: "registry:build", Kind: "script"}}, nil
+}
+func (f *fixtureApplication) Components(context.Context, string, string) (app.ComponentRegistryView, error) {
+	return app.ComponentRegistryView{
+		ComponentRegistry: project.ComponentRegistry{
+			Status: project.ComponentRegistryReady,
+			Components: []project.ComponentDefinition{
+				{ID: "hero", Label: "Hero", Description: "Lead block", Source: "app/components/content/Hero.vue", PropCount: 2, AllowChildren: true},
+				{ID: "parallax", Label: "Parallax", Description: "Scrolling media block", Source: "app/components/content/Parallax.vue", PropCount: 4},
+			},
+		},
+		CanRebuild: true,
+	}, nil
+}
+func (f *fixtureApplication) RebuildComponentRegistry(context.Context, string, string, string) (jobs.Snapshot, error) {
+	return f.newJob("component-registry.rebuild", "shop"), nil
+}
+func (f *fixtureApplication) OpenComponentSource(_ context.Context, _, _, componentID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.openedComponentID = componentID
+	return nil
 }
 func (f *fixtureApplication) RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error) {
 	job := f.newJob("task.run", "shop")
@@ -213,7 +235,7 @@ func (f *fixtureApplication) newJob(kind, siteID string) jobs.Snapshot {
 	return job
 }
 func fixtureSite() project.Site {
-	return project.Site{ID: "shop", Name: "Shop", Root: workspaceRoot + "/apps/shop", PackageName: "@fixture/shop", PackageManager: "bun", Modules: []string{"content"}, Scripts: map[string]string{"build": "nuxt build", "dev": "nuxt dev"}, Dependencies: map[string]string{"nuxt": "latest"}, DevDependencies: map[string]string{}, DependenciesInstalled: true, Lockfiles: []string{"bun.lock"}, Warnings: []project.Warning{}}
+	return project.Site{ID: "shop", Name: "Shop", Root: workspaceRoot + "/apps/shop", PackageName: "@fixture/shop", PackageManager: "bun", Modules: []string{"content"}, Scripts: map[string]string{"build": "nuxt build", "dev": "nuxt dev", "registry:build": "bun run ../../cli-content/generate-component-registry.mjs"}, Dependencies: map[string]string{"nuxt": "latest"}, DevDependencies: map[string]string{}, DependenciesInstalled: true, Lockfiles: []string{"bun.lock"}, Warnings: []project.Warning{}}
 }
 func fixtureConfig(source config.Source) config.Effective {
 	return config.Effective{Config: config.Config{Repos: map[string]config.RepoConfig{}, Modules: map[string]config.ModuleConfig{}, Workspace: config.WorkspaceConfig{DefaultRoot: workspaceRoot + "/apps"}, Prompts: config.PromptConfig{DefaultLayerSelection: []string{"content"}}}, Sources: config.SourceMap{"workspace.defaultRoot": source}}
