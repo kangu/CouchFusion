@@ -524,7 +524,7 @@ git commit -m "feat: add secure workspace job engine"
 - Consumes: server-resolved `project.Command`; never accepts shell text.
 - Produces: bounded process events and advisory localhost URLs.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Use the test process helper pattern (`os.Args[0] -test.run=TestHelperProcess --`) to verify start/output/exit, duplicate rejection, interrupt then kill, restart, URL extraction, bounded output, and shutdown of all children.
 
@@ -539,23 +539,23 @@ func TestManagerRejectsDuplicateSiteProcess(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run process tests and verify failure**
+- [x] **Step 2: Run process tests and verify failure**
 
 Run: `go test ./internal/processes -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement process ownership and event capture**
+- [x] **Step 3: Implement process ownership and event capture**
 
 Start with `exec.CommandContext` and explicit `Dir`. Connect stdout/stderr pipes, scan bounded lines, redact before buffering, and parse only `http://localhost`, `http://127.0.0.1`, and equivalent HTTPS URLs. Store the original resolved command privately for restart; exclude it from public snapshots.
 
-- [ ] **Step 4: Run race-enabled process tests**
+- [x] **Step 4: Run race-enabled process tests**
 
 Run: `go test -race ./internal/processes -count=1`
 
 Expected: PASS with no leaked helper processes.
 
-- [ ] **Step 5: Commit managed processes**
+- [x] **Step 5: Commit managed processes**
 
 ```bash
 git add internal/processes
