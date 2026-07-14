@@ -30,7 +30,7 @@
 - Consumes: existing `.page-header`, `.welcome-sheet`, `.dialog`, card, metric, process, and activity selectors.
 - Produces: CSS variables `--display-page`, `--display-hero`, `--display-dialog`, `--display-section`, `--display-empty`, `--display-metric`, and `--display-activity`.
 
-- [ ] **Step 1: Add failing desktop and mobile browser assertions to the existing flow**
+- [x] **Step 1: Add failing desktop and mobile browser assertions to the existing flow**
 
 Add these assertions immediately after the Workspaces heading becomes visible in the existing `controls an explicit CouchFusion workspace from one local UI` test. Restore the desktop viewport before the registration flow continues:
 
@@ -43,13 +43,13 @@ expect(await title.evaluate((element) => Number.parseFloat(getComputedStyle(elem
 await page.setViewportSize({ width: 1280, height: 720 })
 ```
 
-- [ ] **Step 2: Run the browser assertion and verify failure**
+- [x] **Step 2: Run the browser assertion and verify failure**
 
 Run: `cd web && bun run e2e`
 
 Expected: FAIL because the desktop Workspaces title can resolve above `64px` under the current `clamp(3.4rem, 7vw, 7rem)` rule.
 
-- [ ] **Step 3: Define and apply the compact type tokens**
+- [x] **Step 3: Define and apply the compact type tokens**
 
 Add to `:root`:
 
@@ -77,7 +77,7 @@ Replace the existing display sizes with:
 
 Remove the mobile `.welcome-sheet h1` rule that increases the title to `clamp(3.3rem, 16vw, 6rem)`.
 
-- [ ] **Step 4: Run frontend verification**
+- [x] **Step 4: Run frontend verification**
 
 Run:
 
@@ -91,7 +91,7 @@ bun run e2e
 
 Expected: 14 unit tests PASS, typechecking and generation PASS, and the Playwright journey PASS with both typography assertions.
 
-- [ ] **Step 5: Refresh embedded assets and verify Go integration**
+- [x] **Step 5: Refresh embedded assets and verify Go integration**
 
 Run:
 
@@ -104,7 +104,7 @@ git diff --check
 
 Expected: embedded-server and CLI tests PASS with no whitespace errors.
 
-- [ ] **Step 6: Commit the compact scale**
+- [x] **Step 6: Commit the compact scale**
 
 ```bash
 git add web/assets/css/main.css web/e2e/control-plane.spec.ts internal/web/dist docs/superpowers/plans/2026-07-14-compact-ui-type-scale.md

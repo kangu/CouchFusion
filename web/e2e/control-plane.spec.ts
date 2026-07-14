@@ -4,7 +4,13 @@ const launchToken = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 
 test('controls an explicit CouchFusion workspace from one local UI', async ({ page }) => {
   await page.goto(`/?token=${launchToken}`)
-  await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible()
+  const title = page.getByRole('heading', { name: 'Workspaces' })
+  await expect(title).toBeVisible()
+  expect(await title.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeLessThanOrEqual(64)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await title.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeLessThanOrEqual(48)
+  await page.setViewportSize({ width: 1280, height: 720 })
 
   await page.getByRole('button', { name: 'Register existing' }).click()
   await page.getByLabel('Absolute path').fill('/tmp/couchfusion-e2e-workspace')
