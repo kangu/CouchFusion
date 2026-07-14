@@ -31,9 +31,31 @@ test('controls an explicit CouchFusion workspace from one local UI', async ({ pa
 
   await page.getByRole('link', { name: 'Sites', exact: true }).click()
   await page.getByRole('link', { name: /Shop/ }).click()
-  await page.getByRole('button', { name: 'Run' }).click()
+  const components = page.getByRole('region', { name: 'Local content components' })
+  const tasks = page.getByRole('region', { name: 'Curated tasks' })
+  await expect(components).toContainText('2 components')
+  await expect(components.getByText('Hero', { exact: true })).toBeVisible()
+  await expect(components.getByText('app/components/content/Hero.vue')).toBeVisible()
+  const desktopComponents = await components.boundingBox()
+  const desktopTasks = await tasks.boundingBox()
+  expect(desktopTasks?.x).toBeLessThan(desktopComponents?.x ?? 0)
+
+  const openResponse = page.waitForResponse((response) => response.url().endsWith('/components/hero/open'))
+  await components.getByRole('button', { name: 'Open source' }).first().click()
+  expect((await openResponse).status()).toBe(204)
+
+  await components.getByRole('button', { name: 'Rebuild registry' }).click()
+  await expect(page.getByText('component-registry.rebuild', { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileComponents = await components.boundingBox()
+  const mobileTasks = await tasks.boundingBox()
+  expect(mobileComponents?.y).toBeLessThan(mobileTasks?.y ?? 0)
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  await tasks.getByRole('button', { name: 'Run' }).first().click()
   await expect(page.getByText('succeeded', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Start' }).click()
+  await tasks.getByRole('button', { name: 'Start' }).click()
   await expect(page.getByRole('link', { name: /127\.0\.0\.1:4310/ })).toBeVisible()
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByRole('heading', { name: 'stopped' })).toBeVisible()

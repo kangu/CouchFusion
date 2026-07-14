@@ -210,7 +210,11 @@ function message(cause: unknown, fallback: string) {
 
       <section v-if="activeJob || activeProcess" class="panel panel--dark">
         <header class="process-header">
-          <div><p class="eyebrow">Current activity</p><h2>{{ activeProcess ? activeProcess.status : activeJob?.status }}</h2></div>
+          <div>
+            <p class="eyebrow">Current activity</p>
+            <h2>{{ activeProcess ? activeProcess.status : activeJob?.status }}</h2>
+            <code class="activity-kind">{{ activeProcess ? activeProcess.taskId : activeJob?.type }}</code>
+          </div>
           <div v-if="activeProcess" class="button-row">
             <button class="compact-button" type="button" @click="processAction('restart')">Restart</button>
             <button class="compact-button compact-button--danger" type="button" @click="processAction('stop')">Stop</button>
@@ -254,6 +258,13 @@ function message(cause: unknown, fallback: string) {
 
 .fingerprint-panel .eyebrow {
   margin-bottom: .65rem;
+}
+
+.activity-kind {
+  display: block;
+  margin-top: .45rem;
+  color: var(--cyan);
+  font: .6rem/1.3 var(--mono);
 }
 
 @media (max-width: 880px) {
