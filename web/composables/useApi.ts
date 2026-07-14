@@ -4,6 +4,11 @@ export interface FetchOptions {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   credentials: 'same-origin'
   body?: unknown
+  headers?: Record<string, string>
+}
+
+export interface ApiRequestOptions {
+  headers?: Record<string, string>
 }
 
 export type FetchLike = <T>(url: string, options: FetchOptions) => Promise<ApiEnvelope<T> | undefined>
@@ -21,9 +26,10 @@ export class ApiClientError extends Error implements ApiErrorPayload {
 }
 
 export function createApiClient(fetcher: FetchLike) {
-  async function request<T>(method: FetchOptions['method'], path: string, body?: unknown): Promise<T> {
+  async function request<T>(method: FetchOptions['method'], path: string, body?: unknown, requestOptions?: ApiRequestOptions): Promise<T> {
     const options: FetchOptions = { method, credentials: 'same-origin' }
     if (body !== undefined) options.body = body
+    if (requestOptions?.headers) options.headers = requestOptions.headers
     try {
       const response = await fetcher<T>(`/api/v1${normalizePath(path)}`, options)
       return response?.data as T
@@ -34,10 +40,10 @@ export function createApiClient(fetcher: FetchLike) {
 
   return {
     get: <T>(path: string) => request<T>('GET', path),
-    post: <T>(path: string, body: unknown = {}) => request<T>('POST', path, body),
-    put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),
-    patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, body),
-    delete: <T>(path: string, body: unknown = {}) => request<T>('DELETE', path, body),
+    post: <T>(path: string, body: unknown = {}, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
+    put: <T>(path: string, body: unknown, options?: ApiRequestOptions) => request<T>('PUT', path, body, options),
+    patch: <T>(path: string, body: unknown, options?: ApiRequestOptions) => request<T>('PATCH', path, body, options),
+    delete: <T>(path: string, body: unknown = {}, options?: ApiRequestOptions) => request<T>('DELETE', path, body, options),
   }
 }
 

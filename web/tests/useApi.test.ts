@@ -14,6 +14,21 @@ describe('useApi', () => {
     })
   })
 
+  it('forwards explicit same-origin request headers', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ data: { id: 'c1' } })
+    const api = createApiClient(fetcher)
+
+    await api.post('/agent-conversations', { prompt: 'Build a hero' }, {
+      headers: { 'Idempotency-Key': 'generation-1' },
+    })
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/agent-conversations', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: { prompt: 'Build a hero' },
+      headers: { 'Idempotency-Key': 'generation-1' },
+    })
+  })
+
   it('maps field errors from the API', async () => {
     const fetcher = vi.fn().mockRejectedValue({
       data: { error: { code: 'validation', message: 'The request is invalid', fields: { root: 'Workspace is invalid' } } },

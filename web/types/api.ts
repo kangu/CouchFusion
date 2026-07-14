@@ -131,6 +131,144 @@ export interface SystemHealth {
   bun: DependencyHealth
   node: DependencyHealth
   couchdb: DependencyHealth
+	agent: AgentReadiness
+}
+
+export type AgentReadinessStatus =
+	| 'ready'
+	| 'missing'
+	| 'launch_failed'
+	| 'unsupported'
+	| 'unauthenticated'
+	| 'restarting'
+
+export interface AgentReadiness {
+	status: AgentReadinessStatus
+	available: boolean
+	version?: string
+	accountType?: string
+	problem?: string
+}
+
+export type AgentConversationStatus =
+	| 'new'
+	| 'active'
+	| 'waiting'
+	| 'interrupting'
+	| 'interrupted'
+	| 'completed'
+	| 'failed'
+	| 'rebuilding_registry'
+	| 'ready'
+
+export type AgentTurnStatus = 'active' | 'completed' | 'interrupted' | 'failed'
+export type AgentItemType = 'userMessage' | 'agentMessage' | 'reasoning' | 'commandExecution' | 'fileChange' | 'unknown'
+export type AgentItemStatus = 'inProgress' | 'completed' | 'failed' | 'declined' | 'interrupted' | 'unknown'
+export type AgentInteractionKind = 'approval' | 'question' | 'consent'
+export type AgentApprovalAction = 'command' | 'file_change' | 'permissions'
+export type AgentApprovalDecision = 'approve_once' | 'approve_generation' | 'decline' | 'cancel'
+export type AgentConsentKind = 'dependency_change' | 'network_access'
+export type AgentChangedFileKind = 'added' | 'modified' | 'deleted'
+export type AgentRegistryState = 'not_needed' | 'running' | 'succeeded' | 'failed'
+export type AgentEventType =
+	| 'conversation.snapshot'
+	| 'turn.started'
+	| 'item.started'
+	| 'item.delta'
+	| 'item.completed'
+	| 'interaction.requested'
+	| 'interaction.resolved'
+	| 'turn.completed'
+	| 'registry.started'
+	| 'registry.completed'
+	| 'registry.failed'
+	| 'conversation.interrupted'
+	| 'conversation.failed'
+
+export interface AgentConversationTurn {
+	id: string
+	status: AgentTurnStatus
+	startedAt: string
+}
+
+export interface AgentConversationItem {
+	id: string
+	turnId?: string
+	type: AgentItemType
+	status?: AgentItemStatus
+	text?: string
+}
+
+export interface AgentInteractionOption {
+	label: string
+	description?: string
+}
+
+export interface AgentQuestion {
+	id: string
+	header: string
+	question: string
+	options?: AgentInteractionOption[]
+	isOther?: boolean
+	isSecret?: boolean
+}
+
+export interface AgentInteraction {
+	requestId: string
+	kind: AgentInteractionKind
+	action?: AgentApprovalAction
+	summary?: string
+	affectedPaths?: string[]
+	consentKind?: AgentConsentKind
+	questions?: AgentQuestion[]
+}
+
+export interface AgentChangedFile {
+	path: string
+	kind: AgentChangedFileKind
+	baselineDirty?: boolean
+}
+
+export interface AgentRegistryResult {
+	state: AgentRegistryState
+	problem?: string
+	generatedComponentId?: string
+}
+
+export interface AgentConversation {
+	id: string
+	workspaceId: string
+	siteId: string
+	title: string
+	status: AgentConversationStatus
+	activeTurn?: AgentConversationTurn
+	lastTurn?: { status: AgentTurnStatus, summary?: string }
+	items?: AgentConversationItem[]
+	pendingInteraction?: AgentInteraction
+	changedFiles?: AgentChangedFile[]
+	generatedComponentId?: string
+	registry: AgentRegistryResult
+	sequence: number
+	bindingValid: boolean
+	readOnly?: boolean
+	createdAt: string
+	updatedAt: string
+}
+
+export interface AgentConversationCollection {
+	readiness: AgentReadiness
+	conversations: AgentConversation[]
+}
+
+export interface AgentConversationEvent {
+	sequence: number
+	type: AgentEventType
+	conversationId: string
+	turnId?: string
+	status?: AgentConversationStatus
+	item?: AgentConversationItem
+	snapshot?: AgentConversation
+	createdAt: string
 }
 
 export interface TaskRunResult {
