@@ -77,30 +77,22 @@ func runMain() int {
 				if development {
 					root, err := os.Getwd()
 					if err != nil {
-						_ = runtime.Shutdown(context.Background())
-						return nil, nil, fmt.Errorf("resolve CouchFusion source checkout: %w", err)
+						return nil, nil, errors.Join(fmt.Errorf("resolve CouchFusion source checkout: %w", err), shutdownUIRuntime(runtime))
 					}
 					process, err := devui.Start(ctx, devui.Options{Root: root, Out: streams.Out, Err: streams.Err})
 					if err != nil {
-						_ = runtime.Shutdown(context.Background())
-						return nil, nil, err
+						return nil, nil, errors.Join(err, shutdownUIRuntime(runtime))
 					}
 					runtime.development = process
 					proxy, err := webserver.NewDevelopmentProxy(process.URL(), nil)
 					if err != nil {
-						shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-						defer cancel()
-						_ = runtime.Shutdown(shutdownContext)
-						return nil, nil, err
+						return nil, nil, errors.Join(err, shutdownUIRuntime(runtime))
 					}
 					serverOptions.FrontendHandler = proxy
 				}
 				server, err := webserver.NewServer(serverOptions)
 				if err != nil {
-					shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					_ = runtime.Shutdown(shutdownContext)
-					return nil, nil, err
+					return nil, nil, errors.Join(err, shutdownUIRuntime(runtime))
 				}
 				return server, runtime, nil
 			}})

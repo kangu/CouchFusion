@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestUIRuntimeWithoutDevelopmentHasNoCompletionChannel(t *testing.T) {
@@ -38,6 +39,28 @@ func TestUIRuntimeStopsDevelopmentBeforeApplicationAndJoinsErrors(t *testing.T) 
 	}
 	if !reflect.DeepEqual(order, []string{"development", "application"}) {
 		t.Fatalf("shutdown order = %#v", order)
+	}
+}
+
+func TestShutdownUIRuntimeUsesBoundedContext(t *testing.T) {
+	checked := false
+	runtime := uiRuntime{application: &runtimeApplicationFake{shutdown: func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("shutdown context has no deadline")
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > 10*time.Second {
+			t.Fatalf("shutdown deadline remaining = %s", remaining)
+		}
+		checked = true
+		return nil
+	}}}
+	if err := shutdownUIRuntime(runtime); err != nil {
+		t.Fatal(err)
+	}
+	if !checked {
+		t.Fatal("application shutdown was not called")
 	}
 }
 

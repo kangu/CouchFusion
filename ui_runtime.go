@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/nuxt-apps/couchfusion/internal/cli"
 )
@@ -30,4 +31,10 @@ func (r uiRuntime) Shutdown(ctx context.Context) error {
 		developmentErr = r.development.Shutdown(ctx)
 	}
 	return errors.Join(developmentErr, r.application.Shutdown(ctx))
+}
+
+func shutdownUIRuntime(runtime uiRuntime) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return runtime.Shutdown(ctx)
 }
