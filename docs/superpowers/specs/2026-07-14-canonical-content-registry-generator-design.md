@@ -62,7 +62,7 @@ The UI rebuild remains useful as an explicit manual trigger, but it is no longer
 ## Testing
 
 1. Move/adapt the existing output-contract tests into `layers/content/tests/scripts` and verify deterministic metadata, digest correctness, ordered installation, cleanup, and empty registries.
-2. Add an integration test that executes the canonical layer generator against a temporary Nuxt 4 fixture and asserts that both files are generated and the digest matches.
+2. Add a source-level orchestration contract test for the canonical generator, then execute it against a real Nuxt 4 app with installed compiler dependencies and assert that both files are generated and the digest matches. The real app files are backed up and restored during verification.
 3. Add compatibility tests for the legacy delegates, verifying argument and exit-code forwarding to a controlled target.
 4. Run the focused Content tests and the full `cli-content` test command.
 5. Run the canonical generator against a real local app, then inspect it through CouchFusion's existing Go `ComponentInspector` tests or an equivalent manifest validation.
