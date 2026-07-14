@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -64,10 +65,11 @@ type Snapshot struct {
 }
 
 type StartRequest struct {
-	WorkspaceID string
-	SiteID      string
-	TaskID      string
-	Command     project.Command
+	WorkspaceID  string
+	SiteID       string
+	TaskID       string
+	Command      project.Command
+	SecretValues []string
 }
 
 type Options struct {
@@ -111,6 +113,7 @@ type managedProcess struct {
 	nextEventID    uint64
 	subscribers    map[uint64]chan Event
 	nextSubscriber uint64
+	redactor       redactor
 }
 
 func NewManager(options Options) *Manager {
@@ -170,6 +173,9 @@ func (m *Manager) Start(ctx context.Context, request StartRequest) (Snapshot, er
 	processContext, cancel := context.WithCancel(context.Background())
 	command := exec.CommandContext(processContext, request.Command.Executable, request.Command.Args...)
 	command.Dir = request.Command.Dir
+	if len(request.Command.Environment) > 0 {
+		command.Env = mergeEnvironment(os.Environ(), request.Command.Environment)
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -202,6 +208,7 @@ func (m *Manager) Start(ctx context.Context, request StartRequest) (Snapshot, er
 		cancel:      cancel,
 		done:        make(chan struct{}),
 		subscribers: map[uint64]chan Event{},
+		redactor:    m.redactor.withValues(request.SecretValues),
 	}
 	m.processes[id] = state
 	m.owners[owner] = id
@@ -448,7 +455,7 @@ func (m *Manager) addEventLocked(state *managedProcess, stream, code, text strin
 		Time:   m.options.Now(),
 		Stream: stream,
 		Code:   code,
-		Text:   m.redactor.Text(text),
+		Text:   state.redactor.Text(text),
 	}
 	state.snapshot.Events = append(state.snapshot.Events, event)
 	if excess := len(state.snapshot.Events) - m.options.MaxEvents; excess > 0 {
@@ -490,7 +497,43 @@ func (m *Manager) captureURLsLocked(state *managedProcess, line string) {
 func cloneRequest(request StartRequest) StartRequest {
 	copy := request
 	copy.Command.Args = append([]string{}, request.Command.Args...)
+	copy.Command.Environment = cloneEnvironment(request.Command.Environment)
+	copy.SecretValues = append([]string{}, request.SecretValues...)
 	return copy
+}
+
+func cloneEnvironment(environment map[string]string) map[string]string {
+	if environment == nil {
+		return nil
+	}
+	copy := make(map[string]string, len(environment))
+	for key, value := range environment {
+		copy[key] = value
+	}
+	return copy
+}
+
+func mergeEnvironment(inherited []string, overrides map[string]string) []string {
+	values := make(map[string]string, len(inherited)+len(overrides))
+	for _, entry := range inherited {
+		key, value, found := strings.Cut(entry, "=")
+		if found {
+			values[key] = value
+		}
+	}
+	for key, value := range overrides {
+		values[key] = value
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	merged := make([]string, 0, len(keys))
+	for _, key := range keys {
+		merged = append(merged, key+"="+values[key])
+	}
+	return merged
 }
 
 func cloneSnapshot(snapshot Snapshot) Snapshot {
@@ -539,6 +582,27 @@ type redactor struct {
 	userinfo        *regexp.Regexp
 	sensitiveHeader []*regexp.Regexp
 	secrets         []*regexp.Regexp
+	exactValues     []*regexp.Regexp
+}
+
+func (r redactor) withValues(values []string) redactor {
+	copy := r
+	copy.exactValues = append([]*regexp.Regexp{}, r.exactValues...)
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		copy.exactValues = append(
+			copy.exactValues,
+			regexp.MustCompile(regexp.QuoteMeta(value)),
+		)
+	}
+	return copy
 }
 
 func newRedactor(extraKeys []string) redactor {
@@ -574,6 +638,9 @@ func (r redactor) Text(value string) string {
 	}
 	for _, pattern := range r.secrets {
 		value = pattern.ReplaceAllString(value, `${1}[redacted]`)
+	}
+	for _, pattern := range r.exactValues {
+		value = pattern.ReplaceAllString(value, `[redacted]`)
 	}
 	return value
 }

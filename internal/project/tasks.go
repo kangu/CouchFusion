@@ -16,9 +16,10 @@ type Task struct {
 }
 
 type Command struct {
-	Executable string
-	Args       []string
-	Dir        string
+	Executable  string
+	Args        []string
+	Dir         string
+	Environment map[string]string
 }
 
 type Catalog struct{}

@@ -198,6 +198,53 @@ func TestManagerRedactsOutputBeforeStorage(t *testing.T) {
 	}
 }
 
+func TestManagerMergesTrustedEnvironmentAndRedactsRuntimeSecrets(t *testing.T) {
+	t.Setenv("CF_INHERITED_ENV", "inherited")
+	environment := map[string]string{"CF_TEST_ENV": "preview"}
+	secretValues := []string{"raw-preview-secret"}
+	manager := newTestManager(t, Options{MaxEvents: 20})
+	command := helperCommand(t.TempDir(), "environment")
+	command.Environment = environment
+
+	started, err := manager.Start(context.Background(), StartRequest{
+		WorkspaceID:  "w",
+		SiteID:       "environment",
+		TaskID:       "component-preview",
+		Command:      command,
+		SecretValues: secretValues,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment["CF_TEST_ENV"] = "mutated"
+	secretValues[0] = "mutated-secret"
+
+	exited := waitForStatus(t, manager, started.ID, Exited)
+	if !hasEventText(exited.Events, "preview inherited") {
+		t.Fatalf("events do not contain merged environment: %#v", exited.Events)
+	}
+	encoded, _ := json.Marshal(exited)
+	if strings.Contains(string(encoded), "raw-preview-secret") {
+		t.Fatalf("snapshot exposes runtime secret: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "[redacted]") {
+		t.Fatalf("snapshot does not contain redaction marker: %s", encoded)
+	}
+
+	restarted, err := manager.Restart(context.Background(), started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted = waitForStatus(t, manager, restarted.ID, Exited)
+	if !hasEventText(restarted.Events, "preview inherited") || hasEventText(restarted.Events, "mutated inherited") {
+		t.Fatalf("restart did not preserve cloned environment: %#v", restarted.Events)
+	}
+	encoded, _ = json.Marshal(restarted)
+	if strings.Contains(string(encoded), "raw-preview-secret") {
+		t.Fatalf("restarted snapshot exposes runtime secret: %s", encoded)
+	}
+}
+
 func TestSubscribeReplaysAndStreamsProcessEvents(t *testing.T) {
 	manager := newTestManager(t, Options{MaxEvents: 20})
 	started, err := manager.Start(context.Background(), StartRequest{WorkspaceID: "w", SiteID: "s", TaskID: "script:dev", Command: helperCommand(t.TempDir(), "wait")})
@@ -299,6 +346,13 @@ func TestProcessHelper(t *testing.T) {
 		for index := 0; index < 8; index++ {
 			fmt.Fprintf(os.Stdout, "line %d\n", index)
 		}
+	case "environment":
+		fmt.Fprintf(
+			os.Stdout,
+			"values: %s %s raw-preview-secret\n",
+			os.Getenv("CF_TEST_ENV"),
+			os.Getenv("CF_INHERITED_ENV"),
+		)
 	default:
 		os.Exit(2)
 	}
