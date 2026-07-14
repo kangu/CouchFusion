@@ -925,7 +925,7 @@ Run: `go test -race ./... -count=1 && go vet ./... && cd web && bun run test:run
 
 Expected: all commands PASS and no managed child remains after the test server exits.
 
-- [ ] **Step 5: Commit acceptance hardening**
+- [x] **Step 5: Commit acceptance hardening**
 
 ```bash
 git add internal web
@@ -944,25 +944,25 @@ git commit -m "test: verify CouchFusion control plane flows"
 - Produces: all existing platform archives as single binaries containing the production UI.
 - Produces: launch, security, workspace, task, configuration, and troubleshooting documentation.
 
-- [ ] **Step 1: Add build preflight assertions**
+- [x] **Step 1: Add build preflight assertions**
 
 Make `build.sh` run frontend install/generate, replace `internal/web/dist` with `.output/public`, assert `index.html`, then run Go tests and cross-compilation. Make `release.sh` reject artifacts whose binary does not contain the embedded index marker or whose expected archive is absent.
 
-- [ ] **Step 2: Update the README**
+- [x] **Step 2: Update the README**
 
 Document `couchfusion ui`, `--port`, `--no-open`, explicit workspace registration, local-only security, non-destructive forget semantics, layered configuration, site tasks/process lifetime, and the requirement that UI-started processes stop with the server. Align Go prerequisites with `go.mod`.
 
-- [ ] **Step 3: Write the implementation result record**
+- [x] **Step 3: Write the implementation result record**
 
 Record delivered architecture, user-visible behavior, security controls, exact verification commands, release changes, and explicit phase-2/3 deferrals.
 
-- [ ] **Step 4: Run final release verification**
+- [x] **Step 4: Run final release verification**
 
 Run: `./build.sh && ./release.sh v0.6.0 && go test -race ./... -count=1 && go vet ./... && cd web && bun run test:run && bun run typecheck && bun run e2e`
 
 Expected: all tests PASS; Linux amd64/arm64, macOS amd64/arm64, and Windows amd64 artifacts are produced with the embedded UI.
 
-- [ ] **Step 5: Review repository state and commit documentation/release work**
+- [x] **Step 5: Review repository state and commit documentation/release work**
 
 Run: `git diff --check && git status --short`
 
@@ -977,15 +977,15 @@ git commit -m "docs: ship CouchFusion web control plane"
 
 ## Final Verification Checklist
 
-- [ ] `go test -race ./... -count=1` passes.
-- [ ] `go vet ./...` passes.
-- [ ] `cd web && bun run test:run` passes.
-- [ ] `cd web && bun run typecheck` passes.
-- [ ] `cd web && bun run generate` produces `index.html`.
-- [ ] `cd web && bun run e2e` passes against the production-like loopback server.
-- [ ] Existing CLI smoke tests for `version`, `init`, `new`, and `create_layer` pass.
-- [ ] The server binds only to loopback and rejects foreign origin/host requests.
-- [ ] Workspace/site/layer paths cannot escape registered roots.
-- [ ] No web route exposes force overwrite, recursive deletion, arbitrary commands, or secrets.
-- [ ] Closing the browser does not cancel work; server shutdown stops managed dev processes.
-- [ ] Cross-platform release archives contain one executable with embedded UI assets.
+- [x] `go test -race ./... -count=1` passes.
+- [x] `go vet ./...` passes.
+- [x] `cd web && bun run test:run` passes.
+- [x] `cd web && bun run typecheck` passes.
+- [x] `cd web && bun run generate` produces `index.html`.
+- [x] `cd web && bun run e2e` passes against the production-like loopback server.
+- [x] Existing CLI smoke tests for `version`, `init`, `new`, and `create_layer` pass.
+- [x] The server binds only to loopback and rejects foreign origin/host requests.
+- [x] Workspace/site/layer paths cannot escape registered roots.
+- [x] No web route exposes force overwrite, recursive deletion, arbitrary commands, or secrets.
+- [x] Closing the browser does not cancel work; server shutdown stops managed dev processes.
+- [x] Cross-platform release archives contain one executable with embedded UI assets.

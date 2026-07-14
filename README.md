@@ -22,6 +22,28 @@ Deliver a batteries-included platform where any contributor can clone the repo, 
 
 `couchfusion` is the Go CLI that provisions the workspace, scaffolds Nuxt apps and layers, and performs post-clone setup (environment docs, CouchDB admin seeding, etc.).
 
+### Web UI quick start
+
+Start the local workbench with:
+
+```bash
+couchfusion ui
+```
+
+The command binds to a random `127.0.0.1` port and opens a one-time, tokenized URL in your browser. If the browser cannot be opened, copy the URL printed in the terminal. Useful options:
+
+```bash
+couchfusion ui --no-open
+couchfusion ui --port 4400
+couchfusion ui --config ~/.couchfusion/config.yaml
+```
+
+On first use, choose **Register existing** and enter the exact absolute path of a CouchFusion workspace, or choose **Initialize new** and review the filesystem operation before starting it. Registration is entirely explicit: the UI never scans your disk. Forgetting a workspace only removes its registry entry; project files remain untouched.
+
+The UI provides workspace, site, layer, configuration, activity, and system-health views. Site tasks run either as finite jobs or managed development processes. Closing a browser tab does not cancel a job, while stopping the UI server stops all UI-managed child processes.
+
+The server accepts only loopback hosts, exchanges the launch token for an HTTP-only same-site session cookie, and rejects foreign origins. It is a local control plane, not a remotely deployable admin panel.
+
 ### Installation & Setup
 
 ### CouchDB
@@ -68,11 +90,12 @@ By default, commands run with a Bubble Tea + Lip Gloss terminal interface when e
 ### Build from Source
 
 #### Prerequisites
-- Go 1.21+
+- Go 1.24+
+- Bun (to generate the embedded Nuxt UI)
 
 ```bash
 # from repo root
-go build -o couchfusion ./cli-init
+go build -o couchfusion .
 ```
 
 Add the binary to your PATH or run it directly via `./couchfusion` from the build directory.
@@ -290,6 +313,10 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `managed Bun installation is supported on macOS and Linux only` | Install Bun manually for your OS and re-run the command. |
 | `couchdb install or acknowledgement requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
 | `managed CouchDB installation is supported on macOS and Debian/Ubuntu only` | Install CouchDB manually for your OS and re-run the command. |
+| UI URL returns `Authentication is required` | Start a fresh `couchfusion ui` session and use the newly printed one-time URL. |
+| UI does not open automatically | Run `couchfusion ui --no-open` and open the printed URL manually. |
+| Selected workspace is unavailable | Relink or re-register its exact current path; CouchFusion does not search the disk. |
+| A dev server remains active | Stop it from the site page, or stop the `couchfusion ui` process to clean up all managed children. |
 
 ---
 
