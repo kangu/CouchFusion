@@ -353,7 +353,7 @@ type UICompletion interface {
 }
 ```
 
-- [ ] **Step 1: Write failing CLI tests for the development flag and runtime exit**
+- [x] **Step 1: Write failing CLI tests for the development flag and runtime exit**
 
 Update existing factories with the new boolean parameter, then add:
 
@@ -391,13 +391,13 @@ func TestUIReturnsUnexpectedRuntimeFailure(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the CLI tests and verify failure**
+- [x] **Step 2: Run the CLI tests and verify failure**
 
 Run: `go test ./internal/cli -run 'TestUI' -count=1`
 
 Expected: FAIL because `--dev`, the factory parameter, and completion selection are absent.
 
-- [ ] **Step 3: Implement CLI propagation and completion selection**
+- [x] **Step 3: Implement CLI propagation and completion selection**
 
 Parse `dev := flags.Bool("dev", false, "Use the Nuxt development server with HMR")`, pass `*dev` to `NewServer`, and wait with:
 
@@ -417,7 +417,7 @@ return errors.Join(runtimeErr, shutdownErr)
 
 A nil completion channel disables the runtime branch in normal mode.
 
-- [ ] **Step 4: Write and implement the root runtime composition tests**
+- [x] **Step 4: Write and implement the root runtime composition tests**
 
 Create `uiRuntime` with `application cli.UIApplication` and `development *devui.Process`. Its `Done` method returns nil without a development child. Its `Shutdown` method stops the development child before the application and joins both errors.
 
@@ -437,7 +437,7 @@ type uiRuntime struct {
 
 Verify normal mode returns a nil `Done` channel and development mode invokes both shutdown methods once.
 
-- [ ] **Step 5: Wire development startup in `main.go`**
+- [x] **Step 5: Wire development startup in `main.go`**
 
 Change the UI factory to receive `development bool`. Create the application service first. When development is true:
 
@@ -453,7 +453,7 @@ Every error after process startup must call its bounded shutdown before returnin
 couchfusion ui [--port 0] [--no-open] [--config path] [--dev]
 ```
 
-- [ ] **Step 6: Run and commit Task 3**
+- [x] **Step 6: Run and commit Task 3**
 
 Run:
 

@@ -22,6 +22,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/cli"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
+	"github.com/nuxt-apps/couchfusion/internal/devui"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
@@ -66,19 +67,42 @@ func runMain() int {
 			return runCreateLayer(ctx, service, args)
 		},
 		UI: func(ctx context.Context, args []string) error {
-			return cli.RunUI(ctx, args, streams, cli.UIOptions{NewServer: func(listener net.Listener, configPath string) (cli.UIServer, cli.UIApplication, error) {
+			return cli.RunUI(ctx, args, streams, cli.UIOptions{NewServer: func(listener net.Listener, configPath string, development bool) (cli.UIServer, cli.UIApplication, error) {
 				uiApplication, err := app.NewDefaultService(configPath)
 				if err != nil {
 					return nil, nil, err
 				}
-				server, err := webserver.NewServer(webserver.Options{Listener: listener, Application: uiApplication})
+				runtime := uiRuntime{application: uiApplication}
+				serverOptions := webserver.Options{Listener: listener, Application: uiApplication}
+				if development {
+					root, err := os.Getwd()
+					if err != nil {
+						_ = runtime.Shutdown(context.Background())
+						return nil, nil, fmt.Errorf("resolve CouchFusion source checkout: %w", err)
+					}
+					process, err := devui.Start(ctx, devui.Options{Root: root, Out: streams.Out, Err: streams.Err})
+					if err != nil {
+						_ = runtime.Shutdown(context.Background())
+						return nil, nil, err
+					}
+					runtime.development = process
+					proxy, err := webserver.NewDevelopmentProxy(process.URL(), nil)
+					if err != nil {
+						shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						_ = runtime.Shutdown(shutdownContext)
+						return nil, nil, err
+					}
+					serverOptions.FrontendHandler = proxy
+				}
+				server, err := webserver.NewServer(serverOptions)
 				if err != nil {
 					shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					_ = uiApplication.Shutdown(shutdownContext)
+					_ = runtime.Shutdown(shutdownContext)
 					return nil, nil, err
 				}
-				return server, uiApplication, nil
+				return server, runtime, nil
 			}})
 		},
 	})
@@ -103,7 +127,7 @@ func printUsage() {
 	fmt.Println("  couchfusion init [--config path] [--path dir] [--layers-branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion new [--config path] [--name app] [--modules m1,m2] [--branch name] [--force] [--yes]")
 	fmt.Println("  couchfusion create_layer [--config path] [--name layer] [--branch name] [--force] [--yes]")
-	fmt.Println("  couchfusion ui [--port 0] [--no-open] [--config path]")
+	fmt.Println("  couchfusion ui [--port 0] [--no-open] [--config path] [--dev]")
 }
 
 func runInit(ctx context.Context, service *app.Service, args []string) error {

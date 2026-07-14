@@ -26,8 +26,12 @@ type UIApplication interface {
 
 type UIOptions struct {
 	Listen      func(network, address string) (net.Listener, error)
-	NewServer   func(net.Listener, string) (UIServer, UIApplication, error)
+	NewServer   func(net.Listener, string, bool) (UIServer, UIApplication, error)
 	OpenBrowser func(string) error
+}
+
+type UICompletion interface {
+	Done() <-chan error
 }
 
 func RunUI(ctx context.Context, args []string, streams IO, options UIOptions) error {
@@ -37,6 +41,7 @@ func RunUI(ctx context.Context, args []string, streams IO, options UIOptions) er
 	port := flags.Int("port", 0, "Loopback port (0 selects an available port)")
 	noOpen := flags.Bool("no-open", false, "Do not open the browser")
 	configPath := flags.String("config", "", "Path to the global configuration file")
+	development := flags.Bool("dev", false, "Use the Nuxt development server with HMR")
 	if err := flags.Parse(args); err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -57,7 +62,7 @@ func RunUI(ctx context.Context, args []string, streams IO, options UIOptions) er
 	if err != nil {
 		return fmt.Errorf("start UI listener: %w", err)
 	}
-	server, application, err := options.NewServer(listener, *configPath)
+	server, application, err := options.NewServer(listener, *configPath, *development)
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("create UI server: %w", err)
@@ -80,10 +85,18 @@ func RunUI(ctx context.Context, args []string, streams IO, options UIOptions) er
 			_, _ = fmt.Fprintf(streams.Err, "Could not open a browser: %v\nOpen %s manually.\n", err, launch.URL)
 		}
 	}
-	<-ctx.Done()
+	var runtimeDone <-chan error
+	if completion, ok := application.(UICompletion); ok {
+		runtimeDone = completion.Done()
+	}
+	var runtimeErr error
+	select {
+	case <-ctx.Done():
+	case runtimeErr = <-runtimeDone:
+	}
 	shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return errors.Join(server.Shutdown(shutdownContext), application.Shutdown(shutdownContext))
+	return errors.Join(runtimeErr, server.Shutdown(shutdownContext), application.Shutdown(shutdownContext))
 }
 
 func openBrowser(url string) error {
