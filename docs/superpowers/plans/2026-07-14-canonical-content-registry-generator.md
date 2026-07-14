@@ -32,11 +32,11 @@
 - Produces: `renderRegistryOutputs(records) -> { typescript: Buffer, manifest: Buffer }`.
 - Produces: `writeRegistryPair({ outputFile, records, fileSystem? }) -> Promise<void>`.
 
-- [ ] **Step 1: Copy the output-contract tests into the Content layer before the implementation**
+- [x] **Step 1: Copy the output-contract tests into the Content layer before the implementation**
 
 Create `content/tests/scripts/registry-output.test.mjs` from the committed `cli-content/registry-output.test.mjs`. Keep tests for Nuxt 3/Nuxt 4/nested sources, outside-root rejection, lexical ordering, exact SHA-256 linkage, empty registries, TypeScript-before-JSON installation, sync calls, and cleanup after either rename fails.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -47,7 +47,7 @@ bun test content/tests/scripts/registry-output.test.mjs
 
 Expected: FAIL because `content/scripts/registry-output.mjs` does not exist.
 
-- [ ] **Step 3: Add the focused output module**
+- [x] **Step 3: Add the focused output module**
 
 Create `content/scripts/registry-output.mjs` with the already-reviewed `cli-content/registry-output.mjs` implementation. It must retain these public operations:
 
@@ -83,13 +83,13 @@ export async function writeRegistryPair({ outputFile, records, fileSystem = fs }
 
 Move `escapeString` and `formatValue` unchanged into this module as private helpers.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run the command from Step 2.
 
 Expected: all output-contract tests pass with no temporary files left behind.
 
-- [ ] **Step 5: Commit the output contract**
+- [x] **Step 5: Commit the output contract**
 
 ```bash
 cd /Users/radu/Projects/nuxt-apps/layers
@@ -109,7 +109,7 @@ git commit -m "feat: own component registry outputs in content layer"
 - Consumes: `createRegistryRecord` and `writeRegistryPair` from Task 1.
 - Produces: every successful generator run installs matching `component-definitions.ts` and `component-definitions.json`.
 
-- [ ] **Step 1: Add a failing canonical-generator contract test**
+- [x] **Step 1: Add a failing canonical-generator contract test**
 
 Create `content/tests/scripts/generator-contract.test.mjs` that reads the canonical generator source and asserts the orchestration and merged behavior:
 
@@ -142,7 +142,7 @@ describe('canonical component registry generator', () => {
 
 This source-contract test is paired with the real output-module tests because the generator resolves compiler packages from a consuming app and cannot be imported safely as a unit.
 
-- [ ] **Step 2: Run the contract test and verify RED**
+- [x] **Step 2: Run the contract test and verify RED**
 
 Run:
 
@@ -153,7 +153,7 @@ bun test content/tests/scripts/generator-contract.test.mjs
 
 Expected: FAIL on the missing paired-output import/call and missing image hint behavior.
 
-- [ ] **Step 3: Merge the generator behaviors into the layer**
+- [x] **Step 3: Merge the generator behaviors into the layer**
 
 Modify the generator as follows:
 
@@ -191,7 +191,7 @@ await writeRegistryPair({ outputFile, records })
 console.log(`Generated ${records.length} component definitions for ${appName}.`)
 ```
 
-- [ ] **Step 4: Run generator and existing Content tests**
+- [x] **Step 4: Run generator and existing Content tests**
 
 Run:
 
@@ -203,7 +203,7 @@ bunx vitest --config vitest.config.ts content/tests/builder/component-preview-pr
 
 Expected: all focused tests pass.
 
-- [ ] **Step 5: Commit the canonical generator**
+- [x] **Step 5: Commit the canonical generator**
 
 ```bash
 git add content/scripts/generate-component-registry.mjs content/tests/scripts/generator-contract.test.mjs
@@ -228,7 +228,7 @@ git commit -m "fix: generate couchfusion registry metadata during dev"
 - Produces: `delegateToContentLayer(name, args, options?) -> Promise<number>`.
 - Preserves both existing bin entry points and all their arguments.
 
-- [ ] **Step 1: Create a feature branch without disturbing current changes**
+- [x] **Step 1: Create a feature branch without disturbing current changes**
 
 ```bash
 cd /Users/radu/Projects/nuxt-apps/cli-content
@@ -237,7 +237,7 @@ git switch -c codex/canonical-registry-generator
 
 Expected: the modified generator and untracked documentation remain present on the new branch.
 
-- [ ] **Step 2: Write failing delegate tests**
+- [x] **Step 2: Write failing delegate tests**
 
 Create `delegate-to-content-layer.test.mjs` with injected filesystem/spawn boundaries:
 
@@ -274,7 +274,7 @@ test('forwards arguments and returns the delegated exit code', async () => {
 
 Also test a missing canonical script error and signal cleanup.
 
-- [ ] **Step 3: Run delegate tests and verify RED**
+- [x] **Step 3: Run delegate tests and verify RED**
 
 Run:
 
@@ -285,7 +285,7 @@ bun test delegate-to-content-layer.test.mjs
 
 Expected: FAIL because the delegate module is missing.
 
-- [ ] **Step 4: Implement the delegate and thin entry points**
+- [x] **Step 4: Implement the delegate and thin entry points**
 
 Implement `contentLayerScript` using `../layers/content/scripts/<name>` relative to `cli-content`, validate it with `fs.access`, and throw a path-specific error if missing. Implement `delegateToContentLayer` with `Bun.spawn`, inherited stdio, SIGINT/SIGTERM forwarding, handler cleanup after `child.exited`, and returned exit code.
 
@@ -303,7 +303,7 @@ Replace `watch-component-registry.ts` with the equivalent delegate to `watch-com
 
 Delete the legacy `registry-output.mjs` and its test after the output contract tests are green in `layers/content`; leaving them in `cli-content` would retain a second implementation.
 
-- [ ] **Step 5: Run all `cli-content` tests and check the user document remains untouched**
+- [x] **Step 5: Run all `cli-content` tests and check the user document remains untouched**
 
 Run:
 
@@ -315,7 +315,7 @@ git status --short
 
 Expected: all tests pass; `docs/integrate_inside_layer.md` remains untracked and is not staged.
 
-- [ ] **Step 6: Commit only the compatibility implementation**
+- [x] **Step 6: Commit only the compatibility implementation**
 
 ```bash
 git add generate-component-registry.mjs watch-component-registry.ts delegate-to-content-layer.mjs delegate-to-content-layer.test.mjs registry-output.mjs registry-output.test.mjs
@@ -334,7 +334,7 @@ git commit -m "refactor: delegate registry generation to content layer"
 - Consumes: the canonical layer generator and legacy delegates.
 - Produces: verified real-app paired generation and migration documentation.
 
-- [ ] **Step 1: Back up and regenerate a real app registry through the layer command**
+- [x] **Step 1: Back up and regenerate a real app registry through the layer command**
 
 Use `/Users/radu/Projects/nuxt-apps/apps/with-ui` because it already contains a valid registry pair and installed generator dependencies. Save both generated files to temporary paths, run:
 
@@ -352,7 +352,7 @@ node -e "const m=require('./app/content-builder/component-definitions.json'); co
 
 Restore both app files in a `finally`/trap path so the app repository is unchanged.
 
-- [ ] **Step 2: Prove the legacy command reaches the same implementation**
+- [x] **Step 2: Prove the legacy command reaches the same implementation**
 
 Repeat the backed-up real-app generation through:
 
@@ -362,7 +362,9 @@ bun /Users/radu/Projects/nuxt-apps/cli-content/generate-component-registry.mjs
 
 Expected: the same component count, paired files, and matching digest; restore both app files afterward.
 
-- [ ] **Step 3: Run complete verification**
+- [x] **Step 3: Run complete verification**
+
+Verification completed with all scoped tests passing. The complete Content suite retained its three documented pre-existing failures and introduced no additional failures.
 
 ```bash
 cd /Users/radu/Projects/nuxt-apps/layers
@@ -379,7 +381,7 @@ go vet ./...
 
 Expected: all test commands pass.
 
-- [ ] **Step 4: Document the completed migration**
+- [x] **Step 4: Document the completed migration**
 
 Create the Content-layer implementation result with:
 
@@ -390,7 +392,7 @@ Create the Content-layer implementation result with:
 - legacy compatibility entry points;
 - verification commands and real-app proof.
 
-- [ ] **Step 5: Commit documentation and mark this plan complete**
+- [x] **Step 5: Commit documentation and mark this plan complete**
 
 ```bash
 cd /Users/radu/Projects/nuxt-apps/layers
@@ -404,11 +406,11 @@ git commit -m "docs: complete canonical registry generator plan"
 
 ## Final Review
 
-- [ ] `layers/content/scripts/generate-component-registry.mjs` is the only registry parsing implementation.
-- [ ] A normal Content watcher run generates matching `.ts` and `.json` files.
-- [ ] Both legacy `cli-content` executables are thin delegates.
-- [ ] The existing `previewSections` change is present in the canonical generator.
-- [ ] Existing image inference and layer-only directory/compiler behaviors are preserved.
-- [ ] `/Users/radu/Projects/nuxt-apps/cli-content/docs/integrate_inside_layer.md` remains untouched and untracked.
-- [ ] The real app used for proof has no lasting changes.
-- [ ] All three repositories contain no unintended changes.
+- [x] `layers/content/scripts/generate-component-registry.mjs` is the only registry parsing implementation.
+- [x] A normal Content watcher run generates matching `.ts` and `.json` files.
+- [x] Both legacy `cli-content` executables are thin delegates.
+- [x] The existing `previewSections` change is present in the canonical generator.
+- [x] Existing image inference and layer-only directory/compiler behaviors are preserved.
+- [x] `/Users/radu/Projects/nuxt-apps/cli-content/docs/integrate_inside_layer.md` remains untouched and untracked.
+- [x] The real app used for proof has no lasting changes.
+- [x] All three repositories contain no unintended changes.
