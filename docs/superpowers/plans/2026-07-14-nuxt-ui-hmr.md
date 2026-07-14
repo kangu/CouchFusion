@@ -611,7 +611,7 @@ git commit -m "test: verify authenticated UI hot reload"
 - Consumes: the completed `ui --dev` behavior and verification commands.
 - Produces: a concise operator guide and recorded verification evidence.
 
-- [ ] **Step 1: Add the development workflow to README**
+- [x] **Step 1: Add the development workflow to README**
 
 Immediately after the normal UI command documentation, add:
 
@@ -632,7 +632,7 @@ The browser still connects to the authenticated Go server. Go forwards page, ass
 
 Add troubleshooting entries for missing dependencies and an unexpectedly occupied Nuxt port.
 
-- [ ] **Step 2: Run the complete verification gate**
+- [x] **Step 2: Run the complete verification gate**
 
 Run:
 
@@ -651,11 +651,11 @@ git diff --check
 
 Expected: all Go tests pass under the race detector, vet is clean, 14 frontend unit tests pass, Nuxt typechecking and generation pass, and both Playwright suites pass.
 
-- [ ] **Step 3: Manually smoke-test the real command**
+- [x] **Step 3: Manually smoke-test the real command**
 
 Run `go run . ui --dev --no-open`, open the printed tokenized URL, edit one value in `web/assets/css/main.css`, and verify the browser updates without changing its Go port. Restore the CSS edit, press Ctrl-C, and confirm no matching Nuxt child remains with `pgrep -fal 'nuxt dev'`.
 
-- [ ] **Step 4: Record implementation results**
+- [x] **Step 4: Record implementation results**
 
 Create `docs/implementation_results/2026-07-14-nuxt-ui-hmr.md` containing:
 
@@ -666,7 +666,7 @@ Create `docs/implementation_results/2026-07-14-nuxt-ui-hmr.md` containing:
 - files and tests added; and
 - the exact verification results from Step 2.
 
-- [ ] **Step 5: Mark this plan complete and commit**
+- [x] **Step 5: Mark this plan complete and commit**
 
 Mark every completed checkbox in this plan, then run:
 

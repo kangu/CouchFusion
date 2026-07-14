@@ -44,6 +44,19 @@ The UI provides workspace, site, layer, configuration, activity, and system-heal
 
 The server accepts only loopback hosts, exchanges the launch token for an HTTP-only same-site session cookie, and rejects foreign origins. It is a local control plane, not a remotely deployable admin panel.
 
+#### Develop the workbench UI with HMR
+
+From the CouchFusion source checkout:
+
+```bash
+cd web
+bun install
+cd ..
+go run . ui --dev
+```
+
+The browser still connects to the authenticated Go server. Go forwards page, asset, and HMR WebSocket traffic to a managed Nuxt development server, so edits under `web/` update without rebuilding `internal/web/dist`. This mode reloads only Nuxt and CSS, not Go code. Stop it with Ctrl-C to terminate both servers.
+
 ### Installation & Setup
 
 ### CouchDB
@@ -315,6 +328,8 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `managed CouchDB installation is supported on macOS and Debian/Ubuntu only` | Install CouchDB manually for your OS and re-run the command. |
 | UI URL returns `Authentication is required` | Start a fresh `couchfusion ui` session and use the newly printed one-time URL. |
 | UI does not open automatically | Run `couchfusion ui --no-open` and open the printed URL manually. |
+| `Frontend dependencies are missing` | Run `cd web && bun install`, return to the repository root, and start `go run . ui --dev` again. |
+| Nuxt cannot bind its development port | Stop the process occupying the reported loopback port, then restart `go run . ui --dev`; CouchFusion selects a new private port on every run. |
 | Selected workspace is unavailable | Relink or re-register its exact current path; CouchFusion does not search the disk. |
 | A dev server remains active | Stop it from the site page, or stop the `couchfusion ui` process to clean up all managed children. |
 
