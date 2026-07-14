@@ -89,6 +89,9 @@ func TestDevelopmentProxyAddsNonceWithoutChangingCSS(t *testing.T) {
 	if !strings.Contains(html.Header().Get("Content-Security-Policy"), "connect-src 'self' ws:") {
 		t.Fatalf("CSP does not allow same-origin HMR: %q", html.Header().Get("Content-Security-Policy"))
 	}
+	if !strings.Contains(html.Header().Get("Content-Security-Policy"), "frame-src http://127.0.0.1:* http://localhost:*") {
+		t.Fatalf("CSP does not allow loopback preview frames: %q", html.Header().Get("Content-Security-Policy"))
+	}
 
 	css := performRequest(server, http.MethodGet, "/style.css", nil, cookie)
 	if css.Body.String() != "body{color:red}" {

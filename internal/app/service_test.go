@@ -10,6 +10,7 @@ import (
 
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -322,6 +323,60 @@ func TestOpenComponentSourceMapsResolverAndLauncherErrors(t *testing.T) {
 	var appErr *Error
 	if !errors.As(err, &appErr) || appErr.Code != ErrorProcess || appErr.Message != "Could not open component source" {
 		t.Fatalf("launcher error = %#v", err)
+	}
+}
+
+func TestComponentPreviewHostUsesOnlyCuratedDevTask(t *testing.T) {
+	hosts := &previewHostFake{view: preview.View{Status: preview.Starting, ProcessID: "preview-1"}}
+	tasks := &taskFake{
+		tasks: []project.Task{{ID: "script:dev", Name: "dev", Kind: "dev", LongRunning: true}},
+		commands: map[string]project.Command{
+			"script:dev": {Executable: "bun", Args: []string{"run", "dev"}, Dir: "/workspace/apps/shop"},
+		},
+	}
+	service := newServiceForTest(t, Dependencies{
+		Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects: &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Tasks:    tasks, PreviewHosts: hosts,
+	})
+
+	started, err := service.StartComponentPreviewHost(context.Background(), "w1", "shop")
+	if err != nil || started.ProcessID != "preview-1" {
+		t.Fatalf("StartComponentPreviewHost() = %#v, %v", started, err)
+	}
+	if hosts.startCalls != 1 || hosts.command.Executable != "bun" || !reflect.DeepEqual(hosts.command.Args, []string{"run", "dev"}) {
+		t.Fatalf("preview hosts = %#v", hosts)
+	}
+	status, err := service.ComponentPreviewHost(context.Background(), "w1", "shop")
+	if err != nil || status.Status != preview.Starting || hosts.statusCalls != 1 {
+		t.Fatalf("ComponentPreviewHost() = %#v, %v", status, err)
+	}
+	stopped, err := service.StopComponentPreviewHost(context.Background(), "w1", "shop")
+	if err != nil || stopped.Status != preview.Starting || hosts.stopCalls != 1 {
+		t.Fatalf("StopComponentPreviewHost() = %#v, %v", stopped, err)
+	}
+}
+
+func TestComponentPreviewHostRejectsMissingOrFiniteDevTask(t *testing.T) {
+	for _, availableTasks := range [][]project.Task{
+		{{ID: "script:build"}},
+		{{ID: "script:dev", LongRunning: false}},
+	} {
+		hosts := &previewHostFake{}
+		service := newServiceForTest(t, Dependencies{
+			Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+			Projects: &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+			Tasks:    &taskFake{tasks: availableTasks}, PreviewHosts: hosts,
+		})
+
+		_, err := service.StartComponentPreviewHost(context.Background(), "w1", "shop")
+		var appError *Error
+		if !errors.As(err, &appError) || appError.Code != ErrorValidation {
+			t.Fatalf("tasks %#v error = %#v, want validation", availableTasks, err)
+		}
+		if hosts.startCalls != 0 {
+			t.Fatalf("tasks %#v started preview host", availableTasks)
+		}
 	}
 }
 
@@ -638,6 +693,31 @@ func errorCode(err error) ErrorCode {
 type processManagerFake struct {
 	request    processes.StartRequest
 	startCalls int
+}
+
+type previewHostFake struct {
+	view        preview.View
+	err         error
+	startCalls  int
+	statusCalls int
+	stopCalls   int
+	command     project.Command
+}
+
+func (f *previewHostFake) Start(_ context.Context, _, _ string, command project.Command) (preview.View, error) {
+	f.startCalls++
+	f.command = command
+	return f.view, f.err
+}
+
+func (f *previewHostFake) Status(context.Context, string, string) (preview.View, error) {
+	f.statusCalls++
+	return f.view, f.err
+}
+
+func (f *previewHostFake) Stop(context.Context, string, string) (preview.View, error) {
+	f.stopCalls++
+	return f.view, f.err
 }
 
 func (f *processManagerFake) Start(_ context.Context, request processes.StartRequest) (processes.Snapshot, error) {

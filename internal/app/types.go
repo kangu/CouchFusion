@@ -7,6 +7,7 @@ import (
 
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -210,6 +211,12 @@ type ProcessManager interface {
 	Shutdown(context.Context) error
 }
 
+type ComponentPreviewHosts interface {
+	Start(context.Context, string, string, project.Command) (preview.View, error)
+	Status(context.Context, string, string) (preview.View, error)
+	Stop(context.Context, string, string) (preview.View, error)
+}
+
 type Dependencies struct {
 	Registry         Registry
 	Configs          ConfigService
@@ -223,5 +230,6 @@ type Dependencies struct {
 	Commands         CommandRunner
 	Jobs             JobManager
 	Processes        ProcessManager
+	PreviewHosts     ComponentPreviewHosts
 	GlobalConfigPath string
 }

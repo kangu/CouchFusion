@@ -11,6 +11,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -168,6 +169,34 @@ func TestComponentRoutesValidateIDsAndMapOperationErrors(t *testing.T) {
 	}
 }
 
+func TestComponentPreviewHostRoutes(t *testing.T) {
+	application := newAPIApplicationStub()
+	application.previewHost = preview.View{
+		Status: preview.Ready, ProcessID: "preview-1",
+		URL: "http://127.0.0.1:44001/__couchfusion/components/preview?token=capability",
+	}
+	server, cookie := newAuthenticatedAPIServer(t, application)
+	base := "/api/v1/workspaces/w1/sites/shop/components/preview-host"
+
+	status := authenticatedAPIRequest(server, cookie, http.MethodGet, base, "")
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"status":"ready"`) {
+		t.Fatalf("status response = %d: %s", status.Code, status.Body.String())
+	}
+	start := authenticatedAPIRequest(server, cookie, http.MethodPost, base+"/start", `{}`)
+	stop := authenticatedAPIRequest(server, cookie, http.MethodPost, base+"/stop", `{}`)
+	if start.Code != http.StatusOK || stop.Code != http.StatusOK {
+		t.Fatalf("start/stop responses = %d/%d: %s / %s", start.Code, stop.Code, start.Body.String(), stop.Body.String())
+	}
+	if application.calls["components.preview.status"] != 1 || application.calls["components.preview.start"] != 1 || application.calls["components.preview.stop"] != 1 {
+		t.Fatalf("calls = %#v", application.calls)
+	}
+	for _, body := range []string{status.Body.String(), start.Body.String(), stop.Body.String()} {
+		if strings.Contains(body, `"token":`) {
+			t.Fatalf("response exposes standalone token: %s", body)
+		}
+	}
+}
+
 func TestJobProcessAndSSERoutes(t *testing.T) {
 	application := newAPIApplicationStub()
 	server, cookie := newAuthenticatedAPIServer(t, application)
@@ -301,6 +330,7 @@ type apiApplicationStub struct {
 	job               jobs.Snapshot
 	process           processes.Snapshot
 	components        app.ComponentRegistryView
+	previewHost       preview.View
 	openedComponentID string
 }
 
@@ -390,6 +420,18 @@ func (s *apiApplicationStub) OpenComponentSource(_ context.Context, _, _, compon
 	s.calls["components.open"]++
 	s.openedComponentID = componentID
 	return s.errors["components.open"]
+}
+func (s *apiApplicationStub) ComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	s.calls["components.preview.status"]++
+	return s.previewHost, s.errors["components.preview.status"]
+}
+func (s *apiApplicationStub) StartComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	s.calls["components.preview.start"]++
+	return s.previewHost, s.errors["components.preview.start"]
+}
+func (s *apiApplicationStub) StopComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	s.calls["components.preview.stop"]++
+	return s.previewHost, s.errors["components.preview.stop"]
 }
 func (s *apiApplicationStub) RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error) {
 	s.calls["task.run"]++

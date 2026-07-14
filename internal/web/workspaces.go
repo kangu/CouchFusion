@@ -12,6 +12,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -36,6 +37,9 @@ type Application interface {
 	Components(context.Context, string, string) (app.ComponentRegistryView, error)
 	RebuildComponentRegistry(context.Context, string, string, string) (jobs.Snapshot, error)
 	OpenComponentSource(context.Context, string, string, string) error
+	ComponentPreviewHost(context.Context, string, string) (preview.View, error)
+	StartComponentPreviewHost(context.Context, string, string) (preview.View, error)
+	StopComponentPreviewHost(context.Context, string, string) (preview.View, error)
 	RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error)
 	StartProcess(context.Context, string, string, string) (processes.Snapshot, error)
 	Process(string) (processes.Snapshot, error)
@@ -83,6 +87,9 @@ func newAPIHandler(application Application) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/components", handler.getComponents)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/registry/rebuild", handler.rebuildComponentRegistry)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/{componentId}/open", handler.openComponentSource)
+	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/preview-host", handler.componentPreviewHost)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/preview-host/start", handler.startComponentPreviewHost)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/preview-host/stop", handler.stopComponentPreviewHost)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/tasks/{taskId}/run", handler.runTask)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/processes/{taskId}/start", handler.startProcess)
 	mux.HandleFunc("GET /api/v1/jobs/{jobId}", handler.getJob)
@@ -366,6 +373,45 @@ func (h apiHandler) rebuildComponentRegistry(writer http.ResponseWriter, request
 		return
 	}
 	writeData(writer, http.StatusAccepted, job)
+}
+
+func (h apiHandler) componentPreviewHost(writer http.ResponseWriter, request *http.Request) {
+	view, err := h.application.ComponentPreviewHost(
+		request.Context(),
+		request.PathValue("workspaceId"),
+		request.PathValue("siteId"),
+	)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"data": view})
+}
+
+func (h apiHandler) startComponentPreviewHost(writer http.ResponseWriter, request *http.Request) {
+	view, err := h.application.StartComponentPreviewHost(
+		request.Context(),
+		request.PathValue("workspaceId"),
+		request.PathValue("siteId"),
+	)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"data": view})
+}
+
+func (h apiHandler) stopComponentPreviewHost(writer http.ResponseWriter, request *http.Request) {
+	view, err := h.application.StopComponentPreviewHost(
+		request.Context(),
+		request.PathValue("workspaceId"),
+		request.PathValue("siteId"),
+	)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"data": view})
 }
 
 func (h apiHandler) openComponentSource(writer http.ResponseWriter, request *http.Request) {

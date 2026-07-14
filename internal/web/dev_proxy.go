@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	developmentBaseCSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self' ws:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
-	developmentHTMLCSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self' ws:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-%s'"
+	developmentBaseCSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:* http://localhost:*; object-src 'none'; connect-src 'self' ws:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+	developmentHTMLCSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:* http://localhost:*; object-src 'none'; connect-src 'self' ws:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-%s'"
 )
 
 func NewDevelopmentProxy(target *url.URL, random io.Reader) (http.Handler, error) {

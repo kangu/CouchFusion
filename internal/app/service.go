@@ -16,6 +16,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/editor"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -66,6 +67,9 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	}
 	if dependencies.Processes == nil {
 		dependencies.Processes = processes.NewManager(processes.Options{})
+	}
+	if dependencies.PreviewHosts == nil {
+		dependencies.PreviewHosts = preview.NewManager(preview.Options{Processes: dependencies.Processes})
 	}
 	return &Service{dependencies: dependencies}, nil
 }
@@ -359,6 +363,47 @@ func (s *Service) OpenComponentSource(ctx context.Context, workspaceID, siteID, 
 		return &Error{Code: ErrorProcess, Message: "Could not open component source", cause: err}
 	}
 	return nil
+}
+
+func (s *Service) ComponentPreviewHost(ctx context.Context, workspaceID, siteID string) (preview.View, error) {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return preview.View{}, err
+	}
+	view, err := s.dependencies.PreviewHosts.Status(ctx, workspaceID, site.ID)
+	return view, MapError(err)
+}
+
+func (s *Service) StartComponentPreviewHost(ctx context.Context, workspaceID, siteID string) (preview.View, error) {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return preview.View{}, err
+	}
+	found := false
+	for _, task := range s.dependencies.Tasks.Tasks(site) {
+		if task.ID == "script:dev" && task.LongRunning {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return preview.View{}, ValidationError("site", "Site must expose a managed dev task")
+	}
+	command, err := s.dependencies.Tasks.Resolve(site, "script:dev")
+	if err != nil {
+		return preview.View{}, MapError(err)
+	}
+	view, err := s.dependencies.PreviewHosts.Start(ctx, workspaceID, site.ID, command)
+	return view, MapError(err)
+}
+
+func (s *Service) StopComponentPreviewHost(ctx context.Context, workspaceID, siteID string) (preview.View, error) {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return preview.View{}, err
+	}
+	view, err := s.dependencies.PreviewHosts.Stop(ctx, workspaceID, site.ID)
+	return view, MapError(err)
 }
 
 func hasComponentRegistryTask(tasks []project.Task) bool {

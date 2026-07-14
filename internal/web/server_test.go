@@ -158,6 +158,9 @@ func TestResponsesSetSecurityHeadersAndAuthenticatedSPAFallback(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), launchToken) {
 		t.Fatal("SPA response contains launch token")
 	}
+	if !strings.Contains(recorder.Header().Get("Content-Security-Policy"), "frame-src http://127.0.0.1:* http://localhost:*") {
+		t.Fatalf("CSP does not allow loopback preview frames: %q", recorder.Header().Get("Content-Security-Policy"))
+	}
 }
 
 func TestEmbeddedSPAInlineBootstrapUsesCSPNonce(t *testing.T) {

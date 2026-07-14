@@ -13,6 +13,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
@@ -62,6 +63,7 @@ type fixtureApplication struct {
 	jobs              map[string]jobs.Snapshot
 	process           processes.Snapshot
 	openedComponentID string
+	previewHost       preview.View
 }
 
 func newFixtureApplication() *fixtureApplication {
@@ -161,6 +163,31 @@ func (f *fixtureApplication) OpenComponentSource(_ context.Context, _, _, compon
 	defer f.mu.Unlock()
 	f.openedComponentID = componentID
 	return nil
+}
+func (f *fixtureApplication) ComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.previewHost.Status == "" {
+		return preview.View{Status: preview.Stopped}, nil
+	}
+	return f.previewHost, nil
+}
+func (f *fixtureApplication) StartComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now().UTC()
+	f.previewHost = preview.View{
+		Status: preview.Ready, ProcessID: "component-preview-e2e",
+		URL:       "http://127.0.0.1:4311/__couchfusion/components/preview?token=fixture",
+		StartedAt: &now,
+	}
+	return f.previewHost, nil
+}
+func (f *fixtureApplication) StopComponentPreviewHost(context.Context, string, string) (preview.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.previewHost = preview.View{Status: preview.Stopped}
+	return f.previewHost, nil
 }
 func (f *fixtureApplication) RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error) {
 	job := f.newJob("task.run", "shop")
