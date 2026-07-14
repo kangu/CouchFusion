@@ -743,11 +743,11 @@ git commit -m "feat: expose CouchFusion control plane API"
 - Consumes: authenticated relative `/api/v1` JSON and SSE endpoints.
 - Produces: typed API methods, centralized activity subscriptions, and the responsive app shell.
 
-- [ ] **Step 1: Create the frontend manifest and configuration**
+- [x] **Step 1: Create the frontend manifest and configuration**
 
 Use scripts `dev`, `build`, `generate`, `test`, `test:run`, `typecheck`, and `e2e`. Configure `ssr: false`, global CSS, strict TypeScript, and generated output copied to `internal/web/dist` by the root build.
 
-- [ ] **Step 2: Write failing composable tests**
+- [x] **Step 2: Write failing composable tests**
 
 Test structured API errors, credentials inclusion, one active SSE connection per resource, reconnect from last event ID, snapshot refresh after disconnect, and teardown.
 
@@ -760,21 +760,21 @@ it('maps field errors from the API', async () => {
 })
 ```
 
-- [ ] **Step 3: Run frontend tests and verify failure**
+- [x] **Step 3: Run frontend tests and verify failure**
 
 Run: `cd web && bun install && bun run test:run`
 
 Expected: FAIL because the composables and shell are incomplete.
 
-- [ ] **Step 4: Implement the typed client and activity hub**
+- [x] **Step 4: Implement the typed client and activity hub**
 
 Use `$fetch` with `credentials: 'same-origin'`, normalize response errors, and key SSE subscriptions by `job:<id>`/`process:<id>`. Store active workspace ID in Nuxt state and local storage only after validating it against `/workspaces`.
 
-- [ ] **Step 5: Implement the application shell**
+- [x] **Step 5: Implement the application shell**
 
 Create accessible navigation for Workspaces, Activity, and System, with workspace-scoped links appearing only when a workspace is active. Include visible connection state, responsive sidebar behavior, focus-visible styles, reduced-motion support, and non-generic CouchFusion visual tokens.
 
-- [ ] **Step 6: Run frontend foundation verification**
+- [x] **Step 6: Run frontend foundation verification**
 
 Run: `cd web && bun run test:run && bun run typecheck && bun run generate`
 
