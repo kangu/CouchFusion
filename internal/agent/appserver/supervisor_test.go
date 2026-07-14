@@ -115,6 +115,10 @@ func TestSupervisorRestartsAfterUnexpectedExit(t *testing.T) {
 	if _, err := supervisor.EnsureReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	initialGeneration := supervisor.Generation()
+	if initialGeneration == 0 {
+		t.Fatal("initial app-server generation is zero")
+	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -130,6 +134,9 @@ func TestSupervisorRestartsAfterUnexpectedExit(t *testing.T) {
 	readiness, err := supervisor.EnsureReady(context.Background())
 	if err != nil || readiness.Status != model.AgentReady {
 		t.Fatalf("readiness = %#v, error = %v", readiness, err)
+	}
+	if supervisor.Generation() <= initialGeneration {
+		t.Fatalf("generation = %d, want greater than %d after restart", supervisor.Generation(), initialGeneration)
 	}
 }
 

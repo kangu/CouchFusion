@@ -123,6 +123,12 @@ func (s *Supervisor) Events() <-chan protocol.Notification { return s.events }
 
 func (s *Supervisor) Requests() <-chan protocol.ServerRequest { return s.requests }
 
+func (s *Supervisor) Generation() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
+
 func (s *Supervisor) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	if s.shutting {

@@ -72,9 +72,51 @@ type ConversationItem struct {
 	Text   string `json:"text,omitempty"`
 }
 
+type InteractionKind string
+
+const (
+	InteractionApproval InteractionKind = "approval"
+	InteractionQuestion InteractionKind = "question"
+	InteractionConsent  InteractionKind = "consent"
+)
+
+type ApprovalAction string
+
+const (
+	ApprovalCommand     ApprovalAction = "command"
+	ApprovalFileChange  ApprovalAction = "file_change"
+	ApprovalPermissions ApprovalAction = "permissions"
+)
+
+type ConsentKind string
+
+const (
+	ConsentDependencyChange ConsentKind = "dependency_change"
+	ConsentNetworkAccess    ConsentKind = "network_access"
+)
+
+type InteractionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+type Question struct {
+	ID       string              `json:"id"`
+	Header   string              `json:"header"`
+	Question string              `json:"question"`
+	Options  []InteractionOption `json:"options,omitempty"`
+	IsOther  bool                `json:"isOther,omitempty"`
+	IsSecret bool                `json:"isSecret,omitempty"`
+}
+
 type Interaction struct {
-	RequestID string `json:"requestId"`
-	Kind      string `json:"kind"`
+	RequestID     string          `json:"requestId"`
+	Kind          InteractionKind `json:"kind"`
+	Action        ApprovalAction  `json:"action,omitempty"`
+	Summary       string          `json:"summary,omitempty"`
+	AffectedPaths []string        `json:"affectedPaths,omitempty"`
+	ConsentKind   ConsentKind     `json:"consentKind,omitempty"`
+	Questions     []Question      `json:"questions,omitempty"`
 }
 
 type LastTurn struct {

@@ -50,9 +50,10 @@ func TestLifecycleWaitingReturnsActive(t *testing.T) {
 	conversation := createTestConversation(t, manager, "workspace-1", "site-1")
 	document := repository.document(conversation.ID)
 	params, _ := json.Marshal(map[string]any{
-		"threadId": document.CodexThreadID,
-		"turnId":   conversation.ActiveTurn.ID,
-		"itemId":   "item-1",
+		"threadId":  document.CodexThreadID,
+		"turnId":    conversation.ActiveTurn.ID,
+		"itemId":    "item-1",
+		"questions": []map[string]any{{"id": "question-1", "header": "Style", "question": "Choose a style"}},
 	})
 	requests <- protocol.ServerRequest{ID: json.RawMessage(`91`), Method: "item/tool/requestUserInput", Params: params}
 	waitForStatus(t, manager, conversation.ID, model.ConversationWaiting)
@@ -255,6 +256,9 @@ func newTestManager(t *testing.T, override Options) (*Manager, *fakeRepository, 
 	if override.EventTextLimit != 0 {
 		options.EventTextLimit = override.EventTextLimit
 	}
+	if override.RuntimeGeneration != nil {
+		options.RuntimeGeneration = override.RuntimeGeneration
+	}
 	manager := NewManager(options)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	return manager, repository, client, events, requests
@@ -452,12 +456,20 @@ type recordedCall struct {
 type fakeClient struct {
 	mu          sync.Mutex
 	calls       []recordedCall
+	responses   chan recordedResponse
 	nextThread  int
 	nextTurn    int
 	threadReads map[string]protocol.Thread
 }
 
-func newFakeClient() *fakeClient                                  { return &fakeClient{threadReads: map[string]protocol.Thread{}} }
+type recordedResponse struct {
+	id     json.RawMessage
+	result any
+}
+
+func newFakeClient() *fakeClient {
+	return &fakeClient{threadReads: map[string]protocol.Thread{}, responses: make(chan recordedResponse, 32)}
+}
 func (c *fakeClient) provider(context.Context) (RPCClient, error) { return c, nil }
 func (c *fakeClient) Call(_ context.Context, method string, params any, result any) error {
 	c.mu.Lock()
@@ -479,6 +491,21 @@ func (c *fakeClient) Call(_ context.Context, method string, params any, result a
 	}
 	return nil
 }
+func (c *fakeClient) Respond(_ context.Context, id json.RawMessage, result any, _ *protocol.RPCError) error {
+	c.responses <- recordedResponse{id: append(json.RawMessage(nil), id...), result: result}
+	return nil
+}
+func (c *fakeClient) waitResponse(t *testing.T) recordedResponse {
+	t.Helper()
+	select {
+	case response := <-c.responses:
+		return response
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for protocol response")
+		return recordedResponse{}
+	}
+}
+func (c *fakeClient) responseCount() int { return len(c.responses) }
 func (c *fakeClient) called(method string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

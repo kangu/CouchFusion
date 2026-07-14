@@ -38,6 +38,7 @@ var (
 
 type RPCClient interface {
 	Call(context.Context, string, any, any) error
+	Respond(context.Context, json.RawMessage, any, *protocol.RPCError) error
 }
 
 type ClientProvider func(context.Context) (RPCClient, error)
@@ -45,19 +46,20 @@ type CaptureFunc func(context.Context, string) (baseline.Snapshot, error)
 type FingerprintFunc func(string, string, string, string) string
 
 type Options struct {
-	Repository     store.Repository
-	Leases         *mutationlease.Manager
-	Skill          prompt.Skill
-	Client         ClientProvider
-	Events         <-chan protocol.Notification
-	Requests       <-chan protocol.ServerRequest
-	Capture        CaptureFunc
-	Fingerprint    FingerprintFunc
-	ShutdownClient func(context.Context) error
-	EventLimit     int
-	EventTextLimit int
-	Now            func() time.Time
-	ID             func() string
+	Repository        store.Repository
+	Leases            *mutationlease.Manager
+	Skill             prompt.Skill
+	Client            ClientProvider
+	Events            <-chan protocol.Notification
+	Requests          <-chan protocol.ServerRequest
+	Capture           CaptureFunc
+	Fingerprint       FingerprintFunc
+	ShutdownClient    func(context.Context) error
+	RuntimeGeneration func() uint64
+	EventLimit        int
+	EventTextLimit    int
+	Now               func() time.Time
+	ID                func() string
 }
 
 type CreateRequest struct {
@@ -101,18 +103,24 @@ type conversationState struct {
 	opMu sync.Mutex
 	mu   sync.RWMutex
 
-	conversation   model.Conversation
-	document       store.Document
-	appsRoot       string
-	siteRoot       string
-	baseline       baseline.Snapshot
-	codexThreadID  string
-	codexTurnID    string
-	release        func()
-	history        []model.Event
-	historyText    int
-	subscribers    map[uint64]chan model.Event
-	nextSubscriber uint64
+	conversation      model.Conversation
+	document          store.Document
+	appsRoot          string
+	siteRoot          string
+	baseline          baseline.Snapshot
+	codexThreadID     string
+	codexTurnID       string
+	release           func()
+	pending           *pendingRequest
+	resolved          map[string]struct{}
+	grants            map[string]struct{}
+	consents          map[model.ConsentKind]bool
+	actions           map[string]actionMetadata
+	runtimeGeneration uint64
+	history           []model.Event
+	historyText       int
+	subscribers       map[uint64]chan model.Event
+	nextSubscriber    uint64
 }
 
 func NewManager(options Options) *Manager {
@@ -214,6 +222,7 @@ func (m *Manager) Create(ctx context.Context, request CreateRequest) (model.Conv
 		appsRoot: request.AppsRoot, siteRoot: request.SiteRoot, baseline: snapshot,
 		codexThreadID: document.CodexThreadID, release: release, subscribers: map[uint64]chan model.Event{},
 	}
+	m.initializeEphemeral(state)
 	m.addState(state)
 	state.opMu.Lock()
 
@@ -263,7 +272,7 @@ func (m *Manager) StartTurn(ctx context.Context, conversationID string, request 
 	if current.ReadOnly || !current.BindingValid {
 		return model.Conversation{}, ErrBindingChanged
 	}
-	if current.ActiveTurn != nil || current.Status != model.ConversationReady {
+	if current.ActiveTurn != nil || (current.Status != model.ConversationReady && current.Status != model.ConversationInterrupted && current.Status != model.ConversationFailed) {
 		return model.Conversation{}, ErrConflict
 	}
 	release, err := m.options.Leases.Acquire(current.WorkspaceID, conversationID, "agent_conversation")
@@ -293,6 +302,8 @@ func (m *Manager) StartTurn(ctx context.Context, conversationID string, request 
 	state.codexTurnID = response.Turn.ID
 	state.conversation.ActiveTurn = &model.ConversationTurn{ID: response.Turn.ID, Status: model.TurnActive, StartedAt: now}
 	state.conversation.PendingInteraction = nil
+	m.clearEphemeralLocked(state)
+	state.runtimeGeneration = m.runtimeGeneration()
 	state.mu.Unlock()
 	if err := m.transition(ctx, state, model.ConversationActive, model.EventTurnStarted, nil); err != nil {
 		m.releaseStateLease(state)
@@ -315,6 +326,9 @@ func (m *Manager) Interrupt(ctx context.Context, conversationID string) error {
 	if status != model.ConversationActive && status != model.ConversationWaiting {
 		return ErrConflict
 	}
+	state.mu.Lock()
+	m.clearEphemeralLocked(state)
+	state.mu.Unlock()
 	if err := m.transition(ctx, state, model.ConversationInterrupting, model.EventConversationInterrupted, nil); err != nil {
 		return err
 	}
@@ -408,6 +422,7 @@ func (m *Manager) Recover(ctx context.Context, bindings []RecoveryBinding) error
 				appsRoot: binding.AppsRoot, siteRoot: binding.SiteRoot, baseline: snapshotFromStore(document.Baseline),
 				codexThreadID: document.CodexThreadID, subscribers: map[uint64]chan model.Event{},
 			}
+			m.initializeEphemeral(state)
 			if !valid {
 				state.conversation.ReadOnly = true
 				state.conversation.BindingValid = false
@@ -508,39 +523,13 @@ func (m *Manager) handleNotification(notification protocol.Notification) {
 	case "serverRequest/resolved":
 		var params protocol.ServerRequestResolvedNotification
 		if json.Unmarshal(notification.Params, &params) == nil {
-			if state := m.stateByThread(params.ThreadID); state != nil {
-				state.opMu.Lock()
-				if state.snapshot().Status == model.ConversationWaiting {
-					_ = m.transition(m.ctx, state, model.ConversationActive, model.EventInteractionResolved, nil)
-				}
-				state.opMu.Unlock()
-			}
+			m.handleServerRequestResolved(params)
 		}
 	}
 }
 
 func (m *Manager) handleRequest(request protocol.ServerRequest) {
-	var binding struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-	}
-	if json.Unmarshal(request.Params, &binding) != nil {
-		return
-	}
-	state := m.stateByThread(binding.ThreadID)
-	if state == nil {
-		return
-	}
-	state.opMu.Lock()
-	defer state.opMu.Unlock()
-	state.mu.RLock()
-	activeTurn := state.codexTurnID
-	status := state.conversation.Status
-	state.mu.RUnlock()
-	if binding.TurnID != activeTurn || status != model.ConversationActive {
-		return
-	}
-	_ = m.transition(m.ctx, state, model.ConversationWaiting, model.EventInteractionRequested, nil)
+	m.handleInteractionRequest(request)
 }
 
 func (m *Manager) handleItem(method string, params protocol.ItemNotification) {
@@ -559,6 +548,7 @@ func (m *Manager) handleItem(method string, params protocol.ItemNotification) {
 		state.mu.Unlock()
 		return
 	}
+	m.recordActionMetadataLocked(state, params.Item)
 	found := false
 	for index := range state.conversation.Items {
 		if state.conversation.Items[index].ID == item.ID {
@@ -635,6 +625,9 @@ func (m *Manager) handleTurnCompleted(params protocol.TurnNotification) {
 	if params.Turn.ID == "" || params.Turn.ID != activeTurn {
 		return
 	}
+	state.mu.Lock()
+	m.clearEphemeralLocked(state)
+	state.mu.Unlock()
 	switch strings.ToLower(params.Turn.Status) {
 	case "completed":
 		m.setLastTurn(state, model.TurnCompleted)
@@ -756,6 +749,7 @@ func (m *Manager) clearActiveTurn(state *conversationState) {
 	state.conversation.ActiveTurn = nil
 	state.conversation.PendingInteraction = nil
 	state.codexTurnID = ""
+	m.clearEphemeralLocked(state)
 	state.mu.Unlock()
 }
 
@@ -965,11 +959,21 @@ func cloneConversation(source model.Conversation) model.Conversation {
 		clone.LastTurn = &last
 	}
 	if source.PendingInteraction != nil {
-		interaction := *source.PendingInteraction
+		interaction := cloneInteraction(*source.PendingInteraction)
 		clone.PendingInteraction = &interaction
 	}
 	clone.Items = append([]model.ConversationItem(nil), source.Items...)
 	clone.ChangedFiles = append([]model.ChangedFile(nil), source.ChangedFiles...)
+	return clone
+}
+
+func cloneInteraction(source model.Interaction) model.Interaction {
+	clone := source
+	clone.AffectedPaths = append([]string(nil), source.AffectedPaths...)
+	clone.Questions = append([]model.Question(nil), source.Questions...)
+	for index := range clone.Questions {
+		clone.Questions[index].Options = append([]model.InteractionOption(nil), source.Questions[index].Options...)
+	}
 	return clone
 }
 
