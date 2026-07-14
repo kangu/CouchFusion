@@ -6,7 +6,7 @@ export interface FetchOptions {
   body?: unknown
 }
 
-export type FetchLike = <T>(url: string, options: FetchOptions) => Promise<ApiEnvelope<T>>
+export type FetchLike = <T>(url: string, options: FetchOptions) => Promise<ApiEnvelope<T> | undefined>
 
 export class ApiClientError extends Error implements ApiErrorPayload {
   readonly code: ApiErrorPayload['code']
@@ -26,7 +26,7 @@ export function createApiClient(fetcher: FetchLike) {
     if (body !== undefined) options.body = body
     try {
       const response = await fetcher<T>(`/api/v1${normalizePath(path)}`, options)
-      return response.data
+      return response?.data as T
     } catch (error) {
       throw normalizeApiError(error)
     }

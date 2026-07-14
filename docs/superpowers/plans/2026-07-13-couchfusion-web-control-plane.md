@@ -885,7 +885,7 @@ Run: `cd web && bun run generate && rm -rf ../internal/web/dist/* && cp -R .outp
 
 Expected: all tests PASS and version prints `0.5.0`.
 
-- [ ] **Step 5: Commit embedded UI command**
+- [x] **Step 5: Commit embedded UI command**
 
 ```bash
 git add internal/web internal/cli main.go .gitignore
@@ -905,21 +905,21 @@ git commit -m "feat: serve embedded UI from CouchFusion binary"
 **Interfaces:**
 - Verifies: full browser/API contract and all security/process acceptance criteria.
 
-- [ ] **Step 1: Add end-to-end fixture server and failing browser flow**
+- [x] **Step 1: Add end-to-end fixture server and failing browser flow**
 
 Create a temporary valid workspace and fake external adapters, start a real loopback server, exchange the launch token, register the fixture, inspect it, create a fake site job, run a finite task, start/stop a helper dev process, save workspace config, and forget the workspace.
 
-- [ ] **Step 2: Run the browser test and verify failure**
+- [x] **Step 2: Run the browser test and verify failure**
 
 Run: `cd web && bun run e2e`
 
 Expected: FAIL at the first unimplemented or mismatched acceptance behavior.
 
-- [ ] **Step 3: Close contract and security gaps**
+- [x] **Step 3: Close contract and security gaps**
 
 Fix only behaviors exposed by the acceptance test. Add explicit regression tests for symlink escape, foreign origin, wrong host, oversized JSON, secret field serialization, concurrent mutation, tab disconnect, shutdown cancellation, and process cleanup.
 
-- [ ] **Step 4: Run complete race and browser verification**
+- [x] **Step 4: Run complete race and browser verification**
 
 Run: `go test -race ./... -count=1 && go vet ./... && cd web && bun run test:run && bun run typecheck && bun run generate && bun run e2e`
 

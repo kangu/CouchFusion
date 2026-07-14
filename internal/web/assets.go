@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/rand"
 	"embed"
 	"io/fs"
 	"mime"
@@ -24,6 +25,10 @@ func staticHandler() http.Handler {
 		name := strings.TrimPrefix(path.Clean(request.URL.Path), "/")
 		if name != "." && name != "" && !strings.HasPrefix(path.Base(name), ".") {
 			if data, err := fs.ReadFile(dist, name); err == nil {
+				if path.Ext(name) == ".html" {
+					writeSPAHTML(writer, request, data)
+					return
+				}
 				if contentType := mime.TypeByExtension(path.Ext(name)); contentType != "" {
 					writer.Header().Set("Content-Type", contentType)
 				}
@@ -43,11 +48,22 @@ func staticHandler() http.Handler {
 		if err != nil {
 			index = []byte(placeholderIndex)
 		}
-		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		writer.Header().Set("Cache-Control", "no-cache")
-		writer.WriteHeader(http.StatusOK)
-		if request.Method != http.MethodHead {
-			_, _ = writer.Write(index)
-		}
+		writeSPAHTML(writer, request, index)
 	})
+}
+
+func writeSPAHTML(writer http.ResponseWriter, request *http.Request, document []byte) {
+	nonce, err := randomToken(rand.Reader)
+	if err != nil {
+		http.Error(writer, "Could not secure UI response", http.StatusInternalServerError)
+		return
+	}
+	document = []byte(strings.ReplaceAll(string(document), "<script", `<script nonce="`+nonce+`"`))
+	writer.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-"+nonce+"'")
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.WriteHeader(http.StatusOK)
+	if request.Method != http.MethodHead {
+		_, _ = writer.Write(document)
+	}
 }

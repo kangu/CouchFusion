@@ -243,6 +243,32 @@ func TestSubscribeReplaysBufferedEventsThenStreamsLiveEvents(t *testing.T) {
 	waitForStatus(t, manager, started.ID, Succeeded)
 }
 
+func TestUnsubscribeDoesNotCancelRunningJob(t *testing.T) {
+	manager := newTestManager(Options{})
+	release := make(chan struct{})
+	started, err := manager.Start(Request{Type: "tab-independent", WorkspaceID: "w1", Run: func(context.Context, Reporter) error {
+		<-release
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unsubscribe, err := manager.Subscribe(started.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsubscribe()
+	snapshot, err := manager.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != Running && snapshot.Status != Queued {
+		t.Fatalf("status after tab disconnect = %q", snapshot.Status)
+	}
+	close(release)
+	waitForStatus(t, manager, started.ID, Succeeded)
+}
+
 func TestSecretHandoffIsSessionScopedAndConsumedOnce(t *testing.T) {
 	manager := newTestManager(Options{})
 	started, err := manager.Start(Request{

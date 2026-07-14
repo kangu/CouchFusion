@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -156,6 +157,22 @@ func TestResponsesSetSecurityHeadersAndAuthenticatedSPAFallback(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), launchToken) {
 		t.Fatal("SPA response contains launch token")
+	}
+}
+
+func TestEmbeddedSPAInlineBootstrapUsesCSPNonce(t *testing.T) {
+	server := newSecurityTestServer(t, nil)
+	cookie := authenticatedCookie(t, server)
+	recorder := performRequest(server, http.MethodGet, "/", nil, cookie)
+	match := regexp.MustCompile(`script-src 'self' 'nonce-([^']+)'`).FindStringSubmatch(recorder.Header().Get("Content-Security-Policy"))
+	if len(match) != 2 {
+		t.Fatalf("CSP = %q", recorder.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(recorder.Header().Get("Content-Security-Policy"), "script-src 'self' 'unsafe-inline'") {
+		t.Fatal("script CSP permits unsafe inline execution")
+	}
+	if !strings.Contains(recorder.Body.String(), `nonce="`+match[1]+`"`) {
+		t.Fatalf("HTML does not contain CSP nonce %q", match[1])
 	}
 }
 

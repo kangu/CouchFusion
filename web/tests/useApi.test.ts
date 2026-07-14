@@ -35,4 +35,11 @@ describe('useApi', () => {
       message: 'Could not reach the CouchFusion server.',
     })
   })
+
+  it('accepts successful no-content mutations', async () => {
+    const fetcher = vi.fn().mockResolvedValue(undefined)
+    const api = createApiClient(fetcher)
+
+    await expect(api.delete('/workspaces/w1')).resolves.toBeUndefined()
+  })
 })
