@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -23,7 +24,19 @@ const workspaceRoot = "/tmp/couchfusion-e2e-workspace"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	server, err := webserver.NewServer(webserver.Options{Port: 4178, Application: newFixtureApplication(), Random: zeroReader{}})
+	options := webserver.Options{Port: 4178, Application: newFixtureApplication(), Random: zeroReader{}}
+	if rawTarget := os.Getenv("COUCHFUSION_TEST_UI_PROXY"); rawTarget != "" {
+		target, err := url.Parse(rawTarget)
+		if err != nil {
+			panic(err)
+		}
+		frontend, err := webserver.NewDevelopmentProxy(target, zeroReader{})
+		if err != nil {
+			panic(err)
+		}
+		options.FrontendHandler = frontend
+	}
+	server, err := webserver.NewServer(options)
 	if err != nil {
 		panic(err)
 	}

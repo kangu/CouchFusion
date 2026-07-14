@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "nuxt typecheck",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:hmr": "playwright test --config playwright.hmr.config.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.3.0",

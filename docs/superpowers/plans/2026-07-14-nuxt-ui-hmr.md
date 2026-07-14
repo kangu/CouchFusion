@@ -489,7 +489,7 @@ git commit -m "feat: add CouchFusion UI development mode"
 - Consumes: `web.NewDevelopmentProxy` and the deterministic testserver launch token `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`.
 - Produces: `bun run e2e:hmr`, an isolated browser smoke test that never edits tracked source files.
 
-- [ ] **Step 1: Create the isolated HMR fixture**
+- [x] **Step 1: Create the isolated HMR fixture**
 
 Add `internal/web/testdata/hmr/index.html`:
 
@@ -514,7 +514,7 @@ Add `style.css`:
 
 The Playwright startup command copies these files into ignored `web/output/hmr-fixture/`; the test modifies only that copy.
 
-- [ ] **Step 2: Write the failing HMR browser test and config**
+- [x] **Step 2: Write the failing HMR browser test and config**
 
 Create `web/e2e/hmr.spec.ts`:
 
@@ -568,17 +568,17 @@ export default defineConfig({
 
 Add `"e2e:hmr": "playwright test --config playwright.hmr.config.ts"` to `web/package.json`.
 
-- [ ] **Step 3: Run the browser test and verify the red state**
+- [x] **Step 3: Run the browser test and verify the red state**
 
 Run: `cd web && bun run e2e:hmr`
 
 Expected before testserver proxy wiring is complete: FAIL because the authenticated Go origin serves the embedded workbench instead of `#probe`.
 
-- [ ] **Step 4: Add opt-in development proxying to the fixture server**
+- [x] **Step 4: Add opt-in development proxying to the fixture server**
 
 Read `COUCHFUSION_TEST_UI_PROXY`. When non-empty, parse it, create `NewDevelopmentProxy`, and pass it as `Options.FrontendHandler`. Panic on an invalid test-only value. With the environment variable absent, preserve the existing embedded E2E server behavior.
 
-- [ ] **Step 5: Verify the browser suites are green**
+- [x] **Step 5: Verify the browser suites are green**
 
 Run:
 
@@ -591,7 +591,7 @@ bun run e2e
 
 Expected: both the HMR smoke test and existing full control-plane journey PASS.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```bash
 git add internal/web/testserver/main.go internal/web/testdata/hmr web/e2e/hmr.spec.ts web/playwright.hmr.config.ts web/package.json
