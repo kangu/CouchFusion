@@ -46,6 +46,7 @@ type ClientProvider func(context.Context) (RPCClient, error)
 type CaptureFunc func(context.Context, string) (baseline.Snapshot, error)
 type CompareFunc func(context.Context, string, baseline.Snapshot) ([]model.ChangedFile, error)
 type FingerprintFunc func(string, string, string, string) string
+type ReadinessFunc func(context.Context) model.AgentReadiness
 
 type CompletionRequest struct {
 	WorkspaceID  string
@@ -71,10 +72,18 @@ type Options struct {
 	Completion        CompletionHook
 	ShutdownClient    func(context.Context) error
 	RuntimeGeneration func() uint64
+	Readiness         ReadinessFunc
 	EventLimit        int
 	EventTextLimit    int
 	Now               func() time.Time
 	ID                func() string
+}
+
+func (m *Manager) Readiness(ctx context.Context) model.AgentReadiness {
+	if m.options.Readiness == nil {
+		return model.AgentReadiness{Status: model.AgentMissing, Problem: "Codex component generation is unavailable"}
+	}
+	return m.options.Readiness(ctx)
 }
 
 type CreateRequest struct {
@@ -104,14 +113,17 @@ type idempotencyEntry struct {
 }
 
 type Manager struct {
-	mu          sync.RWMutex
-	options     Options
-	states      map[string]*conversationState
-	threads     map[string]string
-	idempotency map[string]idempotencyEntry
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	mu                sync.RWMutex
+	recoveryMu        sync.Mutex
+	recoveryMarked    bool
+	recoveredBindings map[string]struct{}
+	options           Options
+	states            map[string]*conversationState
+	threads           map[string]string
+	idempotency       map[string]idempotencyEntry
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
 }
 
 type conversationState struct {
@@ -166,7 +178,7 @@ func NewManager(options Options) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
 		options: options, states: map[string]*conversationState{}, threads: map[string]string{},
-		idempotency: map[string]idempotencyEntry{}, ctx: ctx, cancel: cancel,
+		idempotency: map[string]idempotencyEntry{}, recoveredBindings: map[string]struct{}{}, ctx: ctx, cancel: cancel,
 	}
 	manager.wg.Add(2)
 	go manager.runEvents()
@@ -425,15 +437,27 @@ func (m *Manager) Subscribe(ctx context.Context, conversationID string, after ui
 }
 
 func (m *Manager) Recover(ctx context.Context, bindings []RecoveryBinding) error {
-	if err := m.options.Repository.MarkActiveInterrupted(ctx); err != nil {
-		return err
+	m.recoveryMu.Lock()
+	defer m.recoveryMu.Unlock()
+	if !m.recoveryMarked {
+		if err := m.options.Repository.MarkActiveInterrupted(ctx); err != nil {
+			return err
+		}
+		m.recoveryMarked = true
 	}
 	for _, binding := range bindings {
+		bindingKey := binding.WorkspaceID + "\x00" + binding.SiteID + "\x00" + m.options.Fingerprint(binding.WorkspaceID, binding.SiteID, binding.AppsRoot, binding.SiteRoot)
+		if _, recovered := m.recoveredBindings[bindingKey]; recovered {
+			continue
+		}
 		documents, err := m.options.Repository.ListSite(ctx, binding.WorkspaceID, binding.SiteID)
 		if err != nil {
 			return err
 		}
 		for _, document := range documents {
+			if _, exists := m.state(document.ConversationID); exists {
+				continue
+			}
 			valid := document.SiteRootFingerprint == m.options.Fingerprint(binding.WorkspaceID, binding.SiteID, binding.AppsRoot, binding.SiteRoot)
 			state := &conversationState{
 				conversation: documentConversation(document, valid && !document.ReadOnly), document: document,
@@ -466,6 +490,7 @@ func (m *Manager) Recover(ctx context.Context, bindings []RecoveryBinding) error
 			m.trimItems(state)
 			m.addState(state)
 		}
+		m.recoveredBindings[bindingKey] = struct{}{}
 	}
 	return nil
 }

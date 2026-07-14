@@ -10,12 +10,18 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/appserver"
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	"github.com/nuxt-apps/couchfusion/internal/agent/prompt"
+	agentstore "github.com/nuxt-apps/couchfusion/internal/agent/store"
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/checks"
@@ -26,6 +32,8 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
+	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
+	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/ui"
 	webserver "github.com/nuxt-apps/couchfusion/internal/web"
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
@@ -68,7 +76,7 @@ func runMain() int {
 		},
 		UI: func(ctx context.Context, args []string) error {
 			return cli.RunUI(ctx, args, streams, cli.UIOptions{NewServer: func(listener net.Listener, configPath string, development bool) (cli.UIServer, cli.UIApplication, error) {
-				uiApplication, err := app.NewDefaultService(configPath)
+				uiApplication, err := newUIService(configPath)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -111,6 +119,60 @@ func runMain() int {
 		return exitErr.Code
 	}
 	return 1
+}
+
+func newUIService(configPath string) (*app.Service, error) {
+	leases := mutationlease.NewManager()
+	tasks := project.Catalog{}
+	commands := app.NewCommandRunner()
+	dependencies := app.Dependencies{
+		GlobalConfigPath: configPath,
+		Tasks:            tasks,
+		Commands:         commands,
+		Jobs:             jobs.NewManager(jobs.Options{Leases: leases}),
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return app.NewService(dependencies)
+	}
+	skill, err := prompt.MaterializeSkill(filepath.Join(home, ".couchfusion", "agent"))
+	if err != nil {
+		return app.NewService(dependencies)
+	}
+	credentials, err := couchdb.DefaultStore()
+	if err != nil {
+		return app.NewService(dependencies)
+	}
+	supervisor := appserver.NewSupervisor(appserver.Options{SkillRoot: skill.Root, Version: version})
+	repository := agentstore.NewCouchDBRepository(agentstore.CouchDBOptions{Credentials: credentials})
+	manager := conversations.NewManager(conversations.Options{
+		Repository: repository,
+		Leases:     leases,
+		Skill:      skill,
+		Client: func(ctx context.Context) (conversations.RPCClient, error) {
+			return supervisor.Client(ctx)
+		},
+		Events:            supervisor.Events(),
+		Requests:          supervisor.Requests(),
+		RuntimeGeneration: supervisor.Generation,
+		ShutdownClient:    supervisor.Shutdown,
+		Completion:        app.NewRegistryCompletionHook(tasks, commands),
+		Readiness: func(ctx context.Context) model.AgentReadiness {
+			if err := repository.Ensure(ctx); err != nil {
+				return model.AgentReadiness{Status: model.AgentLaunchFailed, Problem: "CouchFusion control database is unavailable"}
+			}
+			readiness, _ := supervisor.EnsureReady(ctx)
+			return readiness
+		},
+	})
+	dependencies.AgentConversations = manager
+	service, err := app.NewService(dependencies)
+	if err != nil {
+		_ = manager.Shutdown(context.Background())
+		return nil, err
+	}
+	return service, nil
 }
 
 func printUsage() {

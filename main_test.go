@@ -4,11 +4,26 @@ import (
 	"context"
 	"flag"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
 )
+
+func TestNewUIServiceMaterializesAgentSkillWithoutStartingCodex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service, err := newUIService("")
+	if err != nil {
+		t.Fatalf("newUIService() error = %v", err)
+	}
+	_ = service.Shutdown(context.Background())
+	matches, err := filepath.Glob(filepath.Join(home, ".couchfusion", "agent", "skills", "*", "couchfusion-component-builder", "SKILL.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("materialized skills = %#v, error = %v", matches, err)
+	}
+}
 
 func TestWorkflowFlagErrorsReturnWithoutExiting(t *testing.T) {
 	for _, test := range []struct {

@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	"github.com/nuxt-apps/couchfusion/internal/agent/prompt"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
@@ -15,6 +20,120 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/project"
 	"github.com/nuxt-apps/couchfusion/internal/registry"
 )
+
+func TestAgentCreateResolvesTrustedSiteBinding(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	siteRoot := filepath.Join(workspaceRoot, "apps", "shop")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := &agentFake{readiness: model.AgentReadiness{Status: model.AgentReady, Available: true}}
+	service := newServiceForTest(t, Dependencies{
+		Registry:           &registryFake{entries: []registry.Entry{{ID: "w1", Root: workspaceRoot, Available: true}}},
+		Projects:           &projectFake{site: project.Site{ID: "shop", Root: siteRoot}},
+		AgentConversations: agent,
+	})
+	created, err := service.CreateAgentConversation(context.Background(), "w1", "shop", AgentPromptRequest{Prompt: "Build a hero", IdempotencyKey: "request-1"})
+	if err != nil || created.ID != "conversation-1" {
+		t.Fatalf("CreateAgentConversation() = %#v, %v", created, err)
+	}
+	wantAppsRoot, _ := filepath.EvalSymlinks(filepath.Join(workspaceRoot, "apps"))
+	wantSiteRoot, _ := filepath.EvalSymlinks(siteRoot)
+	if agent.createRequest.WorkspaceID != "w1" || agent.createRequest.SiteID != "shop" ||
+		agent.createRequest.AppsRoot != wantAppsRoot || agent.createRequest.SiteRoot != wantSiteRoot ||
+		agent.createRequest.Prompt != "Build a hero" {
+		t.Fatalf("trusted request = %#v", agent.createRequest)
+	}
+	if agent.recoverCalls != 1 {
+		t.Fatalf("agent recovery calls = %d, want 1 before create", agent.recoverCalls)
+	}
+}
+
+func TestAgentCreateRejectsSiteOutsideRegisteredApps(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	agent := &agentFake{}
+	service := newServiceForTest(t, Dependencies{
+		Registry:           &registryFake{entries: []registry.Entry{{ID: "w1", Root: workspaceRoot, Available: true}}},
+		Projects:           &projectFake{site: project.Site{ID: "shop", Root: outside}},
+		AgentConversations: agent,
+	})
+	if _, err := service.CreateAgentConversation(context.Background(), "w1", "shop", AgentPromptRequest{Prompt: "Build a hero"}); errorCode(err) != ErrorValidation {
+		t.Fatalf("error = %v", err)
+	}
+	if agent.createCalls != 0 {
+		t.Fatalf("agent create calls = %d", agent.createCalls)
+	}
+}
+
+func TestAgentCollectionIncludesReadiness(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	siteRoot := filepath.Join(workspaceRoot, "apps", "shop")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := &agentFake{readiness: model.AgentReadiness{Status: model.AgentUnauthenticated, Problem: "Authenticate locally"}}
+	service := newServiceForTest(t, Dependencies{
+		Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: workspaceRoot, Available: true}}},
+		Projects: &projectFake{site: project.Site{ID: "shop", Root: siteRoot}}, AgentConversations: agent,
+	})
+	collection, err := service.AgentConversationList(context.Background(), "w1", "shop")
+	if err != nil || collection.Readiness.Status != model.AgentUnauthenticated {
+		t.Fatalf("collection = %#v, error = %v", collection, err)
+	}
+}
+
+func TestAgentCollectionDegradesWhenRecoveryIsUnavailable(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	siteRoot := filepath.Join(workspaceRoot, "apps", "shop")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := &agentFake{recoverErr: errors.New("control database unavailable")}
+	service := newServiceForTest(t, Dependencies{
+		Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: workspaceRoot, Available: true}}},
+		Projects: &projectFake{site: project.Site{ID: "shop", Root: siteRoot}}, AgentConversations: agent,
+	})
+	collection, err := service.AgentConversationList(context.Background(), "w1", "shop")
+	if err != nil || collection.Readiness.Available || collection.Readiness.Status != model.AgentLaunchFailed || len(collection.Conversations) != 0 {
+		t.Fatalf("collection = %#v, error = %v", collection, err)
+	}
+}
+
+func TestAgentRegistryCompletionUsesExactCuratedTask(t *testing.T) {
+	tasks := &taskFake{
+		tasks:    []project.Task{{ID: "script:registry:build", Name: "registry:build"}},
+		commands: map[string]project.Command{"script:registry:build": {Executable: "bun", Args: []string{"run", "registry:build"}, Dir: "/workspace/apps/shop"}},
+	}
+	runner := &commandRunnerFake{}
+	hook := NewRegistryCompletionHook(tasks, runner)
+	result := hook.Complete(context.Background(), conversations.CompletionRequest{
+		WorkspaceID: "w1", SiteID: "shop", SiteRoot: "/workspace/apps/shop",
+		ChangedFiles: []model.ChangedFile{{Path: "app/components/content/TestimonialCarousel.vue", Kind: model.ChangeAdded}},
+	})
+	if result.State != model.RegistrySucceeded || runner.calls != 1 || tasks.resolvedID != "script:registry:build" {
+		t.Fatalf("result = %#v, runner = %#v, resolved = %q", result, runner, tasks.resolvedID)
+	}
+	if result.GeneratedComponentID != "testimonial-carousel" {
+		t.Fatalf("generated component ID = %q", result.GeneratedComponentID)
+	}
+}
+
+func TestShutdownStopsAgentBeforeJobsAndProcesses(t *testing.T) {
+	agent := &agentFake{}
+	jobs := &shutdownJobManager{agent: agent}
+	processes := &shutdownProcessManager{agent: agent}
+	service := newServiceForTest(t, Dependencies{AgentConversations: agent, Jobs: jobs, Processes: processes})
+	if err := service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !agent.shutdown || !jobs.shutdown || !processes.shutdown {
+		t.Fatalf("shutdown state: agent=%v jobs=%v processes=%v", agent.shutdown, jobs.shutdown, processes.shutdown)
+	}
+}
 
 func TestInitializeRegistersOnlyAfterProvisioningSuccess(t *testing.T) {
 	t.Run("failure", func(t *testing.T) {
@@ -133,7 +252,7 @@ func TestHealthInspectionDoesNotInstallDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Bun.Available || !result.Node.Available || health.calls != 1 {
+	if !result.Bun.Available || !result.Node.Available || health.calls != 1 || result.Agent.Status != model.AgentMissing {
 		t.Fatalf("health = %#v, calls = %d", result, health.calls)
 	}
 	if installer.calls != 0 {
@@ -417,6 +536,10 @@ func TestServiceMapsDomainErrorsToStableCodes(t *testing.T) {
 		{name: "process", err: processes.ErrAlreadyRunning, code: ErrorProcess},
 		{name: "unavailable", err: context.DeadlineExceeded, code: ErrorUnavailable},
 		{name: "internal", err: errors.New("unexpected"), code: ErrorInternal},
+		{name: "agent conflict", err: conversations.ErrConflict, code: ErrorConflict},
+		{name: "agent not found", err: conversations.ErrNotFound, code: ErrorNotFound},
+		{name: "agent validation", err: prompt.ErrInvalidPrompt, code: ErrorValidation},
+		{name: "agent unavailable", err: conversations.ErrUnavailable, code: ErrorUnavailable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -568,13 +691,15 @@ func (f *projectFake) Site(context.Context, string, string) (project.Site, error
 }
 
 type taskFake struct {
-	tasks    []project.Task
-	commands map[string]project.Command
-	err      error
+	tasks      []project.Task
+	commands   map[string]project.Command
+	err        error
+	resolvedID string
 }
 
 func (f *taskFake) Tasks(project.Site) []project.Task { return append([]project.Task{}, f.tasks...) }
 func (f *taskFake) Resolve(_ project.Site, id string) (project.Command, error) {
+	f.resolvedID = id
 	if f.err != nil {
 		return project.Command{}, f.err
 	}
@@ -583,6 +708,99 @@ func (f *taskFake) Resolve(_ project.Site, id string) (project.Command, error) {
 		return project.Command{}, project.ErrTaskNotFound
 	}
 	return command, nil
+}
+
+type agentFake struct {
+	readiness     model.AgentReadiness
+	createRequest conversations.CreateRequest
+	createCalls   int
+	shutdown      bool
+	recoverCalls  int
+	recoverErr    error
+}
+
+func (f *agentFake) Readiness(context.Context) model.AgentReadiness { return f.readiness }
+func (f *agentFake) ListSite(context.Context, string, string) ([]model.Conversation, error) {
+	return []model.Conversation{}, nil
+}
+func (f *agentFake) Get(context.Context, string) (model.Conversation, error) {
+	return model.Conversation{ID: "conversation-1"}, nil
+}
+func (f *agentFake) Create(_ context.Context, request conversations.CreateRequest) (model.Conversation, error) {
+	f.createCalls++
+	f.createRequest = request
+	return model.Conversation{ID: "conversation-1"}, nil
+}
+func (f *agentFake) StartTurn(context.Context, string, conversations.TurnRequest) (model.Conversation, error) {
+	return model.Conversation{ID: "conversation-1"}, nil
+}
+func (f *agentFake) AnswerQuestion(context.Context, string, string, map[string]string) error {
+	return nil
+}
+func (f *agentFake) ResolveApproval(context.Context, string, string, conversations.ApprovalDecision) error {
+	return nil
+}
+func (f *agentFake) GrantConsent(context.Context, string, string, model.ConsentKind, bool) error {
+	return nil
+}
+func (f *agentFake) Interrupt(context.Context, string) error { return nil }
+func (f *agentFake) Subscribe(context.Context, string, uint64) (<-chan model.Event, error) {
+	return make(chan model.Event), nil
+}
+func (f *agentFake) Recover(context.Context, []conversations.RecoveryBinding) error {
+	f.recoverCalls++
+	return f.recoverErr
+}
+func (f *agentFake) Shutdown(context.Context) error { f.shutdown = true; return nil }
+
+type shutdownJobManager struct {
+	agent    *agentFake
+	shutdown bool
+}
+
+func (f *shutdownJobManager) Start(jobs.Request) (jobs.Snapshot, error) { return jobs.Snapshot{}, nil }
+func (f *shutdownJobManager) Get(string) (jobs.Snapshot, error) {
+	return jobs.Snapshot{}, jobs.ErrNotFound
+}
+func (f *shutdownJobManager) Cancel(string) error { return nil }
+func (f *shutdownJobManager) Subscribe(string, uint64) (<-chan jobs.Event, func(), error) {
+	return nil, nil, jobs.ErrNotFound
+}
+func (f *shutdownJobManager) ConsumeSecret(string, string) (string, error) {
+	return "", jobs.ErrSecretUnavailable
+}
+func (f *shutdownJobManager) Shutdown(context.Context) error {
+	if !f.agent.shutdown {
+		return errors.New("agent was not shut down first")
+	}
+	f.shutdown = true
+	return nil
+}
+
+type shutdownProcessManager struct {
+	agent    *agentFake
+	shutdown bool
+}
+
+func (f *shutdownProcessManager) Start(context.Context, processes.StartRequest) (processes.Snapshot, error) {
+	return processes.Snapshot{}, nil
+}
+func (f *shutdownProcessManager) Stop(context.Context, string) error { return nil }
+func (f *shutdownProcessManager) Restart(context.Context, string) (processes.Snapshot, error) {
+	return processes.Snapshot{}, nil
+}
+func (f *shutdownProcessManager) Get(string) (processes.Snapshot, error) {
+	return processes.Snapshot{}, processes.ErrNotFound
+}
+func (f *shutdownProcessManager) Subscribe(string, uint64) (<-chan processes.Event, func(), error) {
+	return nil, nil, processes.ErrNotFound
+}
+func (f *shutdownProcessManager) Shutdown(context.Context) error {
+	if !f.agent.shutdown {
+		return errors.New("agent was not shut down first")
+	}
+	f.shutdown = true
+	return nil
 }
 
 type provisionerFake struct {

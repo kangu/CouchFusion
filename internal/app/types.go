@@ -5,8 +5,14 @@ import (
 	"errors"
 	"os"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/appserver"
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
+	"github.com/nuxt-apps/couchfusion/internal/agent/prompt"
+	agentstore "github.com/nuxt-apps/couchfusion/internal/agent/store"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -61,10 +67,14 @@ func MapError(err error) error {
 		return &Error{Code: ErrorUnavailable, Message: "The requested operation is unavailable", cause: err}
 	case errors.Is(err, registry.ErrDuplicate), isJobConflict(err):
 		return &Error{Code: ErrorConflict, Message: "The requested operation conflicts with active state", cause: err}
-	case errors.Is(err, registry.ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, project.ErrComponentNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, processes.ErrNotFound):
+	case errors.Is(err, conversations.ErrConflict), errors.Is(err, conversations.ErrInteractionResolved), errors.Is(err, agentstore.ErrConflict), isMutationConflict(err):
+		return &Error{Code: ErrorConflict, Message: "The requested operation conflicts with active state", cause: err}
+	case errors.Is(err, registry.ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, project.ErrComponentNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, processes.ErrNotFound), errors.Is(err, conversations.ErrNotFound), errors.Is(err, conversations.ErrInteractionNotFound), errors.Is(err, agentstore.ErrNotFound):
 		return &Error{Code: ErrorNotFound, Message: "The requested resource was not found", cause: err}
-	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, registry.ErrInvalidName), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound), errors.Is(err, project.ErrComponentRegistryInvalid):
+	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, registry.ErrInvalidName), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound), errors.Is(err, project.ErrComponentRegistryInvalid), errors.Is(err, conversations.ErrBindingChanged), errors.Is(err, conversations.ErrInvalidInteraction), errors.Is(err, conversations.ErrConsentRequired), errors.Is(err, prompt.ErrInvalidPrompt):
 		return &Error{Code: ErrorValidation, Message: "The request is invalid", cause: err}
+	case errors.Is(err, conversations.ErrUnavailable), errors.Is(err, appserver.ErrUnavailable), errors.Is(err, appserver.ErrUnsupported):
+		return &Error{Code: ErrorUnavailable, Message: "Component generation is unavailable", cause: err}
 	case errors.Is(err, config.ErrInvalidConfig):
 		return &Error{Code: ErrorConfig, Message: "The CouchFusion configuration is invalid", cause: err}
 	case errors.Is(err, processes.ErrAlreadyRunning):
@@ -87,6 +97,11 @@ func ValidationError(field, message string) error {
 
 func isJobConflict(err error) bool {
 	var conflict jobs.ConflictError
+	return errors.As(err, &conflict)
+}
+
+func isMutationConflict(err error) bool {
+	var conflict mutationlease.ConflictError
 	return errors.As(err, &conflict)
 }
 
@@ -125,10 +140,21 @@ type DependencyHealth struct {
 }
 
 type Health struct {
-	Git     DependencyHealth `json:"git"`
-	Bun     DependencyHealth `json:"bun"`
-	Node    DependencyHealth `json:"node"`
-	CouchDB DependencyHealth `json:"couchdb"`
+	Git     DependencyHealth     `json:"git"`
+	Bun     DependencyHealth     `json:"bun"`
+	Node    DependencyHealth     `json:"node"`
+	CouchDB DependencyHealth     `json:"couchdb"`
+	Agent   model.AgentReadiness `json:"agent"`
+}
+
+type AgentPromptRequest struct {
+	Prompt         string
+	IdempotencyKey string
+}
+
+type AgentConversationCollection struct {
+	Readiness     model.AgentReadiness `json:"readiness"`
+	Conversations []model.Conversation `json:"conversations"`
 }
 
 type TaskRunResult struct {
@@ -217,19 +243,35 @@ type ComponentPreviewHosts interface {
 	Stop(context.Context, string, string) (preview.View, error)
 }
 
+type AgentConversationService interface {
+	Readiness(context.Context) model.AgentReadiness
+	ListSite(context.Context, string, string) ([]model.Conversation, error)
+	Get(context.Context, string) (model.Conversation, error)
+	Create(context.Context, conversations.CreateRequest) (model.Conversation, error)
+	StartTurn(context.Context, string, conversations.TurnRequest) (model.Conversation, error)
+	AnswerQuestion(context.Context, string, string, map[string]string) error
+	ResolveApproval(context.Context, string, string, conversations.ApprovalDecision) error
+	GrantConsent(context.Context, string, string, model.ConsentKind, bool) error
+	Interrupt(context.Context, string) error
+	Subscribe(context.Context, string, uint64) (<-chan model.Event, error)
+	Recover(context.Context, []conversations.RecoveryBinding) error
+	Shutdown(context.Context) error
+}
+
 type Dependencies struct {
-	Registry         Registry
-	Configs          ConfigService
-	Projects         ProjectService
-	Tasks            TaskCatalog
-	Components       ContentComponentService
-	Files            FileOpener
-	Provisioner      Provisioner
-	Health           HealthChecker
-	Installer        DependencyInstaller
-	Commands         CommandRunner
-	Jobs             JobManager
-	Processes        ProcessManager
-	PreviewHosts     ComponentPreviewHosts
-	GlobalConfigPath string
+	Registry           Registry
+	Configs            ConfigService
+	Projects           ProjectService
+	Tasks              TaskCatalog
+	Components         ContentComponentService
+	Files              FileOpener
+	Provisioner        Provisioner
+	Health             HealthChecker
+	Installer          DependencyInstaller
+	Commands           CommandRunner
+	Jobs               JobManager
+	Processes          ProcessManager
+	PreviewHosts       ComponentPreviewHosts
+	AgentConversations AgentConversationService
+	GlobalConfigPath   string
 }

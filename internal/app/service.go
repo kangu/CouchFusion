@@ -7,9 +7,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
+	"github.com/nuxt-apps/couchfusion/internal/agent/conversations"
+	"github.com/nuxt-apps/couchfusion/internal/agent/model"
 	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
@@ -70,6 +75,9 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	}
 	if dependencies.PreviewHosts == nil {
 		dependencies.PreviewHosts = preview.NewManager(preview.Options{Processes: dependencies.Processes})
+	}
+	if dependencies.AgentConversations == nil {
+		dependencies.AgentConversations = unavailableAgentConversations{}
 	}
 	return &Service{dependencies: dependencies}, nil
 }
@@ -173,7 +181,80 @@ func (s *Service) Health(ctx context.Context, workspaceID string) (Health, error
 		root = entry.Root
 	}
 	health, err := s.dependencies.Health.Check(ctx, root)
+	health.Agent = s.dependencies.AgentConversations.Readiness(ctx)
 	return health, MapError(err)
+}
+
+func (s *Service) AgentConversationList(ctx context.Context, workspaceID, siteID string) (AgentConversationCollection, error) {
+	binding, err := s.agentSiteBinding(ctx, workspaceID, siteID)
+	if err != nil {
+		return AgentConversationCollection{}, err
+	}
+	if err := s.recoverAgentBinding(ctx, workspaceID, siteID, binding); err != nil {
+		return unavailableAgentCollection(), nil
+	}
+	items, err := s.dependencies.AgentConversations.ListSite(ctx, workspaceID, siteID)
+	if err != nil {
+		return unavailableAgentCollection(), nil
+	}
+	return AgentConversationCollection{
+		Readiness: s.dependencies.AgentConversations.Readiness(ctx), Conversations: items,
+	}, nil
+}
+
+func unavailableAgentCollection() AgentConversationCollection {
+	return AgentConversationCollection{
+		Readiness:     model.AgentReadiness{Status: model.AgentLaunchFailed, Problem: "CouchFusion agent control data is unavailable"},
+		Conversations: []model.Conversation{},
+	}
+}
+
+func (s *Service) AgentConversation(ctx context.Context, conversationID string) (model.Conversation, error) {
+	conversation, err := s.dependencies.AgentConversations.Get(ctx, conversationID)
+	return conversation, MapError(err)
+}
+
+func (s *Service) CreateAgentConversation(ctx context.Context, workspaceID, siteID string, request AgentPromptRequest) (model.Conversation, error) {
+	binding, err := s.agentSiteBinding(ctx, workspaceID, siteID)
+	if err != nil {
+		return model.Conversation{}, err
+	}
+	if err := s.recoverAgentBinding(ctx, workspaceID, siteID, binding); err != nil {
+		return model.Conversation{}, err
+	}
+	conversation, err := s.dependencies.AgentConversations.Create(ctx, conversations.CreateRequest{
+		WorkspaceID: workspaceID, SiteID: siteID, AppsRoot: binding.appsRoot, SiteRoot: binding.siteRoot,
+		Prompt: request.Prompt, IdempotencyKey: request.IdempotencyKey,
+	})
+	return conversation, MapError(err)
+}
+
+func (s *Service) StartAgentTurn(ctx context.Context, conversationID string, request AgentPromptRequest) (model.Conversation, error) {
+	conversation, err := s.dependencies.AgentConversations.StartTurn(ctx, conversationID, conversations.TurnRequest{
+		Prompt: request.Prompt, IdempotencyKey: request.IdempotencyKey,
+	})
+	return conversation, MapError(err)
+}
+
+func (s *Service) AnswerAgentQuestion(ctx context.Context, conversationID, requestID string, answers map[string]string) error {
+	return MapError(s.dependencies.AgentConversations.AnswerQuestion(ctx, conversationID, requestID, answers))
+}
+
+func (s *Service) ResolveAgentApproval(ctx context.Context, conversationID, requestID string, decision conversations.ApprovalDecision) error {
+	return MapError(s.dependencies.AgentConversations.ResolveApproval(ctx, conversationID, requestID, decision))
+}
+
+func (s *Service) GrantAgentConsent(ctx context.Context, conversationID, requestID string, kind model.ConsentKind, granted bool) error {
+	return MapError(s.dependencies.AgentConversations.GrantConsent(ctx, conversationID, requestID, kind, granted))
+}
+
+func (s *Service) InterruptAgentConversation(ctx context.Context, conversationID string) error {
+	return MapError(s.dependencies.AgentConversations.Interrupt(ctx, conversationID))
+}
+
+func (s *Service) SubscribeAgentConversation(ctx context.Context, conversationID string, after uint64) (<-chan model.Event, error) {
+	events, err := s.dependencies.AgentConversations.Subscribe(ctx, conversationID, after)
+	return events, MapError(err)
 }
 
 func (s *Service) InstallDependency(ctx context.Context, component, sessionID string) (jobs.Snapshot, error) {
@@ -496,12 +577,77 @@ func (s *Service) SubscribeProcess(id string, after uint64) (<-chan processes.Ev
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
-	processErr := s.dependencies.Processes.Shutdown(ctx)
+	agentErr := s.dependencies.AgentConversations.Shutdown(ctx)
 	jobErr := s.dependencies.Jobs.Shutdown(ctx)
-	if processErr != nil {
-		return MapError(processErr)
+	processErr := s.dependencies.Processes.Shutdown(ctx)
+	if agentErr != nil {
+		return MapError(agentErr)
 	}
-	return MapError(jobErr)
+	if jobErr != nil {
+		return MapError(jobErr)
+	}
+	return MapError(processErr)
+}
+
+type agentBinding struct {
+	appsRoot string
+	siteRoot string
+}
+
+func (s *Service) recoverAgentBinding(ctx context.Context, workspaceID, siteID string, binding agentBinding) error {
+	if err := s.dependencies.AgentConversations.Recover(ctx, []conversations.RecoveryBinding{{
+		WorkspaceID: workspaceID, SiteID: siteID, AppsRoot: binding.appsRoot, SiteRoot: binding.siteRoot,
+	}}); err != nil {
+		return &Error{Code: ErrorUnavailable, Message: "Component generation is unavailable", cause: err}
+	}
+	return nil
+}
+
+func (s *Service) agentSiteBinding(ctx context.Context, workspaceID, siteID string) (agentBinding, error) {
+	entry, err := s.workspaceEntry(ctx, workspaceID)
+	if err != nil {
+		return agentBinding{}, err
+	}
+	workspaceRoot, err := filepath.EvalSymlinks(entry.Root)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	workspaceRoot, err = filepath.Abs(workspaceRoot)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	appsRoot, err := filepath.EvalSymlinks(filepath.Join(workspaceRoot, "apps"))
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	appsRoot, err = filepath.Abs(appsRoot)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	appsRelative, err := filepath.Rel(workspaceRoot, appsRoot)
+	if err != nil || filepath.Clean(appsRelative) != "apps" {
+		return agentBinding{}, MapError(project.ErrPathEscape)
+	}
+	site, err := s.dependencies.Projects.Site(ctx, entry.Root, siteID)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	if site.ID != siteID {
+		return agentBinding{}, MapError(project.ErrPathEscape)
+	}
+	siteRoot, err := filepath.EvalSymlinks(site.Root)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	siteRoot, err = filepath.Abs(siteRoot)
+	if err != nil {
+		return agentBinding{}, MapError(err)
+	}
+	relative, err := filepath.Rel(appsRoot, siteRoot)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return agentBinding{}, MapError(project.ErrPathEscape)
+	}
+	return agentBinding{appsRoot: appsRoot, siteRoot: siteRoot}, nil
 }
 
 func (s *Service) workspaceEntry(ctx context.Context, workspaceID string) (registry.Entry, error) {
@@ -550,6 +696,105 @@ func (s *Service) resolveTask(ctx context.Context, workspaceID, siteID, taskID s
 	}
 	return site, selected, command, nil
 }
+
+type registryCompletionHook struct {
+	tasks    TaskCatalog
+	commands CommandRunner
+}
+
+func NewRegistryCompletionHook(tasks TaskCatalog, commands CommandRunner) conversations.CompletionHook {
+	return registryCompletionHook{tasks: tasks, commands: commands}
+}
+
+func (h registryCompletionHook) Complete(ctx context.Context, request conversations.CompletionRequest) model.RegistryResult {
+	if h.tasks == nil || h.commands == nil {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}
+	site := project.Site{ID: request.SiteID, Root: request.SiteRoot, Scripts: map[string]string{"registry:build": "managed"}}
+	if !hasComponentRegistryTask(h.tasks.Tasks(site)) {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}
+	command, err := h.tasks.Resolve(site, "script:registry:build")
+	if err != nil || strings.TrimSpace(command.Executable) == "" {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}
+	resolvedDir, err := filepath.Abs(filepath.Clean(command.Dir))
+	if err != nil || resolvedDir != filepath.Clean(request.SiteRoot) {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}
+	if err := h.commands.Run(ctx, command, boundedAgentReporter{}); err != nil {
+		return model.RegistryResult{State: model.RegistryFailed, Problem: "Registry rebuild failed"}
+	}
+	return model.RegistryResult{State: model.RegistrySucceeded, GeneratedComponentID: generatedComponentID(request.ChangedFiles)}
+}
+
+type boundedAgentReporter struct{}
+
+func (boundedAgentReporter) Event(string, string, string) {}
+func (boundedAgentReporter) Secret(string)                {}
+
+func generatedComponentID(changes []model.ChangedFile) string {
+	paths := make([]string, 0, len(changes))
+	for _, change := range changes {
+		path := filepath.ToSlash(change.Path)
+		if change.Kind == model.ChangeAdded && strings.HasSuffix(strings.ToLower(path), ".vue") &&
+			(strings.Contains(path, "/components/content/") || strings.HasPrefix(path, "components/content/") || strings.HasPrefix(path, "app/components/content/")) {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	sort.Strings(paths)
+	name := strings.TrimSuffix(filepath.Base(paths[0]), filepath.Ext(paths[0]))
+	var result strings.Builder
+	for index, character := range name {
+		if unicode.IsUpper(character) && index > 0 {
+			result.WriteByte('-')
+		}
+		result.WriteRune(unicode.ToLower(character))
+	}
+	return result.String()
+}
+
+type unavailableAgentConversations struct{}
+
+func (unavailableAgentConversations) Readiness(context.Context) model.AgentReadiness {
+	return model.AgentReadiness{Status: model.AgentMissing, Problem: "Codex component generation is unavailable"}
+}
+func (unavailableAgentConversations) ListSite(context.Context, string, string) ([]model.Conversation, error) {
+	return []model.Conversation{}, nil
+}
+func (unavailableAgentConversations) Get(context.Context, string) (model.Conversation, error) {
+	return model.Conversation{}, conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) Create(context.Context, conversations.CreateRequest) (model.Conversation, error) {
+	return model.Conversation{}, conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) StartTurn(context.Context, string, conversations.TurnRequest) (model.Conversation, error) {
+	return model.Conversation{}, conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) AnswerQuestion(context.Context, string, string, map[string]string) error {
+	return conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) ResolveApproval(context.Context, string, string, conversations.ApprovalDecision) error {
+	return conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) GrantConsent(context.Context, string, string, model.ConsentKind, bool) error {
+	return conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) Interrupt(context.Context, string) error {
+	return conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) Subscribe(context.Context, string, uint64) (<-chan model.Event, error) {
+	return nil, conversations.ErrUnavailable
+}
+func (unavailableAgentConversations) Recover(context.Context, []conversations.RecoveryBinding) error {
+	return nil
+}
+func (unavailableAgentConversations) Shutdown(context.Context) error { return nil }
+
+func NewCommandRunner() CommandRunner { return execCommandRunner{} }
 
 type configAdapter struct{}
 

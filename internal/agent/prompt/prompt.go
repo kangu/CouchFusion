@@ -34,6 +34,14 @@ type Skill struct {
 }
 
 func MaterializeSkill(stateRoot string) (Skill, error) {
+	if strings.TrimSpace(stateRoot) == "" {
+		return Skill{}, fmt.Errorf("%w: state root is required", ErrUnsafeDestination)
+	}
+	var err error
+	stateRoot, err = filepath.Abs(filepath.Clean(stateRoot))
+	if err != nil {
+		return Skill{}, fmt.Errorf("%w: resolve state root", ErrUnsafeDestination)
+	}
 	digestBytes := sha256.Sum256(embeddedSkill)
 	digest := hex.EncodeToString(digestBytes[:])
 	root := filepath.Join(stateRoot, "skills", digest)
@@ -41,8 +49,16 @@ func MaterializeSkill(stateRoot string) (Skill, error) {
 	path := filepath.Join(skillDir, "SKILL.md")
 	result := Skill{Name: SkillName, Root: root, Path: path, Digest: digest}
 
-	if strings.TrimSpace(stateRoot) == "" {
-		return Skill{}, fmt.Errorf("%w: state root is required", ErrUnsafeDestination)
+	parent := filepath.Dir(stateRoot)
+	if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(parent, 0o700); err != nil {
+			return Skill{}, fmt.Errorf("create skill state parent: %w", err)
+		}
+	} else if err != nil {
+		return Skill{}, fmt.Errorf("inspect skill state parent: %w", err)
+	}
+	if err := ensurePrivateDirectory(parent); err != nil {
+		return Skill{}, err
 	}
 	for _, dir := range []string{stateRoot, filepath.Join(stateRoot, "skills"), root, skillDir} {
 		if err := ensurePrivateDirectory(dir); err != nil {
