@@ -60,9 +60,9 @@ func MapError(err error) error {
 		return &Error{Code: ErrorUnavailable, Message: "The requested operation is unavailable", cause: err}
 	case errors.Is(err, registry.ErrDuplicate), isJobConflict(err):
 		return &Error{Code: ErrorConflict, Message: "The requested operation conflicts with active state", cause: err}
-	case errors.Is(err, registry.ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, processes.ErrNotFound):
+	case errors.Is(err, registry.ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, project.ErrComponentNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, processes.ErrNotFound):
 		return &Error{Code: ErrorNotFound, Message: "The requested resource was not found", cause: err}
-	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, registry.ErrInvalidName), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound):
+	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, registry.ErrInvalidName), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound), errors.Is(err, project.ErrComponentRegistryInvalid):
 		return &Error{Code: ErrorValidation, Message: "The request is invalid", cause: err}
 	case errors.Is(err, config.ErrInvalidConfig):
 		return &Error{Code: ErrorConfig, Message: "The CouchFusion configuration is invalid", cause: err}
@@ -160,6 +160,20 @@ type TaskCatalog interface {
 	Resolve(project.Site, string) (project.Command, error)
 }
 
+type ContentComponentService interface {
+	Inspect(context.Context, string) project.ComponentRegistry
+	ResolveSource(context.Context, string, string) (string, error)
+}
+
+type FileOpener interface {
+	Open(string) error
+}
+
+type ComponentRegistryView struct {
+	project.ComponentRegistry
+	CanRebuild bool `json:"canRebuild"`
+}
+
 type Provisioner interface {
 	Initialize(context.Context, config.Config, InitializeWorkspaceRequest, jobs.Reporter) error
 	CreateSite(context.Context, config.Config, string, CreateSiteRequest, jobs.Reporter) error
@@ -201,6 +215,8 @@ type Dependencies struct {
 	Configs          ConfigService
 	Projects         ProjectService
 	Tasks            TaskCatalog
+	Components       ContentComponentService
+	Files            FileOpener
 	Provisioner      Provisioner
 	Health           HealthChecker
 	Installer        DependencyInstaller

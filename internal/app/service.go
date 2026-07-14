@@ -13,6 +13,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/bun"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
+	"github.com/nuxt-apps/couchfusion/internal/editor"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
@@ -41,6 +42,12 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	}
 	if dependencies.Tasks == nil {
 		dependencies.Tasks = project.Catalog{}
+	}
+	if dependencies.Components == nil {
+		dependencies.Components = project.ComponentInspector{}
+	}
+	if dependencies.Files == nil {
+		dependencies.Files = editor.Opener{}
 	}
 	if dependencies.Provisioner == nil {
 		dependencies.Provisioner = workspaceProvisioner{}
@@ -298,6 +305,69 @@ func (s *Service) Tasks(ctx context.Context, workspaceID, siteID string) ([]proj
 		return nil, err
 	}
 	return s.dependencies.Tasks.Tasks(site), nil
+}
+
+func (s *Service) Components(ctx context.Context, workspaceID, siteID string) (ComponentRegistryView, error) {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return ComponentRegistryView{}, err
+	}
+	registry := s.dependencies.Components.Inspect(ctx, site.Root)
+	return ComponentRegistryView{
+		ComponentRegistry: registry,
+		CanRebuild:        hasComponentRegistryTask(s.dependencies.Tasks.Tasks(site)),
+	}, nil
+}
+
+func (s *Service) RebuildComponentRegistry(ctx context.Context, workspaceID, siteID, sessionID string) (jobs.Snapshot, error) {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return jobs.Snapshot{}, err
+	}
+	if !hasComponentRegistryTask(s.dependencies.Tasks.Tasks(site)) {
+		return jobs.Snapshot{}, ValidationError("siteId", "Component registry rebuild is unavailable")
+	}
+	command, err := s.dependencies.Tasks.Resolve(site, "script:registry:build")
+	if err != nil {
+		return jobs.Snapshot{}, MapError(err)
+	}
+	snapshot, err := s.dependencies.Jobs.Start(jobs.Request{
+		Type:        "component-registry.rebuild",
+		WorkspaceID: workspaceID,
+		SiteID:      site.ID,
+		SessionID:   sessionID,
+		Run: func(jobContext context.Context, reporter jobs.Reporter) error {
+			if err := s.dependencies.Commands.Run(jobContext, command, reporter); err != nil {
+				return &Error{Code: ErrorProcess, Message: "Component registry rebuild failed", cause: err}
+			}
+			return nil
+		},
+	})
+	return snapshot, MapError(err)
+}
+
+func (s *Service) OpenComponentSource(ctx context.Context, workspaceID, siteID, componentID string) error {
+	site, err := s.Site(ctx, workspaceID, siteID)
+	if err != nil {
+		return err
+	}
+	filename, err := s.dependencies.Components.ResolveSource(ctx, site.Root, componentID)
+	if err != nil {
+		return MapError(err)
+	}
+	if err := s.dependencies.Files.Open(filename); err != nil {
+		return &Error{Code: ErrorProcess, Message: "Could not open component source", cause: err}
+	}
+	return nil
+}
+
+func hasComponentRegistryTask(tasks []project.Task) bool {
+	for _, task := range tasks {
+		if task.ID == "script:registry:build" && !task.LongRunning {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) RunTask(ctx context.Context, workspaceID, siteID, taskID, sessionID string) (TaskRunResult, error) {

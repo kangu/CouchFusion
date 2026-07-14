@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -195,6 +196,132 @@ func TestTaskRoutingUsesJobsForFiniteWorkAndProcessesForLongRunningWork(t *testi
 	}
 	if processManager.startCalls != 1 || processManager.request.Command.Args[1] != "dev" {
 		t.Fatalf("process manager = %#v", processManager)
+	}
+}
+
+func TestComponentsAddsRebuildCapabilityFromCuratedTasks(t *testing.T) {
+	components := &componentServiceFake{registry: project.ComponentRegistry{
+		Status:     project.ComponentRegistryReady,
+		Components: []project.ComponentDefinition{},
+	}}
+	tasks := &taskFake{tasks: []project.Task{{ID: "script:registry:build", Name: "registry:build", Kind: "script"}}}
+	service := newServiceForTest(t, Dependencies{
+		Registry:   &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects:   &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Tasks:      tasks,
+		Components: components,
+	})
+
+	got, err := service.Components(context.Background(), "w1", "shop")
+
+	if err != nil || !got.CanRebuild || components.inspectedRoot != "/workspace/apps/shop" {
+		t.Fatalf("Components() = %#v, inspected root = %q, error = %v", got, components.inspectedRoot, err)
+	}
+}
+
+func TestComponentsRejectsLongRunningRegistryTaskAsRebuildCapability(t *testing.T) {
+	service := newServiceForTest(t, Dependencies{
+		Registry:   &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects:   &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Tasks:      &taskFake{tasks: []project.Task{{ID: "script:registry:build", LongRunning: true}}},
+		Components: &componentServiceFake{registry: project.ComponentRegistry{Status: project.ComponentRegistryMissing, Components: []project.ComponentDefinition{}}},
+	})
+
+	got, err := service.Components(context.Background(), "w1", "shop")
+
+	if err != nil || got.CanRebuild {
+		t.Fatalf("Components() = %#v, error = %v", got, err)
+	}
+}
+
+func TestRebuildComponentRegistryRunsOnlyExactCuratedTask(t *testing.T) {
+	tasks := &taskFake{
+		tasks: []project.Task{{ID: "script:registry:build", Name: "registry:build", Kind: "script"}},
+		commands: map[string]project.Command{
+			"script:registry:build": {Executable: "bun", Args: []string{"run", "registry:build"}, Dir: "/workspace/apps/shop"},
+		},
+	}
+	runner := &commandRunnerFake{}
+	service := newServiceForTest(t, Dependencies{
+		Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects: &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Tasks:    tasks,
+		Commands: runner,
+	})
+
+	job, err := service.RebuildComponentRegistry(context.Background(), "w1", "shop", "browser")
+
+	if err != nil || job.Type != "component-registry.rebuild" {
+		t.Fatalf("RebuildComponentRegistry() = %#v, error = %v", job, err)
+	}
+	waitForJobStatus(t, service, job.ID, jobs.Succeeded)
+	if runner.calls != 1 || !reflect.DeepEqual(runner.command.Args, []string{"run", "registry:build"}) {
+		t.Fatalf("runner = %#v", runner)
+	}
+}
+
+func TestRebuildComponentRegistryRejectsUnavailableOrManagedTask(t *testing.T) {
+	for _, tasks := range [][]project.Task{
+		{{ID: "script:build"}},
+		{{ID: "script:registry:build", LongRunning: true}},
+	} {
+		service := newServiceForTest(t, Dependencies{
+			Registry: &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+			Projects: &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+			Tasks:    &taskFake{tasks: tasks},
+		})
+		if _, err := service.RebuildComponentRegistry(context.Background(), "w1", "shop", "browser"); err == nil {
+			t.Fatalf("RebuildComponentRegistry() accepted tasks %#v", tasks)
+		}
+	}
+}
+
+func TestOpenComponentSourceResolvesRegisteredIDBeforeOpening(t *testing.T) {
+	components := &componentServiceFake{source: "/workspace/apps/shop/app/components/content/Hero.vue"}
+	opener := &fileOpenerFake{}
+	service := newServiceForTest(t, Dependencies{
+		Registry:   &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects:   &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Components: components,
+		Files:      opener,
+	})
+
+	err := service.OpenComponentSource(context.Background(), "w1", "shop", "hero")
+
+	if err != nil || components.resolvedID != "hero" || opener.filename != components.source {
+		t.Fatalf("components = %#v, opener = %#v, error = %v", components, opener, err)
+	}
+}
+
+func TestOpenComponentSourceMapsResolverAndLauncherErrors(t *testing.T) {
+	resolver := &componentServiceFake{err: project.ErrComponentNotFound}
+	service := newServiceForTest(t, Dependencies{
+		Registry:   &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects:   &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Components: resolver,
+		Files:      &fileOpenerFake{},
+	})
+	if err := service.OpenComponentSource(context.Background(), "w1", "shop", "missing"); errorCode(err) != ErrorNotFound {
+		t.Fatalf("resolver error = %#v", err)
+	}
+	resolver.err = project.ErrComponentRegistryInvalid
+	if err := service.OpenComponentSource(context.Background(), "w1", "shop", "hero"); errorCode(err) != ErrorValidation {
+		t.Fatalf("invalid registry error = %#v", err)
+	}
+
+	launcher := &fileOpenerFake{err: errors.New("launcher unavailable")}
+	resolver.err = nil
+	resolver.source = "/workspace/apps/shop/app/components/content/Hero.vue"
+	service = newServiceForTest(t, Dependencies{
+		Registry:   &registryFake{entries: []registry.Entry{{ID: "w1", Root: "/workspace", Available: true}}},
+		Projects:   &projectFake{site: project.Site{ID: "shop", Root: "/workspace/apps/shop"}},
+		Components: resolver,
+		Files:      launcher,
+	})
+	err := service.OpenComponentSource(context.Background(), "w1", "shop", "hero")
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Code != ErrorProcess || appErr.Message != "Could not open component source" {
+		t.Fatalf("launcher error = %#v", err)
 	}
 }
 
@@ -468,6 +595,44 @@ func (f *commandRunnerFake) Run(_ context.Context, command project.Command, _ jo
 	f.calls++
 	f.command = command
 	return f.err
+}
+
+type componentServiceFake struct {
+	registry      project.ComponentRegistry
+	source        string
+	err           error
+	inspectedRoot string
+	resolvedRoot  string
+	resolvedID    string
+}
+
+func (f *componentServiceFake) Inspect(_ context.Context, root string) project.ComponentRegistry {
+	f.inspectedRoot = root
+	return f.registry
+}
+
+func (f *componentServiceFake) ResolveSource(_ context.Context, root, componentID string) (string, error) {
+	f.resolvedRoot = root
+	f.resolvedID = componentID
+	return f.source, f.err
+}
+
+type fileOpenerFake struct {
+	filename string
+	err      error
+}
+
+func (f *fileOpenerFake) Open(filename string) error {
+	f.filename = filename
+	return f.err
+}
+
+func errorCode(err error) ErrorCode {
+	var appErr *Error
+	if errors.As(err, &appErr) {
+		return appErr.Code
+	}
+	return ""
 }
 
 type processManagerFake struct {
