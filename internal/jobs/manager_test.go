@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
 )
 
 func TestManagerCompletesJobAndStoresSafeEvents(t *testing.T) {
@@ -150,6 +152,37 @@ func TestManagerRejectsConcurrentWorkspaceMutationAndReleasesLock(t *testing.T) 
 		t.Fatalf("Start() after completion error = %v", err)
 	}
 	waitForStatus(t, manager, third.ID, Succeeded)
+}
+
+func TestManagerSharesWorkspaceLeaseWithAgentOwners(t *testing.T) {
+	leases := mutationlease.NewManager()
+	manager := newTestManager(Options{Leases: leases})
+	releaseJob := make(chan struct{})
+	started, err := manager.Start(Request{
+		Type:        "first",
+		WorkspaceID: "w1",
+		Run: func(context.Context, Reporter) error {
+			<-releaseJob
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = leases.Acquire("w1", "conversation-1", "agent")
+	var conflict mutationlease.ConflictError
+	if !errors.As(err, &conflict) || conflict.ActiveOwnerID != started.ID || conflict.ActiveOwnerType != "job" {
+		t.Fatalf("agent Acquire() error = %#v", err)
+	}
+
+	close(releaseJob)
+	waitForStatus(t, manager, started.ID, Succeeded)
+	agentRelease, err := leases.Acquire("w1", "conversation-1", "agent")
+	if err != nil {
+		t.Fatalf("agent Acquire() after job error = %v", err)
+	}
+	agentRelease()
 }
 
 func TestManagerBoundsEventsAndKeepsMonotonicIDs(t *testing.T) {

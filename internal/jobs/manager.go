@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
 )
 
 var (
@@ -74,6 +76,7 @@ type Options struct {
 	SecretKeys []string
 	Now        func() time.Time
 	NewID      func() (string, error)
+	Leases     *mutationlease.Manager
 }
 
 type ConflictError struct {
@@ -86,16 +89,16 @@ func (e ConflictError) Error() string {
 }
 
 type Manager struct {
-	mu             sync.Mutex
-	jobs           map[string]*job
-	order          []string
-	workspaceLocks map[string]string
-	options        Options
-	redactor       redactor
-	rootContext    context.Context
-	rootCancel     context.CancelFunc
-	shuttingDown   bool
-	wg             sync.WaitGroup
+	mu           sync.Mutex
+	jobs         map[string]*job
+	order        []string
+	leases       *mutationlease.Manager
+	options      Options
+	redactor     redactor
+	rootContext  context.Context
+	rootCancel   context.CancelFunc
+	shuttingDown bool
+	wg           sync.WaitGroup
 }
 
 type job struct {
@@ -107,6 +110,7 @@ type job struct {
 	secret         string
 	secretSession  string
 	secretConsumed bool
+	releaseLease   func()
 }
 
 type jobReporter struct {
@@ -127,14 +131,17 @@ func NewManager(options Options) *Manager {
 	if options.NewID == nil {
 		options.NewID = randomID
 	}
+	if options.Leases == nil {
+		options.Leases = mutationlease.NewManager()
+	}
 	rootContext, rootCancel := context.WithCancel(context.Background())
 	return &Manager{
-		jobs:           map[string]*job{},
-		workspaceLocks: map[string]string{},
-		options:        options,
-		redactor:       newRedactor(options.SecretKeys),
-		rootContext:    rootContext,
-		rootCancel:     rootCancel,
+		jobs:        map[string]*job{},
+		leases:      options.Leases,
+		options:     options,
+		redactor:    newRedactor(options.SecretKeys),
+		rootContext: rootContext,
+		rootCancel:  rootCancel,
 	}
 }
 
@@ -151,12 +158,6 @@ func (m *Manager) Start(request Request) (Snapshot, error) {
 		m.mu.Unlock()
 		return Snapshot{}, ErrShuttingDown
 	}
-	if request.WorkspaceID != "" {
-		if activeID, exists := m.workspaceLocks[request.WorkspaceID]; exists {
-			m.mu.Unlock()
-			return Snapshot{}, ConflictError{WorkspaceID: request.WorkspaceID, ActiveJobID: activeID}
-		}
-	}
 	m.pruneCompletedLocked()
 	id, err := m.options.NewID()
 	if err != nil {
@@ -166,6 +167,15 @@ func (m *Manager) Start(request Request) (Snapshot, error) {
 	if _, exists := m.jobs[id]; exists {
 		m.mu.Unlock()
 		return Snapshot{}, fmt.Errorf("create job id: duplicate id %q", id)
+	}
+	releaseLease, err := m.leases.Acquire(request.WorkspaceID, id, "job")
+	if err != nil {
+		m.mu.Unlock()
+		var conflict mutationlease.ConflictError
+		if errors.As(err, &conflict) {
+			return Snapshot{}, ConflictError{WorkspaceID: request.WorkspaceID, ActiveJobID: conflict.ActiveOwnerID}
+		}
+		return Snapshot{}, err
 	}
 	ctx, cancel := context.WithCancel(m.rootContext)
 	created := m.options.Now()
@@ -182,12 +192,10 @@ func (m *Manager) Start(request Request) (Snapshot, error) {
 		cancel:        cancel,
 		subscribers:   map[uint64]chan Event{},
 		secretSession: request.SessionID,
+		releaseLease:  releaseLease,
 	}
 	m.jobs[id] = state
 	m.order = append(m.order, id)
-	if request.WorkspaceID != "" {
-		m.workspaceLocks[request.WorkspaceID] = id
-	}
 	snapshot := cloneSnapshot(state.snapshot)
 	m.wg.Add(1)
 	m.mu.Unlock()
@@ -380,8 +388,9 @@ func (m *Manager) finish(id string, contextErr, runErr error, panicked bool) {
 		m.addEventLocked(state, "success", "job.succeeded", "Job completed")
 	}
 	state.snapshot.CompletedAt = m.options.Now()
-	if workspaceID := state.snapshot.WorkspaceID; workspaceID != "" && m.workspaceLocks[workspaceID] == id {
-		delete(m.workspaceLocks, workspaceID)
+	if state.releaseLease != nil {
+		state.releaseLease()
+		state.releaseLease = nil
 	}
 	for subscriberID, subscriber := range state.subscribers {
 		close(subscriber)
