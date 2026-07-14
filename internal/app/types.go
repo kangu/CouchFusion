@@ -62,7 +62,7 @@ func MapError(err error) error {
 		return &Error{Code: ErrorConflict, Message: "The requested operation conflicts with active state", cause: err}
 	case errors.Is(err, registry.ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, processes.ErrNotFound):
 		return &Error{Code: ErrorNotFound, Message: "The requested resource was not found", cause: err}
-	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound):
+	case errors.Is(err, registry.ErrInvalidWorkspace), errors.Is(err, registry.ErrInvalidName), errors.Is(err, project.ErrPathEscape), errors.Is(err, project.ErrTaskNotFound):
 		return &Error{Code: ErrorValidation, Message: "The request is invalid", cause: err}
 	case errors.Is(err, config.ErrInvalidConfig):
 		return &Error{Code: ErrorConfig, Message: "The CouchFusion configuration is invalid", cause: err}
@@ -138,6 +138,7 @@ type Registry interface {
 	Register(context.Context, string, string) (registry.Entry, error)
 	Forget(context.Context, string) error
 	Relink(context.Context, string, string) (registry.Entry, error)
+	Rename(context.Context, string, string) (registry.Entry, error)
 	Touch(context.Context, string) error
 }
 

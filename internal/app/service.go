@@ -126,6 +126,11 @@ func (s *Service) RelinkWorkspace(ctx context.Context, workspaceID, root string)
 	return entry, MapError(err)
 }
 
+func (s *Service) RenameWorkspace(ctx context.Context, workspaceID, name string) (registry.Entry, error) {
+	entry, err := s.dependencies.Registry.Rename(ctx, workspaceID, name)
+	return entry, MapError(err)
+}
+
 func (s *Service) EffectiveConfig(ctx context.Context, workspaceID string) (config.Effective, error) {
 	entry, err := s.workspaceEntry(ctx, workspaceID)
 	if err != nil {

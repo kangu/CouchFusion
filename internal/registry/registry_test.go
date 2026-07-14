@@ -174,6 +174,26 @@ func TestTouchUpdatesLastOpenedTime(t *testing.T) {
 	}
 }
 
+func TestRenameUpdatesOnlyWorkspaceDisplayName(t *testing.T) {
+	root := newValidWorkspace(t)
+	service := newTestService(filepath.Join(t.TempDir(), "workspaces.json"))
+	entry, err := service.Register(context.Background(), root, "Demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := service.Rename(context.Background(), entry.ID, "  Storefront  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Storefront" || updated.Root != entry.Root || updated.ID != entry.ID {
+		t.Fatalf("updated = %#v", updated)
+	}
+	if _, err := service.Rename(context.Background(), entry.ID, " "); err == nil {
+		t.Fatal("expected empty name error")
+	}
+}
+
 func TestForgetRejectsUnknownID(t *testing.T) {
 	service := newTestService(filepath.Join(t.TempDir(), "workspaces.json"))
 

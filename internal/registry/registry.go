@@ -17,6 +17,7 @@ import (
 var (
 	ErrDuplicate        = errors.New("workspace is already registered")
 	ErrInvalidWorkspace = errors.New("invalid CouchFusion workspace")
+	ErrInvalidName      = errors.New("invalid workspace name")
 	ErrNotFound         = errors.New("workspace is not registered")
 )
 
@@ -208,6 +209,35 @@ func (s *Service) Touch(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return s.Store.save(entries)
+}
+
+func (s *Service) Rename(ctx context.Context, id, name string) (Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return Entry{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Entry{}, fmt.Errorf("%w: name is required", ErrInvalidName)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := s.Store.load()
+	if err != nil {
+		return Entry{}, err
+	}
+	for index := range entries {
+		if entries[index].ID != id {
+			continue
+		}
+		entries[index].Name = name
+		if err := s.Store.save(entries); err != nil {
+			return Entry{}, err
+		}
+		entries[index].Available, entries[index].Problem = workspaceAvailability(entries[index].Root)
+		return entries[index], nil
+	}
+	return Entry{}, ErrNotFound
 }
 
 func (s *Service) now() func() time.Time {

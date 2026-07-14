@@ -185,6 +185,19 @@ func TestForgetWorkspaceOnlyMutatesRegistry(t *testing.T) {
 	}
 }
 
+func TestRenameWorkspaceDelegatesToRegistry(t *testing.T) {
+	registry := &registryFake{renameEntry: registry.Entry{ID: "w1", Name: "Storefront", Root: "/workspace"}}
+	service := newServiceForTest(t, Dependencies{Registry: registry})
+
+	updated, err := service.RenameWorkspace(context.Background(), "w1", "Storefront")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Storefront" || registry.renamedID != "w1" || registry.renamedName != "Storefront" {
+		t.Fatalf("updated = %#v, registry = %#v", updated, registry)
+	}
+}
+
 func TestServiceMapsDomainErrorsToStableCodes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -289,6 +302,10 @@ type registryFake struct {
 	forgotID      string
 	relinkEntry   registry.Entry
 	relinkErr     error
+	renameEntry   registry.Entry
+	renameErr     error
+	renamedID     string
+	renamedName   string
 }
 
 func (f *registryFake) List(context.Context) ([]registry.Entry, error) {
@@ -313,6 +330,12 @@ func (f *registryFake) Relink(context.Context, string, string) (registry.Entry, 
 }
 
 func (f *registryFake) Touch(context.Context, string) error { return nil }
+
+func (f *registryFake) Rename(_ context.Context, id, name string) (registry.Entry, error) {
+	f.renamedID = id
+	f.renamedName = name
+	return f.renameEntry, f.renameErr
+}
 
 type configFake struct {
 	effective config.Effective

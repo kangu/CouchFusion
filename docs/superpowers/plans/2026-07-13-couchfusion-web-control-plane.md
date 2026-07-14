@@ -685,7 +685,7 @@ git commit -m "feat: add secure CouchFusion UI server"
 - Consumes: `app.Service` only; handlers do not call filesystem/process packages directly.
 - Produces: stable response envelope and safe field/error DTOs.
 
-- [ ] **Step 1: Write failing API contract tests**
+- [x] **Step 1: Write failing API contract tests**
 
 Test register/list/get/forget/relink, config read/write, health, create site/layer, task run, process controls, job cancellation, one-time secret consumption, SSE replay, 404/409/422 mapping, and JSON secret absence.
 
@@ -700,23 +700,23 @@ func TestWorkspaceDTOContainsNoCredentials(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run API tests and verify failure**
+- [x] **Step 2: Run API tests and verify failure**
 
 Run: `go test ./internal/web -run 'Test(Workspace|Config|Health|Provision|Job|Process|SSE)' -count=1`
 
 Expected: FAIL because the resource handlers do not exist.
 
-- [ ] **Step 3: Implement DTO mapping and handlers**
+- [x] **Step 3: Implement DTO mapping and handlers**
 
 Define request structs with `DisallowUnknownFields`, validate route IDs, call application methods, and map errors centrally. Return `202` with job/process snapshots for asynchronous actions. SSE sends `id`, `event`, and JSON `data`, flushes after each event, respects request cancellation, and replays from `Last-Event-ID`.
 
-- [ ] **Step 4: Run API, race, and serialization tests**
+- [x] **Step 4: Run API, race, and serialization tests**
 
 Run: `go test -race ./internal/web ./internal/app -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit phase-1 API routes**
+- [x] **Step 5: Commit phase-1 API routes**
 
 ```bash
 git add internal/web

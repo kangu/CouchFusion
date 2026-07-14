@@ -16,8 +16,12 @@ func (s *Server) routes() http.Handler {
 	api.HandleFunc("GET /api/v1/bootstrap", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]any{"data": map[string]any{"version": "1"}})
 	})
-	if s.options.APIHandler != nil {
-		api.Handle("/api/v1/", s.options.APIHandler)
+	apiHandler := s.options.APIHandler
+	if s.options.Application != nil {
+		apiHandler = newAPIHandler(s.options.Application)
+	}
+	if apiHandler != nil {
+		api.Handle("/api/v1/", apiHandler)
 	} else {
 		api.HandleFunc("/api/v1/", func(writer http.ResponseWriter, _ *http.Request) {
 			writeError(writer, http.StatusNotFound, "not_found", "The requested API route was not found")

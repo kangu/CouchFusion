@@ -21,6 +21,7 @@ type Options struct {
 	Port         int
 	MaxBodyBytes int64
 	APIHandler   http.Handler
+	Application  Application
 	Listener     net.Listener
 	Random       io.Reader
 }
@@ -51,6 +52,9 @@ func NewServer(options Options) (*Server, error) {
 	}
 	if options.MaxBodyBytes <= 0 {
 		options.MaxBodyBytes = DefaultMaxBodyBytes
+	}
+	if options.APIHandler != nil && options.Application != nil {
+		return nil, errors.New("APIHandler and Application are mutually exclusive")
 	}
 	random := options.Random
 	if random == nil {
