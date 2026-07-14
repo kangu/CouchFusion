@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ComponentRegistryResponse } from '../../types/api'
+import type { ComponentPreviewHost, ComponentRegistryResponse } from '../../types/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   registry: ComponentRegistryResponse
   rebuilding: boolean
   openingId: string
   error: string
-}>()
+  previewHost?: ComponentPreviewHost
+  previewBusy?: boolean
+  previewingId?: string
+}>(), {
+  previewHost: () => ({ status: 'stopped' }),
+  previewBusy: false,
+  previewingId: '',
+})
 
 const emit = defineEmits<{
   rebuild: []
   open: [componentId: string]
+  'start-preview-host': []
+  'stop-preview-host': []
+  preview: [componentId: string, trigger: HTMLButtonElement]
 }>()
 
 const countLabel = computed(() => {
@@ -33,8 +43,20 @@ const guidance = computed(() => props.registry.problem || ({
   ready: '',
 })[props.registry.status])
 
+const previewStatusLabel = computed(() => ({
+  stopped: 'Stopped',
+  starting: 'Starting',
+  ready: 'Ready',
+  failed: 'Failed',
+})[props.previewHost.status])
+
 function propertyLabel(count: number) {
   return `${count} ${count === 1 ? 'property' : 'properties'}`
+}
+
+function preview(componentId: string, event: MouseEvent) {
+  const trigger = event.currentTarget
+  if (trigger instanceof HTMLButtonElement) emit('preview', componentId, trigger)
 }
 </script>
 
@@ -48,6 +70,25 @@ function propertyLabel(count: number) {
       <div class="component-registry__tools">
         <span class="component-registry__count">{{ countLabel }}</span>
         <span class="status-lozenge" :class="`status-lozenge--${registry.status}`" data-registry-status>{{ statusLabel }}</span>
+        <span class="preview-host-status" :class="`preview-host-status--${previewHost.status}`" data-preview-host-status>
+          Preview {{ previewStatusLabel }}
+        </span>
+        <button
+          v-if="previewHost.status === 'stopped' || previewHost.status === 'failed'"
+          class="compact-button compact-button--primary"
+          type="button"
+          data-action="start-preview-host"
+          :disabled="previewBusy"
+          @click="emit('start-preview-host')"
+        >{{ previewBusy ? 'Starting…' : 'Start preview host' }}</button>
+        <button
+          v-else
+          class="compact-button compact-button--danger"
+          type="button"
+          data-action="stop-preview-host"
+          :disabled="previewBusy"
+          @click="emit('stop-preview-host')"
+        >{{ previewHost.status === 'starting' ? 'Stop starting host' : 'Stop preview host' }}</button>
         <button
           v-if="registry.canRebuild"
           class="compact-button"
@@ -60,6 +101,9 @@ function propertyLabel(count: number) {
     </header>
 
     <p v-if="error" class="notice notice--error component-registry__error" role="alert">{{ error }}</p>
+    <p v-if="previewHost.status === 'failed' && previewHost.problem" class="notice notice--error component-registry__error" role="alert">
+      {{ previewHost.problem }}
+    </p>
 
     <div v-if="registry.status !== 'ready'" class="component-registry__guidance" :class="`component-registry__guidance--${registry.status}`">
       <strong>{{ statusLabel }} registry</strong>
@@ -80,13 +124,23 @@ function propertyLabel(count: number) {
           <span v-if="component.allowChildren">Accepts children</span>
           <code>{{ component.source }}</code>
         </div>
-        <button
-          class="compact-button"
-          type="button"
-          :data-component="component.id"
-          :disabled="openingId === component.id"
-          @click="emit('open', component.id)"
-        >{{ openingId === component.id ? 'Opening…' : 'Open source' }}</button>
+        <div class="component-row__actions">
+          <button
+            class="compact-button compact-button--preview"
+            type="button"
+            :data-preview-component="component.id"
+            :aria-label="`Preview ${component.label}`"
+            :disabled="previewHost.status !== 'ready' || previewBusy || previewingId === component.id"
+            @click="preview(component.id, $event)"
+          >{{ previewingId === component.id ? 'Opening preview…' : 'Preview' }}</button>
+          <button
+            class="compact-button"
+            type="button"
+            :data-component="component.id"
+            :disabled="openingId === component.id"
+            @click="emit('open', component.id)"
+          >{{ openingId === component.id ? 'Opening…' : 'Open source' }}</button>
+        </div>
       </article>
     </div>
   </section>
@@ -131,6 +185,17 @@ function propertyLabel(count: number) {
   letter-spacing: .05em;
   text-transform: uppercase;
 }
+
+.preview-host-status {
+  color: #59635e;
+  font: 700 .56rem/1 var(--mono);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.preview-host-status--ready { color: #176b68; }
+.preview-host-status--starting { color: #755410; }
+.preview-host-status--failed { color: #9d3828; }
 
 .component-registry__error {
   margin: 1rem 0 0;
@@ -207,6 +272,18 @@ function propertyLabel(count: number) {
   text-transform: uppercase;
 }
 
+.component-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .4rem;
+}
+
+.compact-button--preview {
+  border-color: var(--cyan-deep);
+  color: var(--cyan-deep);
+}
+
 .status-lozenge--stale {
   border-color: rgba(213, 159, 59, .65);
   background: rgba(213, 159, 59, .12);
@@ -238,5 +315,7 @@ function propertyLabel(count: number) {
   .component-row .compact-button {
     width: fit-content;
   }
+
+  .component-row__actions { justify-content: flex-start; }
 }
 </style>

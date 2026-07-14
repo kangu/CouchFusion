@@ -2,10 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LogViewer from '../../../../components/activity/LogViewer.vue'
 import ComponentRegistryPanel from '../../../../components/sites/ComponentRegistryPanel.vue'
+import ComponentPreviewOverlay from '../../../../components/sites/ComponentPreviewOverlay.vue'
 import TaskList from '../../../../components/sites/TaskList.vue'
 import type {
   ActivityEvent,
   ComponentRegistryResponse,
+  ComponentPreviewHost,
+  ContentComponent,
   JobSnapshot,
   ProcessSnapshot,
   Site,
@@ -25,6 +28,7 @@ const base = computed(() => `/workspaces/${encodeURIComponent(workspaceId.value)
 const site = ref<Site>()
 const tasks = ref<Task[]>([])
 const registry = ref<ComponentRegistryResponse>({ status: 'missing', components: [], canRebuild: false })
+const previewHost = ref<ComponentPreviewHost>({ status: 'stopped' })
 const activeJob = ref<JobSnapshot>()
 const activeProcess = ref<ProcessSnapshot>()
 const connected = ref(true)
@@ -33,18 +37,26 @@ const rebuilding = ref(false)
 const openingId = ref('')
 const error = ref('')
 const registryError = ref('')
+const previewBusy = ref(false)
+const previewingComponent = ref<ContentComponent>()
+const previewReturnFocus = ref<HTMLElement>()
 let unsubscribe: (() => void) | undefined
+let previewPoll: ReturnType<typeof setTimeout> | undefined
 
 onMounted(load)
-onBeforeUnmount(() => unsubscribe?.())
+onBeforeUnmount(() => {
+  unsubscribe?.()
+  if (previewPoll) clearTimeout(previewPoll)
+})
 
 async function load() {
   error.value = ''
   registryError.value = ''
-  const [siteResult, taskResult, registryResult] = await Promise.allSettled([
+  const [siteResult, taskResult, registryResult, previewResult] = await Promise.allSettled([
     api.get<Site>(base.value),
     api.get<Task[]>(`${base.value}/tasks`),
     api.get<ComponentRegistryResponse>(`${base.value}/components`),
+    api.get<ComponentPreviewHost>(`${base.value}/components/preview-host`),
   ])
   if (siteResult.status === 'fulfilled') site.value = siteResult.value
   else error.value = message(siteResult.reason, 'Could not inspect site.')
@@ -52,6 +64,12 @@ async function load() {
   else error.value = message(taskResult.reason, 'Could not load curated tasks.')
   if (registryResult.status === 'fulfilled') registry.value = registryResult.value
   else registryError.value = message(registryResult.reason, 'Could not inspect local content components.')
+  if (previewResult.status === 'fulfilled') {
+    previewHost.value = previewResult.value
+    schedulePreviewPoll()
+  } else {
+    previewHost.value = { status: 'failed', problem: message(previewResult.reason, 'Could not inspect the preview host.') }
+  }
 }
 
 async function loadComponents() {
@@ -113,6 +131,61 @@ async function openComponent(componentId: string) {
   } finally {
     openingId.value = ''
   }
+}
+
+async function startPreviewHost() {
+  previewBusy.value = true
+  registryError.value = ''
+  try {
+    previewHost.value = await api.post<ComponentPreviewHost>(`${base.value}/components/preview-host/start`)
+    schedulePreviewPoll()
+  } catch (cause) {
+    previewHost.value = { status: 'failed', problem: message(cause, 'Could not start the preview host.') }
+  } finally {
+    previewBusy.value = false
+  }
+}
+
+async function stopPreviewHost() {
+  previewBusy.value = true
+  registryError.value = ''
+  if (previewPoll) clearTimeout(previewPoll)
+  previewPoll = undefined
+  try {
+    previewHost.value = await api.post<ComponentPreviewHost>(`${base.value}/components/preview-host/stop`)
+  } catch (cause) {
+    registryError.value = message(cause, 'Could not stop the preview host.')
+  } finally {
+    previewBusy.value = false
+  }
+}
+
+function schedulePreviewPoll() {
+  if (previewPoll) clearTimeout(previewPoll)
+  previewPoll = undefined
+  if (previewHost.value.status !== 'starting' && !previewingComponent.value) return
+  previewPoll = setTimeout(async () => {
+    previewPoll = undefined
+    try {
+      previewHost.value = await api.get<ComponentPreviewHost>(`${base.value}/components/preview-host`)
+    } catch (cause) {
+      previewHost.value = { status: 'failed', problem: message(cause, 'Could not inspect the preview host.') }
+    }
+    schedulePreviewPoll()
+  }, 500)
+}
+
+function previewComponent(componentId: string, trigger: HTMLButtonElement) {
+  const component = registry.value.components.find(candidate => candidate.id === componentId)
+  if (!component || previewHost.value.status !== 'ready') return
+  previewReturnFocus.value = trigger
+  previewingComponent.value = component
+  schedulePreviewPoll()
+}
+
+function closePreview() {
+  previewingComponent.value = undefined
+  schedulePreviewPoll()
 }
 
 function watchJob(job: JobSnapshot, onTerminal?: (job: JobSnapshot) => void | Promise<void>) {
@@ -203,8 +276,14 @@ function message(cause: unknown, fallback: string) {
           :rebuilding="rebuilding"
           :opening-id="openingId"
           :error="registryError"
+          :preview-host="previewHost"
+          :preview-busy="previewBusy"
+          :previewing-id="previewingComponent?.id || ''"
           @rebuild="rebuildRegistry"
           @open="openComponent"
+          @start-preview-host="startPreviewHost"
+          @stop-preview-host="stopPreviewHost"
+          @preview="previewComponent"
         />
       </div>
 
@@ -225,6 +304,16 @@ function message(cause: unknown, fallback: string) {
         </div>
         <LogViewer :events="activeProcess?.events || activeJob?.events || []" :connected="connected" />
       </section>
+
+      <ComponentPreviewOverlay
+        v-if="previewingComponent"
+        :open="true"
+        :component="previewingComponent"
+        :preview-host="previewHost"
+        :return-focus="previewReturnFocus"
+        @close="closePreview"
+        @restart-host="startPreviewHost"
+      />
     </template>
     <p v-else-if="!error" class="empty-state">Inspecting site and task catalog…</p>
   </section>

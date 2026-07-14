@@ -96,6 +96,16 @@ export interface ComponentRegistryResponse {
   canRebuild: boolean
 }
 
+export type ComponentPreviewHostStatus = 'stopped' | 'starting' | 'ready' | 'failed'
+
+export interface ComponentPreviewHost {
+  status: ComponentPreviewHostStatus
+  processId?: string
+  url?: string
+  startedAt?: string
+  problem?: string
+}
+
 export type ConfigSource = 'embedded' | 'global' | 'workspace'
 
 export interface EffectiveConfig {
