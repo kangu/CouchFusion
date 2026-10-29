@@ -15,6 +15,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -32,6 +33,8 @@ type Application interface {
 	EffectiveConfig(context.Context, string) (config.Effective, error)
 	WriteWorkspaceConfig(context.Context, string, config.Override) (config.Effective, error)
 	Health(context.Context, string) (app.Health, error)
+	Onboarding(context.Context) (onboarding.State, error)
+	UpdateOnboarding(context.Context, onboarding.Action) (onboarding.State, error)
 	InstallDependency(context.Context, string, string) (jobs.Snapshot, error)
 	CreateSite(context.Context, string, app.CreateSiteRequest, string) (jobs.Snapshot, error)
 	CreateLayer(context.Context, string, app.CreateLayerRequest, string) (jobs.Snapshot, error)
@@ -46,6 +49,7 @@ type Application interface {
 	RunTask(context.Context, string, string, string, string) (app.TaskRunResult, error)
 	StartProcess(context.Context, string, string, string) (processes.Snapshot, error)
 	Process(string) (processes.Snapshot, error)
+	SiteProcess(context.Context, string, string, string) (processes.Snapshot, error)
 	StopProcess(context.Context, string) error
 	RestartProcess(context.Context, string) (processes.Snapshot, error)
 	SubscribeProcess(string, uint64) (<-chan processes.Event, func(), error)
@@ -91,6 +95,9 @@ func newAPIHandler(application Application) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/config", handler.getConfig)
 	mux.HandleFunc("PUT /api/v1/workspaces/{workspaceId}/config", handler.putConfig)
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/health", handler.getHealth)
+	mux.HandleFunc("GET /api/v1/system/health", handler.getSystemHealth)
+	mux.HandleFunc("GET /api/v1/onboarding", handler.getOnboarding)
+	mux.HandleFunc("PATCH /api/v1/onboarding", handler.patchOnboarding)
 	mux.HandleFunc("POST /api/v1/system/dependencies/{component}/install", handler.installDependency)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites", handler.createSite)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/layers", handler.createLayer)
@@ -104,6 +111,7 @@ func newAPIHandler(application Application) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/components/preview-host/stop", handler.stopComponentPreviewHost)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/tasks/{taskId}/run", handler.runTask)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceId}/sites/{siteId}/processes/{taskId}/start", handler.startProcess)
+	mux.HandleFunc("GET /api/v1/workspaces/{workspaceId}/sites/{siteId}/processes/{taskId}", handler.findProcess)
 	mux.HandleFunc("GET /api/v1/jobs/{jobId}", handler.getJob)
 	mux.HandleFunc("POST /api/v1/jobs/{jobId}/cancel", handler.cancelJob)
 	mux.HandleFunc("POST /api/v1/jobs/{jobId}/secret/consume", handler.consumeSecret)
@@ -138,6 +146,28 @@ func (h apiHandler) listWorkspaces(writer http.ResponseWriter, request *http.Req
 		result = append(result, summarizeWorkspace(entry))
 	}
 	writeData(writer, http.StatusOK, result)
+}
+
+func (h apiHandler) getOnboarding(writer http.ResponseWriter, request *http.Request) {
+	state, err := h.application.Onboarding(request.Context())
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, state)
+}
+
+func (h apiHandler) patchOnboarding(writer http.ResponseWriter, request *http.Request) {
+	var action onboarding.Action
+	if !decodeRequest(writer, request, &action) {
+		return
+	}
+	state, err := h.application.UpdateOnboarding(request.Context(), action)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, state)
 }
 
 func (h apiHandler) registerWorkspace(writer http.ResponseWriter, request *http.Request) {
@@ -274,6 +304,15 @@ func (h apiHandler) getHealth(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	health, err := h.application.Health(request.Context(), workspaceID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, health)
+}
+
+func (h apiHandler) getSystemHealth(writer http.ResponseWriter, request *http.Request) {
+	health, err := h.application.Health(request.Context(), "")
 	if err != nil {
 		writeApplicationError(writer, err)
 		return
@@ -484,6 +523,23 @@ func (h apiHandler) startProcess(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	writeData(writer, http.StatusAccepted, process)
+}
+
+func (h apiHandler) findProcess(writer http.ResponseWriter, request *http.Request) {
+	workspaceID, siteID, ok := workspaceSiteIDs(writer, request)
+	if !ok {
+		return
+	}
+	taskID, ok := pathID(writer, request, "taskId")
+	if !ok {
+		return
+	}
+	process, err := h.application.SiteProcess(request.Context(), workspaceID, siteID, taskID)
+	if err != nil {
+		writeApplicationError(writer, err)
+		return
+	}
+	writeData(writer, http.StatusOK, process)
 }
 
 func (h apiHandler) getJob(writer http.ResponseWriter, request *http.Request) {

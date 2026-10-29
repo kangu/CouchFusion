@@ -1,0 +1,1 @@
+import{U as r}from"./N9oFbH7X.js";function n(){const e=r("activity-jobs",()=>[]),t=r("activity-processes",()=>[]);function s(o){e.value=c(e.value,o)}function u(o){t.value=c(t.value,o)}return{jobs:e,processes:t,trackJob:s,trackProcess:u}}function c(e,t){return[t,...e.filter(s=>s.id!==t.id)]}export{n as u};

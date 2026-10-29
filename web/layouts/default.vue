@@ -2,16 +2,20 @@
 const route = useRoute()
 const { activeWorkspaceId } = useWorkspace()
 const menuOpen = ref(false)
+const onboarding = useOnboarding()
+
+onMounted(() => { void onboarding.load().catch(() => undefined) })
 
 watch(() => route.fullPath, () => {
   menuOpen.value = false
 })
 
-const primaryNavigation = [
-  { label: 'Workspaces', to: '/', index: '01' },
-  { label: 'Activity', to: '/activity', index: '02' },
-  { label: 'System', to: '/system', index: '03' },
-]
+const primaryNavigation = computed(() => [
+  { label: onboarding.state.value?.status === 'paused' ? 'Resume setup' : 'Getting started', to: '/getting-started', index: '01' },
+  { label: 'Workspaces', to: '/', index: '02' },
+  { label: 'Activity', to: '/activity', index: '03' },
+  { label: 'System', to: '/system', index: '04' },
+])
 
 const workspaceNavigation = computed(() => activeWorkspaceId.value ? [
   { label: 'Overview', to: `/workspaces/${activeWorkspaceId.value}` },

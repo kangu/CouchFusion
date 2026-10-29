@@ -17,6 +17,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -88,16 +89,22 @@ type fixtureApplication struct {
 	agentConversation model.Conversation
 	agentScenario     bool
 	recoverOnList     bool
+	onboarding        onboarding.State
 }
 
 func newFixtureApplication() *fixtureApplication {
 	now := time.Now().UTC()
 	agentScenario := os.Getenv("COUCHFUSION_AGENT_E2E") == "1"
+	onboardingState := onboarding.State{Version: onboarding.CurrentVersion, Status: onboarding.StatusCompleted, CompletedAt: &now, UpdatedAt: now}
+	if os.Getenv("COUCHFUSION_ONBOARDING_E2E") == "1" {
+		onboardingState = onboarding.DefaultState()
+	}
 	return &fixtureApplication{
 		entry:             registry.Entry{ID: "workspace-e2e", Name: "E2E Workspace", Root: workspaceRoot, Available: true, CreatedAt: now, LastOpenedAt: now},
 		jobs:              map[string]jobs.Snapshot{},
 		agentConversation: model.Conversation{ID: "conversation-e2e", WorkspaceID: "workspace-e2e", SiteID: "shop", Title: "Fixture generation", Status: model.ConversationReady, Registry: model.RegistryResult{State: model.RegistrySucceeded}, BindingValid: true, CreatedAt: now, UpdatedAt: now},
 		agentScenario:     agentScenario,
+		onboarding:        onboardingState,
 	}
 }
 
@@ -157,6 +164,21 @@ func (f *fixtureApplication) WriteWorkspaceConfig(context.Context, string, confi
 func (f *fixtureApplication) Health(context.Context, string) (app.Health, error) {
 	ready := app.DependencyHealth{Available: true, Version: "fixture"}
 	return app.Health{Git: ready, Bun: ready, Node: ready, CouchDB: ready}, nil
+}
+func (f *fixtureApplication) Onboarding(context.Context) (onboarding.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.onboarding, nil
+}
+func (f *fixtureApplication) UpdateOnboarding(_ context.Context, action onboarding.Action) (onboarding.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	next, err := onboarding.Apply(f.onboarding, action, time.Now().UTC())
+	if err != nil {
+		return onboarding.State{}, err
+	}
+	f.onboarding = next
+	return next, nil
 }
 func (f *fixtureApplication) InstallDependency(context.Context, string, string) (jobs.Snapshot, error) {
 	return f.newJob("dependency.install", ""), nil
@@ -233,6 +255,14 @@ func (f *fixtureApplication) StartProcess(context.Context, string, string, strin
 func (f *fixtureApplication) Process(string) (processes.Snapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.process, nil
+}
+func (f *fixtureApplication) SiteProcess(context.Context, string, string, string) (processes.Snapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.process.ID == "" || f.process.Status != processes.Running {
+		return processes.Snapshot{}, processes.ErrNotFound
+	}
 	return f.process, nil
 }
 func (f *fixtureApplication) StopProcess(context.Context, string) error {
@@ -410,7 +440,7 @@ func (f *fixtureApplication) newJob(kind, siteID string) jobs.Snapshot {
 	return job
 }
 func fixtureSite() project.Site {
-	return project.Site{ID: "shop", Name: "Shop", Root: workspaceRoot + "/apps/shop", PackageName: "@fixture/shop", PackageManager: "bun", Modules: []string{"content"}, Scripts: map[string]string{"build": "nuxt build", "dev": "nuxt dev", "registry:build": "bun run ../../cli-content/generate-component-registry.mjs"}, Dependencies: map[string]string{"nuxt": "latest"}, DevDependencies: map[string]string{}, DependenciesInstalled: true, Lockfiles: []string{"bun.lock"}, Warnings: []project.Warning{}}
+	return project.Site{ID: "shop", Name: "Shop", Root: workspaceRoot + "/apps/shop", PackageName: "@fixture/shop", PackageManager: "bun", Modules: []string{"content", "auth"}, Scripts: map[string]string{"build": "nuxt build", "dev": "nuxt dev", "registry:build": "bun run ../../cli-content/generate-component-registry.mjs"}, Dependencies: map[string]string{"nuxt": "latest"}, DevDependencies: map[string]string{}, DependenciesInstalled: true, Lockfiles: []string{"bun.lock"}, Warnings: []project.Warning{}}
 }
 func fixtureConfig(source config.Source) config.Effective {
 	return config.Effective{Config: config.Config{Repos: map[string]config.RepoConfig{}, Modules: map[string]config.ModuleConfig{}, Workspace: config.WorkspaceConfig{DefaultRoot: workspaceRoot + "/apps"}, Prompts: config.PromptConfig{DefaultLayerSelection: []string{"content"}}}, Sources: config.SourceMap{"workspace.defaultRoot": source}}

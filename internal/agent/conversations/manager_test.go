@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -176,7 +177,7 @@ func TestEventsReplaySequenceAndOverflowSnapshot(t *testing.T) {
 	}
 }
 
-func TestRecoveryMarksInterruptedRevalidatesAndReadsThread(t *testing.T) {
+func TestRecoveryMarksInterruptedRevalidatesAndResumesThread(t *testing.T) {
 	repository := newFakeRepository()
 	client := newFakeClient()
 	events := make(chan protocol.Notification, 32)
@@ -218,8 +219,8 @@ func TestRecoveryMarksInterruptedRevalidatesAndReadsThread(t *testing.T) {
 	if len(recovered.Items) != 1 || recovered.Items[0].Text != "Done" {
 		t.Fatalf("recovered items = %#v", recovered.Items)
 	}
-	if !client.readThread("thread-recovered") {
-		t.Fatal("thread/read was not called")
+	if !client.resumedThread("thread-recovered") {
+		t.Fatal("thread/resume was not called")
 	}
 	moved, err := manager.Get(context.Background(), "conversation-moved")
 	if err != nil {
@@ -228,8 +229,39 @@ func TestRecoveryMarksInterruptedRevalidatesAndReadsThread(t *testing.T) {
 	if !moved.ReadOnly || moved.BindingValid {
 		t.Fatalf("moved binding = %#v", moved)
 	}
-	if client.readThread("thread-moved") {
-		t.Fatal("thread/read called for changed binding")
+	if client.resumedThread("thread-moved") {
+		t.Fatal("thread/resume called for changed binding")
+	}
+}
+
+func TestRecoveryIsolatesConversationWhoseCodexThreadCannotResume(t *testing.T) {
+	repository := newFakeRepository()
+	client := newFakeClient()
+	binding := RecoveryBinding{WorkspaceID: "workspace-1", SiteID: "site-1", AppsRoot: "/workspace/apps", SiteRoot: "/workspace/apps/site-1"}
+	fingerprint := baseline.Fingerprint(binding.WorkspaceID, binding.SiteID, binding.AppsRoot, binding.SiteRoot)
+	repository.seed(store.Document{
+		ID: "agent-conversation:conversation-failed", Type: store.DocumentType, SchemaVersion: store.CurrentSchemaVersion,
+		ConversationID: "conversation-failed", CodexThreadID: "thread-without-rollout", WorkspaceID: binding.WorkspaceID, SiteID: binding.SiteID,
+		SiteRootFingerprint: fingerprint, Title: "Failed", Status: store.Status("failed"),
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	client.threadResumeErrors["thread-without-rollout"] = errors.New("no rollout found")
+	manager := NewManager(Options{
+		Repository: repository, Leases: mutationlease.NewManager(), Skill: testSkill(), Client: client.provider,
+		Events: make(chan protocol.Notification, 8), Requests: make(chan protocol.ServerRequest, 8),
+		Capture: fakeCapture, Fingerprint: baseline.Fingerprint,
+	})
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+
+	if err := manager.Recover(context.Background(), []RecoveryBinding{binding}); err != nil {
+		t.Fatalf("Recover() error = %v", err)
+	}
+	recovered, err := manager.Get(context.Background(), "conversation-failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.ReadOnly || !recovered.BindingValid || recovered.Status != model.ConversationFailed {
+		t.Fatalf("recovered = %#v", recovered)
 	}
 }
 
@@ -342,6 +374,61 @@ func TestChangedFilesCompareFailureBecomesRegistryWarning(t *testing.T) {
 	}
 }
 
+func TestNormalizeItemUsesSafeCommandActivityLabels(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions string
+		want    string
+	}{
+		{name: "read", actions: `[{"type":"read","command":"cat /private/site/secret"}]`, want: "Reading project files"},
+		{name: "list files", actions: `[{"type":"listFiles","path":"/private/site"}]`, want: "Listing project files"},
+		{name: "search", actions: `[{"type":"search","query":"password"}]`, want: "Searching project files"},
+		{name: "unknown", actions: `[{"type":"unknown","command":"do-not-expose"}]`, want: "Running a project command"},
+		{name: "empty", actions: `[]`, want: "Running a project command"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := json.RawMessage(fmt.Sprintf(`{"id":"command","type":"commandExecution","status":"inProgress","command":"do-not-expose","cwd":"/private/site","aggregatedOutput":"do-not-expose-output","commandActions":%s}`, test.actions))
+			item, ok := normalizeItem(raw, "turn-1")
+			if !ok || item.Text != test.want {
+				t.Fatalf("normalizeItem() = %#v, %v; want text %q", item, ok, test.want)
+			}
+			for _, forbidden := range []string{"do-not-expose", "/private", "password", "secret"} {
+				if strings.Contains(item.Text, forbidden) {
+					t.Fatalf("normalizeItem() exposed %q in %q", forbidden, item.Text)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletedReasoningPreservesStreamedSummaryUnlessFinalSummaryExists(t *testing.T) {
+	tests := []struct {
+		name         string
+		finalSummary []string
+		want         string
+	}{
+		{name: "empty final summary preserves stream", want: "Inspecting component conventions."},
+		{name: "final summary replaces stream", finalSummary: []string{"Component conventions inspected."}, want: "Component conventions inspected."},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, repository, _, events, _ := newTestManager(t, Options{})
+			conversation := createTestConversation(t, manager, "workspace-1", "site-1")
+			document := repository.document(conversation.ID)
+
+			sendReasoningItem(events, "item/started", document.CodexThreadID, conversation.ActiveTurn.ID, "reasoning-1", "inProgress", nil)
+			sendReasoningDelta(events, document.CodexThreadID, conversation.ActiveTurn.ID, "reasoning-1", "Inspecting component conventions.")
+			sendReasoningItem(events, "item/completed", document.CodexThreadID, conversation.ActiveTurn.ID, "reasoning-1", "completed", test.finalSummary)
+
+			item := waitForConversationItem(t, manager, conversation.ID, "reasoning", "completed")
+			if item.Text != test.want {
+				t.Fatalf("reasoning text = %q, want %q", item.Text, test.want)
+			}
+		})
+	}
+}
+
 func newTestManager(t *testing.T, override Options) (*Manager, *fakeRepository, *fakeClient, chan protocol.Notification, chan protocol.ServerRequest) {
 	t.Helper()
 	repository := newFakeRepository()
@@ -410,6 +497,37 @@ func fakeCapture(context.Context, string) (baseline.Snapshot, error) {
 func completeTurn(events chan<- protocol.Notification, threadID, turnID, status string) {
 	params, _ := json.Marshal(protocol.TurnNotification{ThreadID: threadID, Turn: protocol.Turn{ID: turnID, Status: status}})
 	events <- protocol.Notification{Method: "turn/completed", Params: params}
+}
+
+func sendReasoningItem(events chan<- protocol.Notification, method, threadID, turnID, itemID, status string, summary []string) {
+	item, _ := json.Marshal(map[string]any{"id": itemID, "type": "reasoning", "status": status, "summary": summary})
+	params, _ := json.Marshal(protocol.ItemNotification{ThreadID: threadID, TurnID: turnID, Item: item})
+	events <- protocol.Notification{Method: method, Params: params}
+}
+
+func sendReasoningDelta(events chan<- protocol.Notification, threadID, turnID, itemID, delta string) {
+	params, _ := json.Marshal(map[string]any{
+		"threadId": threadID, "turnId": turnID, "itemId": itemID, "summaryIndex": 0, "delta": delta,
+	})
+	events <- protocol.Notification{Method: "item/reasoning/summaryTextDelta", Params: params}
+}
+
+func waitForConversationItem(t *testing.T, manager *Manager, conversationID, itemType, status string) model.ConversationItem {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conversation, err := manager.Get(context.Background(), conversationID)
+		if err == nil {
+			for _, item := range conversation.Items {
+				if item.Type == itemType && item.Status == status {
+					return item
+				}
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s item with status %s", itemType, status)
+	return model.ConversationItem{}
 }
 
 func waitForStatus(t *testing.T, manager *Manager, conversationID string, want model.ConversationStatus) model.Conversation {
@@ -512,7 +630,7 @@ func assertThreadPolicy(t *testing.T, client *fakeClient) {
 	}
 	turn := client.lastTurnStart()
 	if turn.CWD != thread.CWD || turn.ApprovalPolicy != "on-request" || turn.ApprovalsReviewer != "user" || turn.SandboxPolicy == nil ||
-		turn.SandboxPolicy.Type != "workspace-write" || turn.SandboxPolicy.NetworkAccess || len(turn.SandboxPolicy.WritableRoots) != 1 || turn.SandboxPolicy.WritableRoots[0] != thread.CWD {
+		turn.SandboxPolicy.Type != "workspaceWrite" || turn.SandboxPolicy.NetworkAccess || len(turn.SandboxPolicy.WritableRoots) != 1 || turn.SandboxPolicy.WritableRoots[0] != thread.CWD {
 		t.Fatalf("turn/start policy = %#v", turn)
 	}
 	if len(turn.Input) != 3 || turn.Input[1].Type != "skill" || turn.Input[2].Text != "Create a compact testimonial component" {
@@ -602,12 +720,13 @@ type recordedCall struct {
 }
 
 type fakeClient struct {
-	mu          sync.Mutex
-	calls       []recordedCall
-	responses   chan recordedResponse
-	nextThread  int
-	nextTurn    int
-	threadReads map[string]protocol.Thread
+	mu                 sync.Mutex
+	calls              []recordedCall
+	responses          chan recordedResponse
+	nextThread         int
+	nextTurn           int
+	threadReads        map[string]protocol.Thread
+	threadResumeErrors map[string]error
 }
 
 type recordedResponse struct {
@@ -616,7 +735,9 @@ type recordedResponse struct {
 }
 
 func newFakeClient() *fakeClient {
-	return &fakeClient{threadReads: map[string]protocol.Thread{}, responses: make(chan recordedResponse, 32)}
+	return &fakeClient{
+		threadReads: map[string]protocol.Thread{}, threadResumeErrors: map[string]error{}, responses: make(chan recordedResponse, 32),
+	}
 }
 func (c *fakeClient) provider(context.Context) (RPCClient, error) { return c, nil }
 func (c *fakeClient) Call(_ context.Context, method string, params any, result any) error {
@@ -632,8 +753,11 @@ func (c *fakeClient) Call(_ context.Context, method string, params any, result a
 		c.nextTurn++
 		response := result.(*protocol.TurnStartResponse)
 		response.Turn = protocol.Turn{ID: fmt.Sprintf("turn-%d", c.nextTurn), Status: "inProgress"}
-	case "thread/read":
-		request := params.(protocol.ThreadReadParams)
+	case "thread/resume":
+		request := params.(protocol.ThreadResumeParams)
+		if err := c.threadResumeErrors[request.ThreadID]; err != nil {
+			return err
+		}
 		response := result.(*protocol.ThreadResponse)
 		response.Thread = c.threadReads[request.ThreadID]
 	}
@@ -685,11 +809,11 @@ func (c *fakeClient) lastTurnStart() protocol.TurnStartParams {
 	return protocol.TurnStartParams{}
 }
 func (c *fakeClient) lastTurnThread() string { return c.lastTurnStart().ThreadID }
-func (c *fakeClient) readThread(threadID string) bool {
+func (c *fakeClient) resumedThread(threadID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, call := range c.calls {
-		if call.method == "thread/read" && call.params.(protocol.ThreadReadParams).ThreadID == threadID {
+		if call.method == "thread/resume" && call.params.(protocol.ThreadResumeParams).ThreadID == threadID {
 			return true
 		}
 	}

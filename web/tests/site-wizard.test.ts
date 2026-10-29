@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import SiteWizard from '../components/provision/SiteWizard.vue'
+import SiteProvisionForm from '../components/provision/SiteProvisionForm.vue'
 
 describe('site provisioning wizard', () => {
   it('requires a blank-by-default two-letter database login prefix and submits it raw', async () => {
@@ -39,4 +40,15 @@ describe('site provisioning wizard', () => {
       force: false,
     }])
   })
+})
+
+it('locks Content and Auth into onboarding site submissions', async () => {
+  const wrapper = mount(SiteProvisionForm, { props: { modules: ['content', 'auth', 'commerce'], requiredModules: ['content', 'auth'] } })
+  await wrapper.get('[name="name"]').setValue('catalog')
+  await wrapper.get('[name="dbLoginPrefix"]').setValue('ac')
+  await wrapper.get('form').trigger('submit')
+  expect(wrapper.findAll('input[disabled]')).toHaveLength(2)
+  await wrapper.get('form').trigger('submit')
+  await wrapper.get('form').trigger('submit')
+  expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ modules: ['content', 'auth'] })
 })

@@ -239,6 +239,23 @@ func (m *Manager) Get(id string) (Snapshot, error) {
 	return cloneSnapshot(state.snapshot), nil
 }
 
+// Find returns the active process owned by a workspace site task. Ownership is
+// deliberately released when the process becomes terminal, so callers can use
+// this as a reload-safe discovery cursor rather than a process history lookup.
+func (m *Manager) Find(workspaceID, siteID, taskID string) (Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, exists := m.owners[ownerKey(StartRequest{WorkspaceID: workspaceID, SiteID: siteID, TaskID: taskID})]
+	if !exists {
+		return Snapshot{}, ErrNotFound
+	}
+	state, exists := m.processes[id]
+	if !exists || terminal(state.snapshot.Status) {
+		return Snapshot{}, ErrNotFound
+	}
+	return cloneSnapshot(state.snapshot), nil
+}
+
 func (m *Manager) Stop(ctx context.Context, id string) error {
 	m.mu.Lock()
 	state, exists := m.processes[id]

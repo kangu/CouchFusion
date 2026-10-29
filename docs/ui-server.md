@@ -30,6 +30,21 @@ The equivalent installed command is `couchfusion ui --dev` when the checkout's `
 
 Register an existing workspace by its exact absolute path, or initialize a new one. CouchFusion never scans the disk for projects. Use `--no-open` to prevent automatic browser launch and `--port 4400` to request a fixed Go server port.
 
+## Complete the first-website runway
+
+Fresh installations open **Getting Started** automatically. The runway keeps six milestones visible and focuses one action at a time:
+
+1. Confirm Git, Bun, Node, and CouchDB. Codex is reported here but only blocks generation later.
+2. Initialize a new workspace or register one exact existing path.
+3. Create or select a site with Content, Auth, `dev`, and `registry:build`. Onboarding locks Content and Auth on for new sites.
+4. Run dependency installation when required, then explicitly start the managed dev server. Continue once it reports a loopback HTTP(S) URL.
+5. Generate a new component with the locally authenticated Codex session. Start the preview host manually, open the fullscreen desktop/mobile preview, then confirm it.
+6. Open `/builder/`, add the generated component to the homepage, save, verify the live preview, and explicitly confirm completion.
+
+Provisioning job state and selections survive browser reloads. Managed dev processes do not survive a CouchFusion server restart, so an active journey returns to **Run locally**. Select **Pause** to use the normal workbench and **Resume setup** in the sidebar to continue. Completion is permanent until **Start another journey** resets onboarding state only.
+
+CouchFusion cannot inspect the cross-origin Builder tab. Builder authentication uses the site's configured CouchDB account, and CouchFusion neither exposes those credentials nor marks placement complete automatically.
+
 ## Generate a content component
 
 1. Open **System** and confirm **Codex generation** reports the binary, app server, local account, `couchfusion-control`, and component skill as ready.

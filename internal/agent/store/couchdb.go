@@ -94,20 +94,22 @@ type Repository interface {
 }
 
 type CouchDBOptions struct {
-	Credentials      basecouchdb.Store
-	Client           *http.Client
-	MaxResponseBytes int64
+	Credentials         basecouchdb.Store
+	CredentialFallbacks []basecouchdb.Store
+	Client              *http.Client
+	MaxResponseBytes    int64
 }
 
 type CouchDBRepository struct {
-	mu               sync.Mutex
-	credentials      basecouchdb.Store
-	client           *http.Client
-	maxResponseBytes int64
-	ensured          bool
-	baseURL          string
-	username         string
-	password         string
+	mu                  sync.Mutex
+	credentials         basecouchdb.Store
+	credentialFallbacks []basecouchdb.Store
+	client              *http.Client
+	maxResponseBytes    int64
+	ensured             bool
+	baseURL             string
+	username            string
+	password            string
 }
 
 func NewCouchDBRepository(options CouchDBOptions) *CouchDBRepository {
@@ -119,7 +121,10 @@ func NewCouchDBRepository(options CouchDBOptions) *CouchDBRepository {
 	if maxResponse <= 0 {
 		maxResponse = defaultMaxResponse
 	}
-	return &CouchDBRepository{credentials: options.Credentials, client: client, maxResponseBytes: maxResponse}
+	return &CouchDBRepository{
+		credentials: options.Credentials, credentialFallbacks: append([]basecouchdb.Store{}, options.CredentialFallbacks...),
+		client: client, maxResponseBytes: maxResponse,
+	}
 }
 
 func (r *CouchDBRepository) Ensure(ctx context.Context) error {
@@ -132,27 +137,63 @@ func (r *CouchDBRepository) Ensure(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load CouchDB credentials: %w", err)
 	}
-	if !ok || strings.TrimSpace(credentials.AdminAuth) == "" {
+	if !ok {
+		credentials = basecouchdb.Credentials{URL: basecouchdb.DefaultURL, AdminUser: "admin"}
+	}
+	if auth, available, loadErr := basecouchdb.LoadAdminAuth(r.credentials); loadErr != nil {
+		return fmt.Errorf("load CouchDB credentials: %w", loadErr)
+	} else if available {
+		credentials.AdminAuth = auth
+	}
+	type credentialCandidate struct {
+		credentials basecouchdb.Credentials
+		persist     bool
+	}
+	candidates := make([]credentialCandidate, 0, len(r.credentialFallbacks)+1)
+	if strings.TrimSpace(credentials.AdminAuth) != "" {
+		candidates = append(candidates, credentialCandidate{credentials: credentials})
+	}
+	for _, fallback := range r.credentialFallbacks {
+		fallbackCredentials, available, loadErr := fallback.Load()
+		if loadErr != nil || !available || strings.TrimSpace(fallbackCredentials.AdminAuth) == "" {
+			continue
+		}
+		candidates = append(candidates, credentialCandidate{credentials: fallbackCredentials, persist: true})
+	}
+	if len(candidates) == 0 {
 		return errors.New("CouchDB administrative credentials are unavailable")
 	}
-	username, password, err := basecouchdb.DecodeAdminAuth(credentials.AdminAuth)
-	if err != nil {
-		return err
+	var lastErr error
+	for _, candidate := range candidates {
+		username, password, decodeErr := basecouchdb.DecodeAdminAuth(candidate.credentials.AdminAuth)
+		if decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
+		parsed, parseErr := url.Parse(strings.TrimRight(candidate.credentials.URL, "/"))
+		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+			lastErr = errors.New("CouchDB URL is invalid")
+			continue
+		}
+		r.baseURL, r.username, r.password = parsed.String(), username, password
+		status, _, requestErr := r.do(ctx, http.MethodPut, "/"+DatabaseName, nil)
+		if requestErr != nil {
+			lastErr = requestErr
+			continue
+		}
+		if status != http.StatusCreated && status != http.StatusAccepted && status != http.StatusPreconditionFailed {
+			lastErr = fmt.Errorf("create CouchDB control database: unexpected status %d", status)
+			continue
+		}
+		if candidate.persist {
+			if saveErr := r.credentials.Save(candidate.credentials); saveErr != nil {
+				return fmt.Errorf("persist recovered CouchDB credentials: %w", saveErr)
+			}
+		}
+		r.ensured = true
+		return nil
 	}
-	parsed, err := url.Parse(strings.TrimRight(credentials.URL, "/"))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
-		return errors.New("CouchDB URL is invalid")
-	}
-	r.baseURL, r.username, r.password = parsed.String(), username, password
-	status, _, err := r.do(ctx, http.MethodPut, "/"+DatabaseName, nil)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusCreated && status != http.StatusAccepted && status != http.StatusPreconditionFailed {
-		return fmt.Errorf("create CouchDB control database: unexpected status %d", status)
-	}
-	r.ensured = true
-	return nil
+	return lastErr
 }
 
 func (r *CouchDBRepository) Create(ctx context.Context, document Document) (Document, error) {

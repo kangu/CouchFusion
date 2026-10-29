@@ -8,6 +8,9 @@ const loading = ref(true)
 const error = ref('')
 const dialog = ref<'register' | 'initialize' | null>(null)
 const forgetting = ref<WorkspaceSummary | null>(null)
+// The Rust backend serves a fixed, configured workspace: no register/initialize/forget.
+const bootstrap = useBootstrap()
+const managed = computed(() => bootstrap.isRust.value)
 
 onMounted(load)
 async function load() {
@@ -42,10 +45,10 @@ function date(value: string) { return value ? new Intl.DateTimeFormat(undefined,
 
 <template>
   <section class="page-sheet">
-    <header class="page-header"><div><p class="eyebrow">Explicit registry</p><h1>Workspaces</h1><p>Known locations only. CouchFusion never searches your disk for projects.</p></div><div class="button-row"><button class="compact-button" type="button" @click="dialog = 'register'">Register existing</button><button class="compact-button compact-button--primary" type="button" @click="dialog = 'initialize'">Initialize new</button></div></header>
+    <header class="page-header"><div><p class="eyebrow">Explicit registry</p><h1>Workspaces</h1><p>Known locations only. CouchFusion never searches your disk for projects.</p></div><div v-if="!managed" class="button-row"><button class="compact-button" type="button" @click="dialog = 'register'">Register existing</button><button class="compact-button compact-button--primary" type="button" @click="dialog = 'initialize'">Initialize new</button></div></header>
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p><p v-if="loading" class="empty-state">Reading the explicit registry…</p>
     <div v-else-if="workspaces.length" class="card-grid">
-      <article v-for="workspace in workspaces" :key="workspace.id" class="workspace-card" :class="{ 'workspace-card--unavailable': !workspace.available }"><header><span class="signal" :class="{ 'signal--danger': !workspace.available }" /><span>{{ workspace.available ? 'Available' : 'Unavailable' }}</span></header><h2>{{ workspace.name }}</h2><code>{{ workspace.root }}</code><p v-if="workspace.problem" class="notice notice--error">{{ workspace.problem }}</p><small>Last opened {{ date(workspace.lastOpenedAt) }}</small><div class="button-row"><button class="compact-button compact-button--primary" type="button" :disabled="!workspace.available" @click="openWorkspace(workspace)">Open</button><button class="compact-button" type="button" @click="forgetting = workspace">Forget</button></div></article>
+      <article v-for="workspace in workspaces" :key="workspace.id" class="workspace-card" :class="{ 'workspace-card--unavailable': !workspace.available }"><header><span class="signal" :class="{ 'signal--danger': !workspace.available }" /><span>{{ workspace.available ? 'Available' : 'Unavailable' }}</span></header><h2>{{ workspace.name }}</h2><code>{{ workspace.root }}</code><p v-if="workspace.problem" class="notice notice--error">{{ workspace.problem }}</p><small>Last opened {{ date(workspace.lastOpenedAt) }}</small><div class="button-row"><button class="compact-button compact-button--primary" type="button" :disabled="!workspace.available" @click="openWorkspace(workspace)">Open</button><button v-if="!managed" class="compact-button" type="button" @click="forgetting = workspace">Forget</button></div></article>
     </div>
     <div v-else class="empty-state"><p class="eyebrow">Registry empty</p><h2>Connect the first workspace.</h2><p>Enter an exact absolute path to register an existing project, or initialize a new CouchFusion structure.</p></div>
   </section>

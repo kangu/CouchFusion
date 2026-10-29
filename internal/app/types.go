@@ -13,6 +13,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -233,8 +234,14 @@ type ProcessManager interface {
 	Stop(context.Context, string) error
 	Restart(context.Context, string) (processes.Snapshot, error)
 	Get(string) (processes.Snapshot, error)
+	Find(string, string, string) (processes.Snapshot, error)
 	Subscribe(string, uint64) (<-chan processes.Event, func(), error)
 	Shutdown(context.Context) error
+}
+
+type OnboardingStore interface {
+	Load(context.Context) (onboarding.State, error)
+	Save(context.Context, onboarding.State) error
 }
 
 type ComponentPreviewHosts interface {
@@ -273,5 +280,6 @@ type Dependencies struct {
 	Processes          ProcessManager
 	PreviewHosts       ComponentPreviewHosts
 	AgentConversations AgentConversationService
+	Onboarding         OnboardingStore
 	GlobalConfigPath   string
 }

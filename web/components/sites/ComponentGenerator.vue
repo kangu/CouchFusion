@@ -42,6 +42,15 @@ const canFollowUp = computed(() => Boolean(
   && !props.conversation.readOnly
   && ['ready', 'completed', 'interrupted', 'failed'].includes(props.conversation.status),
 ))
+const activityState = computed(() => {
+  const conversation = props.conversation
+  if (!conversation) return undefined
+  if (conversation.pendingInteraction) return { label: 'Waiting for your response', animated: false }
+  if (conversation.registry.state === 'running') return { label: 'Rebuilding component registry…', animated: true }
+  if (conversation.status === 'interrupting') return { label: 'Stopping the current turn…', animated: true }
+  if (conversation.status === 'active') return { label: 'Codex is working…', animated: true }
+  return undefined
+})
 const unavailableGuidance = computed(() => {
   if (props.readiness.available) return ''
   if (props.readiness.problem?.toLowerCase().includes('control')) {
@@ -85,10 +94,6 @@ function itemRole(item: AgentConversationItem) {
 function visibleItemText(item: AgentConversationItem) {
   const text = item.text || ''
   return item.type === 'commandExecution' ? text.slice(0, 4000) : text
-}
-
-function isTruncated(item: AgentConversationItem) {
-  return item.type === 'commandExecution' && (item.text?.length || 0) > 4000
 }
 
 function statusLabel(status: string) {
@@ -143,11 +148,11 @@ function statusLabel(status: string) {
         This site location has changed since the conversation started. Restore the binding to resume; this conversation is read-only.
       </p>
 
-      <ol v-if="conversation.items?.length" class="agent-transcript" aria-label="Conversation transcript">
-        <li v-for="item in conversation.items" :key="item.id">
+      <ol v-if="conversation.items?.length || activityState" class="agent-transcript" aria-label="Conversation transcript">
+        <li v-for="item in conversation.items" :key="item.id" :data-item="item.type">
           <details v-if="item.type === 'reasoning'" class="agent-message agent-message--reasoning">
             <summary>{{ itemRole(item) }}</summary>
-            <p>{{ visibleItemText(item) }}</p>
+            <p>{{ visibleItemText(item) || 'Summary not available' }}</p>
           </details>
           <article v-else class="agent-message" :class="`agent-message--${item.type}`">
             <header>
@@ -155,8 +160,17 @@ function statusLabel(status: string) {
               <span v-if="item.status">{{ item.status }}</span>
             </header>
             <p>{{ visibleItemText(item) }}</p>
-            <small v-if="isTruncated(item)">Output truncated in this view.</small>
           </article>
+        </li>
+        <li
+          v-if="activityState"
+          class="agent-activity"
+          data-agent-activity
+          :data-animated="String(activityState.animated)"
+          aria-live="polite"
+        >
+          <span class="agent-activity__signal" aria-hidden="true"><i /><i /><i /></span>
+          <span>{{ activityState.label }}</span>
         </li>
       </ol>
 
@@ -170,8 +184,7 @@ function statusLabel(status: string) {
         @consent="(kind, granted) => emit('consent', kind, granted)"
       />
 
-      <p v-if="conversation.registry.state === 'running'" class="agent-registry-state" aria-live="polite">Rebuilding component registry…</p>
-      <p v-else-if="conversation.registry.state === 'failed'" class="notice notice--error" role="alert">
+      <p v-if="conversation.registry.state === 'failed'" class="notice notice--error" role="alert">
         Registry rebuild needs attention. {{ conversation.registry.problem }}
       </p>
       <a v-if="conversation.generatedComponentId" class="agent-generated-link" :href="`#component-${conversation.generatedComponentId}`">

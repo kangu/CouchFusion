@@ -712,6 +712,7 @@ func (f *taskFake) Resolve(_ project.Site, id string) (project.Command, error) {
 
 type agentFake struct {
 	readiness     model.AgentReadiness
+	conversations []model.Conversation
 	createRequest conversations.CreateRequest
 	createCalls   int
 	shutdown      bool
@@ -721,7 +722,7 @@ type agentFake struct {
 
 func (f *agentFake) Readiness(context.Context) model.AgentReadiness { return f.readiness }
 func (f *agentFake) ListSite(context.Context, string, string) ([]model.Conversation, error) {
-	return []model.Conversation{}, nil
+	return append([]model.Conversation{}, f.conversations...), nil
 }
 func (f *agentFake) Get(context.Context, string) (model.Conversation, error) {
 	return model.Conversation{ID: "conversation-1"}, nil
@@ -790,6 +791,9 @@ func (f *shutdownProcessManager) Restart(context.Context, string) (processes.Sna
 	return processes.Snapshot{}, nil
 }
 func (f *shutdownProcessManager) Get(string) (processes.Snapshot, error) {
+	return processes.Snapshot{}, processes.ErrNotFound
+}
+func (f *shutdownProcessManager) Find(string, string, string) (processes.Snapshot, error) {
 	return processes.Snapshot{}, processes.ErrNotFound
 }
 func (f *shutdownProcessManager) Subscribe(string, uint64) (<-chan processes.Event, func(), error) {
@@ -911,6 +915,9 @@ func errorCode(err error) ErrorCode {
 type processManagerFake struct {
 	request    processes.StartRequest
 	startCalls int
+	found      processes.Snapshot
+	findErr    error
+	findCalls  int
 }
 
 type previewHostFake struct {
@@ -950,6 +957,16 @@ func (f *processManagerFake) Restart(context.Context, string) (processes.Snapsho
 }
 func (f *processManagerFake) Get(string) (processes.Snapshot, error) {
 	return processes.Snapshot{}, processes.ErrNotFound
+}
+func (f *processManagerFake) Find(string, string, string) (processes.Snapshot, error) {
+	f.findCalls++
+	if f.findErr != nil {
+		return processes.Snapshot{}, f.findErr
+	}
+	if f.found.ID == "" {
+		return processes.Snapshot{}, processes.ErrNotFound
+	}
+	return f.found, nil
 }
 func (f *processManagerFake) Subscribe(string, uint64) (<-chan processes.Event, func(), error) {
 	return nil, nil, processes.ErrNotFound

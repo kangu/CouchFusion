@@ -38,9 +38,13 @@ couchfusion ui --port 4400
 couchfusion ui --config ~/.couchfusion/config.yaml
 ```
 
-On first use, choose **Register existing** and enter the exact absolute path of a CouchFusion workspace, or choose **Initialize new** and review the filesystem operation before starting it. Registration is entirely explicit: the UI never scans your disk. Forgetting a workspace only removes its registry entry; project files remain untouched.
+On first use, CouchFusion opens **Getting Started**, a six-milestone runway for preparing local tools, connecting a workspace, choosing a Content/Auth site, starting it, generating and previewing a component, and placing it in Content Builder. Choose **Initialize new** or **Register existing** with an exact absolute path. Registration remains entirely explicit: the UI never scans your disk, and forgetting a workspace only removes its registry entry.
 
-The UI provides workspace, site, layer, configuration, activity, and system-health views. When creating a site, enter exactly two lowercase letters for its database login prefix; the review shows the stored form with CouchFusion's trailing `-`. Site tasks run either as finite jobs or managed development processes. Closing a browser tab does not cancel a job, while stopping the UI server stops all UI-managed child processes.
+The runway is restart-safe. Provisioning jobs reconnect after a browser reload, while an active journey returns to **Run locally** after a CouchFusion server restart because managed dev processes stop with the server. **Pause** returns to the normal workbench without losing progress; use **Resume setup** in the sidebar to continue. A completed journey stays completed until **Start another journey** resets onboarding state.
+
+Onboarding sites require the Content and Auth modules plus `dev` and `registry:build` scripts. Component generation waits for the local Codex session and `couchfusion-control` database, but Codex does not block the earlier milestones. Preview startup is manual. Final placement is also manual: CouchFusion opens the site's `/builder/` route, and the developer explicitly confirms that the component was added, saved, and verified.
+
+The UI also provides workspace, site, layer, configuration, activity, and system-health views. When creating a site, enter exactly two lowercase letters for its database login prefix; the review shows the stored form with CouchFusion's trailing `-`. Site tasks run either as finite jobs or managed development processes. Closing a browser tab does not cancel a job, while stopping the UI server stops all UI-managed child processes.
 
 The server accepts only loopback hosts, exchanges the launch token for an HTTP-only same-site session cookie, and rejects foreign origins. It is a local control plane, not a remotely deployable admin panel.
 

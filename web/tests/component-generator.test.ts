@@ -61,24 +61,27 @@ describe('component generator', () => {
     expect(wrapper.find('[data-action="follow-up"]').exists()).toBe(false)
   })
 
-  it('renders a compact transcript, progress, interrupt, registry states, and follow-up', async () => {
+  it('renders a compact transcript, safe activity details, interrupt, registry states, and follow-up', async () => {
     const active = conversation({
       items: [
         { id: 'u1', type: 'userMessage', text: 'Create a hero' },
         { id: 'a1', type: 'agentMessage', text: 'I will inspect the content conventions.' },
         { id: 'r1', type: 'reasoning', text: 'Inspect registry metadata and existing component patterns.' },
-        { id: 'x1', type: 'commandExecution', status: 'inProgress', text: 'x'.repeat(5000) },
+        { id: 'x1', type: 'commandExecution', status: 'inProgress', text: 'Searching project files' },
       ],
     })
     const wrapper = mount(ComponentGenerator, {
       props: { readiness: ready, conversations: [active], conversation: active, busy: false, error: '' },
     })
     expect(wrapper.get('ol[aria-label="Conversation transcript"]').text()).toContain('Create a hero')
-    expect(wrapper.get('details').text()).toContain('Reasoning summary')
-    expect(wrapper.text()).toContain('Output truncated')
+    expect(wrapper.get('[data-item="reasoning"]').text()).toContain('Inspect registry metadata')
+    expect(wrapper.get('[data-item="commandExecution"]').text()).toContain('Searching project files')
     expect(wrapper.get('[aria-live="polite"]').text()).toContain('active')
     await wrapper.get('[data-action="interrupt"]').trigger('click')
     expect(wrapper.emitted('interrupt')).toHaveLength(1)
+
+    await wrapper.setProps({ conversation: conversation({ items: [{ id: 'r2', type: 'reasoning', text: '' }] }) })
+    expect(wrapper.get('[data-item="reasoning"]').text()).toContain('Summary not available')
 
     await wrapper.setProps({ conversation: conversation({ status: 'rebuilding_registry', registry: { state: 'running' } }) })
     expect(wrapper.text()).toContain('Rebuilding component registry')
@@ -86,6 +89,30 @@ describe('component generator', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('Build failed')
     expect(wrapper.get('a[href="#component-hero"]').text()).toContain('hero')
     expect(wrapper.find('[data-action="follow-up"]').exists()).toBe(true)
+  })
+
+  it.each([
+    [conversation({ status: 'active', items: [] }), 'Codex is working', 'true'],
+    [conversation({ status: 'interrupting', items: [] }), 'Stopping the current turn', 'true'],
+    [conversation({ status: 'waiting', items: [], pendingInteraction: { requestId: 'q1', kind: 'question', questions: [] } }), 'Waiting for your response', 'false'],
+    [conversation({ status: 'rebuilding_registry', items: [], registry: { state: 'running' } }), 'Rebuilding component registry', 'true'],
+  ] as const)('appends the current activity for %s', (current, label, animated) => {
+    const wrapper = mount(ComponentGenerator, {
+      props: { readiness: ready, conversations: [current], conversation: current, busy: false, error: '' },
+    })
+    const transcriptItems = wrapper.findAll('ol[aria-label="Conversation transcript"] > li')
+    const activity = wrapper.get('[data-agent-activity]')
+    expect(activity.text()).toContain(label)
+    expect(activity.attributes('data-animated')).toBe(animated)
+    expect(transcriptItems.at(-1)?.attributes('data-agent-activity')).toBe('')
+  })
+
+  it.each(['ready', 'failed', 'interrupted', 'completed'] as const)('removes transient activity in the %s state', (status) => {
+    const current = conversation({ status, items: [] })
+    const wrapper = mount(ComponentGenerator, {
+      props: { readiness: ready, conversations: [current], conversation: current, busy: false, error: '' },
+    })
+    expect(wrapper.find('[data-agent-activity]').exists()).toBe(false)
   })
 
   it('renders retained conversations as compact resume rows', async () => {

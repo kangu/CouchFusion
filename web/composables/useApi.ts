@@ -57,12 +57,21 @@ function normalizePath(path: string) {
   return path.startsWith('/') ? path : `/${path}`
 }
 
+export const SIGN_IN_HINT = 'Sign in via Tailscale or run `couchfusion-server login-url` on the VPS.'
+
 function normalizeApiError(error: unknown): ApiClientError {
   const candidate = error as {
     data?: { error?: ApiErrorPayload }
-    response?: { _data?: { error?: ApiErrorPayload } }
+    response?: { _data?: { error?: ApiErrorPayload }; status?: number }
+    status?: number
+    statusCode?: number
   }
   const payload = candidate?.data?.error ?? candidate?.response?._data?.error
+  const status = candidate?.statusCode ?? candidate?.status ?? candidate?.response?.status
+  if (payload?.code === 'unauthorized' || (!payload && status === 401)) {
+    const message = payload?.message ? `${payload.message} ${SIGN_IN_HINT}` : SIGN_IN_HINT
+    return new ApiClientError({ ...(payload ?? {}), code: 'unauthorized', message })
+  }
   if (payload?.code && payload.message) return new ApiClientError(payload)
   return new ApiClientError({ code: 'unavailable', message: 'Could not reach the CouchFusion server.' })
 }

@@ -13,7 +13,8 @@
     "e2e": "playwright test",
     "e2e:hmr": "playwright test --config playwright.hmr.config.ts",
     "e2e:preview": "playwright test --config playwright.preview.config.ts",
-    "e2e:agent": "playwright test --config playwright.agent.config.ts"
+    "e2e:agent": "playwright test --config playwright.agent.config.ts",
+    "e2e:onboarding": "playwright test --config playwright.onboarding.config.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.3.0",

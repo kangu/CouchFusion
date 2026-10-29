@@ -33,7 +33,9 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
 	"github.com/nuxt-apps/couchfusion/internal/logging"
 	"github.com/nuxt-apps/couchfusion/internal/mutationlease"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/project"
+	"github.com/nuxt-apps/couchfusion/internal/registry"
 	"github.com/nuxt-apps/couchfusion/internal/ui"
 	webserver "github.com/nuxt-apps/couchfusion/internal/web"
 	"github.com/nuxt-apps/couchfusion/internal/workspace"
@@ -125,11 +127,22 @@ func newUIService(configPath string) (*app.Service, error) {
 	leases := mutationlease.NewManager()
 	tasks := project.Catalog{}
 	commands := app.NewCommandRunner()
+	registryStore, err := registry.DefaultStore()
+	if err != nil {
+		return nil, err
+	}
+	workspaceRegistry := &registry.Service{Store: registryStore}
+	onboardingStore, err := onboarding.DefaultStore()
+	if err != nil {
+		return nil, err
+	}
 	dependencies := app.Dependencies{
 		GlobalConfigPath: configPath,
+		Registry:         workspaceRegistry,
 		Tasks:            tasks,
 		Commands:         commands,
 		Jobs:             jobs.NewManager(jobs.Options{Leases: leases}),
+		Onboarding:       onboardingStore,
 	}
 
 	home, err := os.UserHomeDir()
@@ -144,8 +157,14 @@ func newUIService(configPath string) (*app.Service, error) {
 	if err != nil {
 		return app.NewService(dependencies)
 	}
+	credentialFallbacks, err := registeredCouchDBCredentialStores(context.Background(), workspaceRegistry)
+	if err != nil {
+		return app.NewService(dependencies)
+	}
 	supervisor := appserver.NewSupervisor(appserver.Options{SkillRoot: skill.Root, Version: version})
-	repository := agentstore.NewCouchDBRepository(agentstore.CouchDBOptions{Credentials: credentials})
+	repository := agentstore.NewCouchDBRepository(agentstore.CouchDBOptions{
+		Credentials: credentials, CredentialFallbacks: credentialFallbacks,
+	})
 	manager := conversations.NewManager(conversations.Options{
 		Repository: repository,
 		Leases:     leases,
@@ -173,6 +192,39 @@ func newUIService(configPath string) (*app.Service, error) {
 		return nil, err
 	}
 	return service, nil
+}
+
+type workspaceRegistryLister interface {
+	List(context.Context) ([]registry.Entry, error)
+}
+
+func registeredCouchDBCredentialStores(ctx context.Context, workspaces workspaceRegistryLister) ([]couchdb.Store, error) {
+	entries, err := workspaces.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stores := []couchdb.Store{}
+	inspector := project.Inspector{}
+	for _, entry := range entries {
+		if !entry.Available {
+			continue
+		}
+		workspace, inspectErr := inspector.Workspace(ctx, entry)
+		if inspectErr != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		for _, site := range workspace.Sites {
+			path := filepath.Join(site.Root, ".env")
+			info, statErr := os.Stat(path)
+			if statErr == nil && info.Mode().IsRegular() {
+				stores = append(stores, couchdb.Store{Path: path})
+			}
+		}
+	}
+	return stores, nil
 }
 
 func printUsage() {

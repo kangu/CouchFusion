@@ -85,6 +85,26 @@ func TestManagerRejectsDuplicateSiteProcessAndReleasesOwnership(t *testing.T) {
 	waitForStatus(t, manager, second.ID, Exited)
 }
 
+func TestManagerFindsActiveProcessByOwner(t *testing.T) {
+	manager := newTestManager(t, Options{})
+	started, err := manager.Start(context.Background(), StartRequest{WorkspaceID: "w", SiteID: "s", TaskID: "script:dev", Command: helperCommand(t.TempDir(), "wait")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForEventText(t, manager, started.ID, "ready")
+	found, err := manager.Find("w", "s", "script:dev")
+	if err != nil || found.ID != started.ID {
+		t.Fatalf("Find() = %#v, %v", found, err)
+	}
+	if err := manager.Stop(context.Background(), started.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, manager, started.ID, Stopped)
+	if _, err := manager.Find("w", "s", "script:dev"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Find() after stop error = %v", err)
+	}
+}
+
 func TestManagerInterruptsBeforeForceKilling(t *testing.T) {
 	t.Run("graceful", func(t *testing.T) {
 		manager := newTestManager(t, Options{StopGrace: time.Second})

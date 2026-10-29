@@ -14,6 +14,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/app"
 	"github.com/nuxt-apps/couchfusion/internal/config"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -66,6 +67,7 @@ func TestConfigHealthAndProvisioningRoutes(t *testing.T) {
 		{method: http.MethodGet, path: "/api/v1/workspaces/w1/config", status: http.StatusOK, call: "config.get"},
 		{method: http.MethodPut, path: "/api/v1/workspaces/w1/config", body: `{"workspace":{"defaultRoot":"/sites"}}`, status: http.StatusOK, call: "config.put"},
 		{method: http.MethodGet, path: "/api/v1/workspaces/w1/health", status: http.StatusOK, call: "health"},
+		{method: http.MethodGet, path: "/api/v1/system/health", status: http.StatusOK, call: "health"},
 		{method: http.MethodPost, path: "/api/v1/system/dependencies/couchdb/install", body: `{}`, status: http.StatusAccepted, call: "dependency.install"},
 		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites", body: `{"name":"shop","modules":["auth"],"dbLoginPrefix":"ac"}`, status: http.StatusAccepted, call: "site.create"},
 		{method: http.MethodPost, path: "/api/v1/workspaces/w1/layers", body: `{"name":"content"}`, status: http.StatusAccepted, call: "layer.create"},
@@ -98,6 +100,7 @@ func TestTaskAndProcessRoutes(t *testing.T) {
 		{method: http.MethodGet, path: "/api/v1/workspaces/w1/sites/shop/tasks", status: http.StatusOK, call: "tasks"},
 		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites/shop/tasks/script:build/run", body: `{}`, status: http.StatusAccepted, call: "task.run"},
 		{method: http.MethodPost, path: "/api/v1/workspaces/w1/sites/shop/processes/script:dev/start", body: `{}`, status: http.StatusAccepted, call: "process.start"},
+		{method: http.MethodGet, path: "/api/v1/workspaces/w1/sites/shop/processes/script:dev", status: http.StatusOK, call: "process.find"},
 		{method: http.MethodPost, path: "/api/v1/processes/process-1/stop", body: `{}`, status: http.StatusAccepted, call: "process.stop"},
 		{method: http.MethodPost, path: "/api/v1/processes/process-1/restart", body: `{}`, status: http.StatusAccepted, call: "process.restart"},
 	}
@@ -109,6 +112,24 @@ func TestTaskAndProcessRoutes(t *testing.T) {
 		if application.calls[test.call] == 0 {
 			t.Fatalf("application call %q was not made", test.call)
 		}
+	}
+}
+
+func TestOnboardingRoutesLoadAndDispatchStrictActions(t *testing.T) {
+	application := newAPIApplicationStub()
+	server, cookie := newAuthenticatedAPIServer(t, application)
+
+	loaded := authenticatedAPIRequest(server, cookie, http.MethodGet, "/api/v1/onboarding", "")
+	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), `"status":"not_started"`) {
+		t.Fatalf("load response = %d: %s", loaded.Code, loaded.Body.String())
+	}
+	updated := authenticatedAPIRequest(server, cookie, http.MethodPatch, "/api/v1/onboarding", `{"action":"select_workspace","resourceId":"w1"}`)
+	if updated.Code != http.StatusOK || application.onboardingAction.Type != onboarding.ActionSelectWorkspace || application.onboardingAction.ResourceID != "w1" {
+		t.Fatalf("update response = %d: %s; action = %#v", updated.Code, updated.Body.String(), application.onboardingAction)
+	}
+	invalid := authenticatedAPIRequest(server, cookie, http.MethodPatch, "/api/v1/onboarding", `{"action":"pause","path":"/private"}`)
+	if invalid.Code != http.StatusUnprocessableEntity || application.calls["onboarding.update"] != 1 {
+		t.Fatalf("invalid response = %d: %s", invalid.Code, invalid.Body.String())
 	}
 }
 
@@ -443,6 +464,8 @@ type apiApplicationStub struct {
 	consentRequestID  string
 	consentKind       model.ConsentKind
 	consentGranted    bool
+	onboarding        onboarding.State
+	onboardingAction  onboarding.Action
 }
 
 func newAPIApplicationStub() *apiApplicationStub {
@@ -457,6 +480,7 @@ func newAPIApplicationStub() *apiApplicationStub {
 		process:           processes.Snapshot{ID: "process-1", WorkspaceID: "w1", SiteID: "shop", TaskID: "script:dev", Status: processes.Running, StartedAt: now, URLs: []string{"http://localhost:3000/"}, Events: []processes.Event{}},
 		agentCollection:   app.AgentConversationCollection{Readiness: model.AgentReadiness{Status: model.AgentReady, Available: true}},
 		agentConversation: model.Conversation{ID: "c1", WorkspaceID: "w1", SiteID: "shop", Title: "Hero", Status: model.ConversationWaiting, PendingInteraction: &model.Interaction{RequestID: "r1", Kind: model.InteractionConsent, ConsentKind: model.ConsentNetworkAccess}, Registry: model.RegistryResult{State: model.RegistryNotNeeded}, Sequence: 6, BindingValid: true, CreatedAt: now, UpdatedAt: now},
+		onboarding:        onboarding.DefaultState(),
 	}
 }
 
@@ -499,6 +523,16 @@ func (s *apiApplicationStub) WriteWorkspaceConfig(context.Context, string, confi
 func (s *apiApplicationStub) Health(context.Context, string) (app.Health, error) {
 	s.calls["health"]++
 	return app.Health{}, s.errors["health"]
+}
+func (s *apiApplicationStub) Onboarding(context.Context) (onboarding.State, error) {
+	s.calls["onboarding.get"]++
+	return s.onboarding, s.errors["onboarding.get"]
+}
+func (s *apiApplicationStub) UpdateOnboarding(_ context.Context, action onboarding.Action) (onboarding.State, error) {
+	s.calls["onboarding.update"]++
+	s.onboardingAction = action
+	s.onboarding.Status = onboarding.StatusActive
+	return s.onboarding, s.errors["onboarding.update"]
 }
 func (s *apiApplicationStub) InstallDependency(context.Context, string, string) (jobs.Snapshot, error) {
 	s.calls["dependency.install"]++
@@ -557,6 +591,10 @@ func (s *apiApplicationStub) StartProcess(context.Context, string, string, strin
 func (s *apiApplicationStub) Process(string) (processes.Snapshot, error) {
 	s.calls["process.get"]++
 	return s.process, s.errors["process.get"]
+}
+func (s *apiApplicationStub) SiteProcess(context.Context, string, string, string) (processes.Snapshot, error) {
+	s.calls["process.find"]++
+	return s.process, s.errors["process.find"]
 }
 func (s *apiApplicationStub) StopProcess(context.Context, string) error {
 	s.calls["process.stop"]++

@@ -43,6 +43,62 @@ func TestCouchDBRepositoryEnsuresDedicatedAuthenticatedDatabase(t *testing.T) {
 	}
 }
 
+func TestCouchDBRepositoryRecoversSiteCredentialsAndPersistsPrimaryStore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "admin" || password != "site-secret" {
+			t.Fatalf("basic auth = %q/%q, %v", username, password, ok)
+		}
+		writer.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	primary := basecouchdb.Store{Path: filepath.Join(directory, "global", "couchdb.env")}
+	site := basecouchdb.Store{Path: filepath.Join(directory, "workspace", "apps", "shop", ".env")}
+	if err := site.Save(basecouchdb.Credentials{
+		URL: server.URL, AdminUser: "admin", AdminAuth: basecouchdb.EncodeAdminAuth("admin", "site-secret"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := NewCouchDBRepository(CouchDBOptions{
+		Credentials: primary, CredentialFallbacks: []basecouchdb.Store{site}, Client: server.Client(),
+	})
+	if err := repository.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, ok, err := primary.Load()
+	if err != nil || !ok {
+		t.Fatalf("primary.Load() = %#v, %v, %v", recovered, ok, err)
+	}
+	if recovered.URL != server.URL || recovered.AdminAuth != basecouchdb.EncodeAdminAuth("admin", "site-secret") {
+		t.Fatalf("recovered credentials = %#v", recovered)
+	}
+}
+
+func TestCouchDBRepositoryUsesProcessAdminAuthWithStoredURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "admin" || password != "process-secret" {
+			t.Fatalf("basic auth = %q/%q, %v", username, password, ok)
+		}
+		writer.WriteHeader(http.StatusPreconditionFailed)
+	}))
+	defer server.Close()
+
+	primary := basecouchdb.Store{Path: filepath.Join(t.TempDir(), "couchdb.env")}
+	if err := primary.Save(basecouchdb.Credentials{URL: server.URL, AdminUser: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COUCHDB_ADMIN_AUTH", basecouchdb.EncodeAdminAuth("admin", "process-secret"))
+
+	repository := NewCouchDBRepository(CouchDBOptions{Credentials: primary, Client: server.Client()})
+	if err := repository.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCouchDBRepositoryCreatesAndUpdatesRevisionedDocuments(t *testing.T) {
 	var mu sync.Mutex
 	var stored Document

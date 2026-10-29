@@ -21,6 +21,7 @@ import (
 	"github.com/nuxt-apps/couchfusion/internal/editor"
 	"github.com/nuxt-apps/couchfusion/internal/gitsetup"
 	"github.com/nuxt-apps/couchfusion/internal/jobs"
+	"github.com/nuxt-apps/couchfusion/internal/onboarding"
 	"github.com/nuxt-apps/couchfusion/internal/preview"
 	"github.com/nuxt-apps/couchfusion/internal/processes"
 	"github.com/nuxt-apps/couchfusion/internal/project"
@@ -30,6 +31,7 @@ import (
 
 type Service struct {
 	dependencies Dependencies
+	onboardingMu sync.Mutex
 }
 
 func NewService(dependencies Dependencies) (*Service, error) {
@@ -79,11 +81,18 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	if dependencies.AgentConversations == nil {
 		dependencies.AgentConversations = unavailableAgentConversations{}
 	}
+	if dependencies.Onboarding == nil {
+		dependencies.Onboarding = &memoryOnboardingStore{state: onboarding.DefaultState()}
+	}
 	return &Service{dependencies: dependencies}, nil
 }
 
 func NewDefaultService(globalConfigPath string) (*Service, error) {
-	return NewService(Dependencies{GlobalConfigPath: globalConfigPath})
+	store, err := onboarding.DefaultStore()
+	if err != nil {
+		return nil, MapError(err)
+	}
+	return NewService(Dependencies{GlobalConfigPath: globalConfigPath, Onboarding: store})
 }
 
 func (s *Service) InitializeWorkspace(ctx context.Context, request InitializeWorkspaceRequest, sessionID string) (jobs.Snapshot, error) {
@@ -559,6 +568,11 @@ func (s *Service) ConsumeJobSecret(id, sessionID string) (string, error) {
 
 func (s *Service) Process(id string) (processes.Snapshot, error) {
 	snapshot, err := s.dependencies.Processes.Get(id)
+	return snapshot, MapError(err)
+}
+
+func (s *Service) SiteProcess(_ context.Context, workspaceID, siteID, taskID string) (processes.Snapshot, error) {
+	snapshot, err := s.dependencies.Processes.Find(workspaceID, siteID, taskID)
 	return snapshot, MapError(err)
 }
 

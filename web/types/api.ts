@@ -9,6 +9,7 @@ export type ErrorCode =
   | 'config'
   | 'internal'
   | 'unauthorized'
+  | 'forbidden'
 
 export interface ApiErrorPayload {
   code: ErrorCode
@@ -132,6 +133,39 @@ export interface SystemHealth {
   node: DependencyHealth
   couchdb: DependencyHealth
 	agent: AgentReadiness
+}
+
+export type OnboardingStatus = 'not_started' | 'active' | 'paused' | 'completed'
+export type OnboardingActionType =
+  | 'select_workspace'
+  | 'select_site'
+  | 'select_component'
+  | 'track_job'
+  | 'clear_job'
+  | 'confirm_preview'
+  | 'confirm_placement'
+  | 'pause'
+  | 'resume'
+  | 'reset'
+
+export interface OnboardingAction {
+  action: OnboardingActionType
+  resourceId?: string
+}
+
+export interface OnboardingState {
+  version: number
+  status: OnboardingStatus
+  workspaceId?: string
+  siteId?: string
+  componentId?: string
+  activeJobId?: string
+  previewConfirmedAt?: string
+  placementConfirmedAt?: string
+  startedAt?: string
+  pausedAt?: string
+  completedAt?: string
+  updatedAt?: string
 }
 
 export type AgentReadinessStatus =
@@ -298,6 +332,8 @@ export interface JobSnapshot {
   completedAt?: string
   events: ActivityEvent[]
   error?: ApiErrorPayload
+  /** Job-type specific outcome (Rust backend, Phase 1 contract §2.2). */
+  result?: Record<string, unknown>
 }
 
 export interface ProcessSnapshot {
@@ -313,4 +349,116 @@ export interface ProcessSnapshot {
   urls: string[]
   events: ActivityEvent[]
   error?: ApiErrorPayload
+}
+
+// ---------------------------------------------------------------------------
+// Rust control plane, Phase 1 (docs/superpowers/specs/2026-10-29-phase1-mvp-contract.md §2.2)
+// ---------------------------------------------------------------------------
+
+export type BootstrapCapability = 'dev-sessions' | 'component-delete' | 'component-generate' | 'git'
+
+export interface Bootstrap {
+  version: string
+  backend?: 'rust' | 'go'
+  capabilities?: BootstrapCapability[]
+  devOrigins?: string[]
+  workspaceId?: string
+  siteId?: string
+}
+
+export type DevStatus = 'stopped' | 'starting' | 'ready' | 'stopping' | 'failed'
+
+export interface DevSessionView {
+  siteId: string
+  unit: string
+  status: DevStatus
+  url: string
+  startedAt?: string
+  memoryBytes?: number
+  needsRestart?: { reason: string }
+  problem?: string
+}
+
+export type ComponentGitState = 'tracked_clean' | 'tracked_modified' | 'untracked' | 'unknown'
+
+export interface ComponentUsagePage {
+  id: string
+  path: string
+  title: string
+}
+
+export interface ComponentCodeReference {
+  path: string
+  line: number
+}
+
+export interface ComponentUsage {
+  componentId: string
+  source: string
+  sha256: string
+  git: ComponentGitState
+  pages: ComponentUsagePage[]
+  codeReferences: ComponentCodeReference[]
+  pageScan: 'ok' | 'unavailable'
+}
+
+export interface RepoHead {
+  sha: string
+  subject: string
+}
+
+export interface RepoSummary {
+  id: string
+  path: string
+  branch: string
+  head?: RepoHead
+  dirty: number
+  hasRemote: boolean
+}
+
+export interface RepoStatusFile {
+  path: string
+  index: string
+  worktree: string
+  untracked: boolean
+}
+
+export interface RepoStatus {
+  id: string
+  branch: string
+  head?: RepoHead
+  hasRemote: boolean
+  files: RepoStatusFile[]
+}
+
+export interface RepoDiff {
+  path: string
+  diff: string
+  truncated: boolean
+  binary: boolean
+}
+
+export type SiteEventType = 'dev.status' | 'log' | 'registry.changed' | 'job'
+
+export interface SiteEvent {
+  seq: number
+  type: SiteEventType
+  time: string
+  dev?: DevSessionView
+  log?: ActivityEvent
+  registry?: { added: string[]; removed: string[] }
+  job?: JobSnapshot
+}
+
+export interface ComponentGenerateResult {
+  componentId?: string
+  changedFiles: string[]
+  threadId?: string
+  lint: string[]
+  needsRestart?: { reason: string }
+}
+
+export interface ComponentDeleteResult {
+  componentId: string
+  trashId: string
 }

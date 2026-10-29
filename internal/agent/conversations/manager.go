@@ -476,8 +476,15 @@ func (m *Manager) Recover(ctx context.Context, bindings []RecoveryBinding) error
 				return err
 			}
 			var response protocol.ThreadResponse
-			if err := client.Call(ctx, "thread/read", protocol.ThreadReadParams{ThreadID: document.CodexThreadID, IncludeTurns: true}, &response); err != nil {
-				return err
+			resume := protocol.ThreadResumeParams{
+				ThreadID: document.CodexThreadID, CWD: binding.SiteRoot,
+				ApprovalPolicy: "on-request", ApprovalsReviewer: "user", Sandbox: "workspace-write",
+				RuntimeWorkspaceRoots: []string{binding.SiteRoot},
+			}
+			if err := client.Call(ctx, "thread/resume", resume, &response); err != nil {
+				state.conversation.ReadOnly = true
+				m.addState(state)
+				continue
 			}
 			for _, turn := range response.Thread.Turns {
 				for _, raw := range turn.Items {
@@ -595,6 +602,9 @@ func (m *Manager) handleItem(method string, params protocol.ItemNotification) {
 	found := false
 	for index := range state.conversation.Items {
 		if state.conversation.Items[index].ID == item.ID {
+			if item.Type == "reasoning" && item.Text == "" && state.conversation.Items[index].Text != "" {
+				item.Text = state.conversation.Items[index].Text
+			}
 			state.conversation.Items[index] = item
 			found = true
 			break
@@ -987,19 +997,41 @@ func turnStartParams(threadID, siteRoot string, input protocol.TurnInput) protoc
 	return protocol.TurnStartParams{
 		ThreadID: threadID, Input: input, CWD: siteRoot,
 		ApprovalPolicy: "on-request", ApprovalsReviewer: "user",
-		SandboxPolicy:         &protocol.SandboxPolicy{Type: "workspace-write", WritableRoots: []string{siteRoot}, NetworkAccess: false},
+		SandboxPolicy:         &protocol.SandboxPolicy{Type: "workspaceWrite", WritableRoots: []string{siteRoot}, NetworkAccess: false},
 		RuntimeWorkspaceRoots: []string{siteRoot},
+	}
+}
+
+type commandAction struct {
+	Type string `json:"type"`
+}
+
+func commandActivityLabel(actions []commandAction) string {
+	seen := make(map[string]bool, len(actions))
+	for _, action := range actions {
+		seen[action.Type] = true
+	}
+	switch {
+	case seen["search"]:
+		return "Searching project files"
+	case seen["listFiles"]:
+		return "Listing project files"
+	case seen["read"]:
+		return "Reading project files"
+	default:
+		return "Running a project command"
 	}
 }
 
 func normalizeItem(raw json.RawMessage, turnID string) (model.ConversationItem, bool) {
 	var item struct {
-		ID      string   `json:"id"`
-		Type    string   `json:"type"`
-		Status  string   `json:"status"`
-		Text    string   `json:"text"`
-		Summary []string `json:"summary"`
-		Content []struct {
+		ID             string          `json:"id"`
+		Type           string          `json:"type"`
+		Status         string          `json:"status"`
+		Text           string          `json:"text"`
+		Summary        []string        `json:"summary"`
+		CommandActions []commandAction `json:"commandActions"`
+		Content        []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
@@ -1022,7 +1054,7 @@ func normalizeItem(raw json.RawMessage, turnID string) (model.ConversationItem, 
 	case "reasoning":
 		text = strings.Join(item.Summary, "\n")
 	case "commandExecution":
-		text = "Command execution"
+		text = commandActivityLabel(item.CommandActions)
 	case "fileChange":
 		text = "File changes"
 	default:
