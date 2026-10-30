@@ -107,3 +107,11 @@
 .dev-source__line { display: block; padding-right: 1rem; white-space: pre; }
 .dev-source__line:hover { background: rgba(111, 228, 224, .06); }
 .dev-source__no { display: inline-block; width: var(--gutter, 4ch); margin-right: 1rem; padding-right: .6rem; border-right: 1px solid #26302d; color: #56645e; text-align: right; user-select: none; }
+
+/* git drawer: remote row (fetch / pull / push) */
+.dev-git__remote { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 10px; }
+.dev-git__tracking { font: 600 12px/1.4 var(--font-mono, ui-monospace, monospace); margin-right: auto; }
+.dev-git__hint { flex-basis: 100%; opacity: .7; }
+.dev-git__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px; border: 1px dashed currentColor; }
+.dev-git__confirm label { flex-basis: 100%; }
+.dev-git__confirm input { font: 13px/1.4 var(--font-mono, ui-monospace, monospace); padding: 4px 8px; min-width: 12ch; }

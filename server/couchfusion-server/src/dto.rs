@@ -210,6 +210,8 @@ pub struct RepoSummary {
     pub head: Option<HeadInfo>,
     pub dirty: usize,
     pub has_remote: bool,
+    #[serde(flatten)]
+    pub remote: RemoteState,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -229,7 +231,23 @@ pub struct RepoStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head: Option<HeadInfo>,
     pub has_remote: bool,
+    #[serde(flatten)]
+    pub remote: RemoteState,
     pub files: Vec<RepoFile>,
+}
+
+/// Remote tracking state of a repo (from local refs; refreshed by a fetch job).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u32>,
+    /// Branches the control plane may push (empty: no remote configured in server.toml).
+    pub push_branches: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -396,6 +414,13 @@ pub struct CommitRequest {
     pub message: String,
     pub paths: Vec<String>,
     pub expected_head: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PushRequest {
+    pub branch: String,
+    pub confirm: String,
 }
 
 #[cfg(test)]

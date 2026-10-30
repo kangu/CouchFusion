@@ -54,15 +54,45 @@ pub fn denied_path(path: &str) -> bool {
         || path.split('/').any(|seg| seg == "node_modules" || seg == ".output" || seg == ".nuxt")
 }
 
+/// Credentials for one remote: a git-credential-format file (`username=…`/`password=…`), offered
+/// only to `origin` (`scheme://host`) through a helper that `cat`s it. The secret never appears in
+/// argv or the environment; only the file path does.
+pub struct RemoteAuth {
+    pub origin: String,
+    pub file: PathBuf,
+}
+
+/// The `-c` arguments that install the scoped credential helper (and clear any other helper).
+pub fn credential_args(auth: &RemoteAuth) -> Vec<String> {
+    vec![
+        "-c".into(),
+        "credential.helper=".into(),
+        "-c".into(),
+        format!("credential.{}.helper=", auth.origin),
+        "-c".into(),
+        format!("credential.{}.helper=!f() {{ test \"$1\" = get && cat \"$CF_GIT_CREDENTIAL\"; }}; f", auth.origin),
+        "-c".into(),
+        "credential.useHttpPath=false".into(),
+    ]
+}
+
 impl Git {
     pub async fn run(&self, repo: &Path, args: &[&str]) -> anyhow::Result<Output> {
+        self.run_with(repo, args, None).await
+    }
+
+    /// `run`, optionally with a scoped credential helper for network operations.
+    pub async fn run_with(&self, repo: &Path, args: &[&str], auth: Option<&RemoteAuth>) -> anyhow::Result<Output> {
         let safe = format!("safe.directory={}", repo.display());
         let mut cmd = Command::new(&self.bin);
         cmd.arg("-C")
             .arg(repo)
             .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", &safe])
-            .args(["-c", "core.pager=cat", "-c", "color.ui=false"])
-            .args(args)
+            .args(["-c", "core.pager=cat", "-c", "color.ui=false"]);
+        if let Some(auth) = auth {
+            cmd.args(credential_args(auth));
+        }
+        cmd.args(args)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent")
@@ -71,9 +101,13 @@ impl Git {
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("LC_ALL", "C")
+            .env("GIT_SSH_COMMAND", "/bin/false")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(auth) = auth {
+            cmd.env("CF_GIT_CREDENTIAL", &auth.file);
+        }
         let out = cmd.output().await?;
         Ok(Output {
             code: out.status.code().unwrap_or(-1),
@@ -83,11 +117,59 @@ impl Git {
     }
 
     async fn ok(&self, repo: &Path, args: &[&str]) -> Result<Vec<u8>, ApiError> {
-        let out = self.run(repo, args).await.map_err(|e| ApiError::git(format!("git failed to start: {e}")))?;
+        self.ok_with(repo, args, None).await
+    }
+
+    async fn ok_with(&self, repo: &Path, args: &[&str], auth: Option<&RemoteAuth>) -> Result<Vec<u8>, ApiError> {
+        let out = self.run_with(repo, args, auth).await.map_err(|e| ApiError::git(format!("git failed to start: {e}")))?;
         if out.code != 0 {
             return Err(ApiError::git(format!("git {} failed: {}", args.first().unwrap_or(&""), out.stderr)));
         }
         Ok(out.stdout)
+    }
+
+    pub async fn remote_url(&self, repo: &Path, remote: &str) -> Option<String> {
+        let out = self.run(repo, &["remote", "get-url", remote]).await.ok()?;
+        (out.code == 0).then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Upstream of the current branch and `(ahead, behind)` against it, from local refs only.
+    pub async fn upstream(&self, repo: &Path) -> (Option<String>, Option<(u32, u32)>) {
+        let Ok(out) = self.run(repo, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).await else { return (None, None) };
+        if out.code != 0 {
+            return (None, None);
+        }
+        let upstream = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let counts = match self.run(repo, &["rev-list", "--left-right", "--count", "HEAD...@{u}"]).await {
+            Ok(o) if o.code == 0 => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                let mut it = text.split_whitespace().filter_map(|n| n.parse::<u32>().ok());
+                it.next().zip(it.next())
+            }
+            _ => None,
+        };
+        (Some(upstream), counts)
+    }
+
+    pub async fn fetch(&self, repo: &Path, remote: &str, auth: Option<&RemoteAuth>) -> Result<(), ApiError> {
+        self.ok_with(repo, &["fetch", "--prune", "--no-tags", "--no-write-fetch-head", remote], auth).await.map(|_| ())
+    }
+
+    /// Fast-forward only; never creates merge commits.
+    pub async fn pull_ff(&self, repo: &Path, remote: &str, branch: &str, auth: Option<&RemoteAuth>) -> Result<String, ApiError> {
+        self.fetch(repo, remote, auth).await?;
+        let target = format!("refs/remotes/{remote}/{branch}");
+        self.ok(repo, &["merge", "--ff-only", "--no-edit", &target]).await?;
+        Ok(self.head(repo).await.map(|h| h.sha).unwrap_or_default())
+    }
+
+    /// Pushes `branch` to the same name on `remote` (never forced), then tracks it.
+    pub async fn push(&self, repo: &Path, remote: &str, branch: &str, auth: Option<&RemoteAuth>) -> Result<String, ApiError> {
+        let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
+        let out = self.ok_with(repo, &["push", "--porcelain", "--no-verify", remote, &spec], auth).await?;
+        let upstream = format!("{remote}/{branch}");
+        self.ok(repo, &["branch", &format!("--set-upstream-to={upstream}"), branch]).await?;
+        Ok(String::from_utf8_lossy(&out).lines().find(|l| l.contains(&spec)).unwrap_or("").trim().to_string())
     }
 
     /// Refuses repos whose local config defines keys that execute code.
@@ -204,6 +286,19 @@ pub fn parse_status(out: &[u8]) -> (String, Vec<RepoFile>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_helper_is_scoped_and_secret_free() {
+        let auth = RemoteAuth { origin: "https://git2.kangu.ro".into(), file: PathBuf::from("/run/credentials/couchfusion.service/git-apps-radustanciu") };
+        let args = credential_args(&auth);
+        assert_eq!(args[1], "credential.helper=");
+        assert!(args.iter().any(|a| a.starts_with("credential.https://git2.kangu.ro.helper=!f()")));
+        // The helper answers only `get` and reads the file named by the env var; the path itself
+        // (let alone the secret) is not in argv.
+        let helper = args.iter().find(|a| a.contains("!f()")).unwrap();
+        assert!(helper.contains(r#"test "$1" = get"#) && helper.contains(r#"cat "$CF_GIT_CREDENTIAL""#));
+        assert!(!args.iter().any(|a| a.contains("git-apps-radustanciu")));
+    }
 
     #[test]
     fn risky_keys() {

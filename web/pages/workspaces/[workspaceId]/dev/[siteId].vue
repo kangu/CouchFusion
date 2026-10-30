@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '../../../../assets/css/dev-session.css'
-import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, ComponentRestoreResult, JobSnapshot, SiteEvent, TrashEntry } from '../../../../types/api'
+import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, ComponentRestoreResult, GitRemoteOp, JobSnapshot, SiteEvent, TrashEntry } from '../../../../types/api'
 import { createBuilderBridge, type BridgeTarget } from '../../../../composables/useBuilderBridge'
 import { createComponentDelete } from '../../../../composables/useComponentDelete'
 import { createComponentsPanel } from '../../../../composables/useComponentsPanel'
@@ -285,6 +285,23 @@ async function commit(request: { message: string; paths: string[]; expectedHead:
   }
 }
 
+const remoteBusy = ref<GitRemoteOp>()
+
+async function runRemote(op: GitRemoteOp, body: { branch?: string; confirm?: string }) {
+  if (!selectedRepo.value || remoteBusy.value) return
+  remoteBusy.value = op
+  try {
+    const done = await tracker.track(await git.remote(selectedRepo.value, op, body))
+    git.error.value = done.status === 'succeeded' ? '' : done.error?.message ?? `${op} ${done.status}.`
+  } catch (cause) {
+    git.error.value = cause instanceof Error ? cause.message : `${op} failed.`
+  } finally {
+    remoteBusy.value = undefined
+    await git.load()
+    await git.loadStatus(selectedRepo.value)
+  }
+}
+
 // ---- lifecycle ----
 const jobs = computed(() => Object.values(tracker.jobs.value))
 const runningJobs = computed(() => jobs.value.filter((job) => !isTerminalJob(job)).length)
@@ -397,9 +414,11 @@ onBeforeUnmount(() => {
         :selected-repo="selectedRepo"
         :error="git.error.value"
         :committing="committing"
+        :remote-busy="remoteBusy"
         @select-repo="selectRepo"
         @view-diff="(path) => selectedRepo && git.loadDiff(selectedRepo, path)"
         @commit="commit"
+        @remote="runRemote"
         @refresh="openGit"
         @close="drawer = null"
       />

@@ -744,6 +744,141 @@ pub async fn commit(app: Arc<App>, repo_id: String, message: String, paths: Vec<
     Ok(snapshot)
 }
 
+/// Which remote operation a git job performs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemoteOp {
+    Fetch,
+    Pull,
+    Push,
+}
+
+impl RemoteOp {
+    fn job_type(self) -> &'static str {
+        match self {
+            RemoteOp::Fetch => "git.fetch",
+            RemoteOp::Pull => "git.pull",
+            RemoteOp::Push => "git.push",
+        }
+    }
+}
+
+/// Resolves and checks the configured remote of `repo_id`: the repo's actual URL must equal the
+/// configured one (so a changed `.git/config` cannot redirect the credential), and a configured
+/// credential file must exist and be non-empty.
+async fn remote_auth(app: &App, repo_id: &str, repo: &Path) -> Result<(crate::config::GitRemoteConfig, Option<crate::git::RemoteAuth>), ApiError> {
+    let remote = app
+        .config
+        .git_remote(repo_id)
+        .cloned()
+        .ok_or_else(|| ApiError::validation(format!("No remote is configured for {repo_id} in server.toml [[git.remotes]].")))?;
+    let actual = app.git.remote_url(repo, &remote.remote).await.unwrap_or_default();
+    if actual != remote.url {
+        return Err(ApiError::config(format!(
+            "Remote `{}` of {repo_id} points to {:?}, but server.toml expects {:?}.",
+            remote.remote, actual, remote.url
+        )));
+    }
+    let auth = match &remote.credential {
+        None => None,
+        Some(name) => {
+            let file = app.config.credential_path(name).ok_or_else(|| ApiError::config("No credentials directory (CREDENTIALS_DIRECTORY) is available."))?;
+            let usable = std::fs::metadata(&file).map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+            if !usable {
+                return Err(ApiError::config(format!("The credential `{name}` is missing or empty on the server.")));
+            }
+            let origin = remote.url_origin().ok_or_else(|| ApiError::config("The remote URL has no host."))?;
+            Some(crate::git::RemoteAuth { origin, file })
+        }
+    };
+    Ok((remote, auth))
+}
+
+/// Starts a fetch, fast-forward pull or push job on a workspace repo.
+pub async fn remote_job(app: Arc<App>, repo_id: String, op: RemoteOp, branch: Option<String>, confirm: Option<String>) -> Result<crate::dto::JobSnapshot, ApiError> {
+    let repo = app.config.workspace.root.join(&repo_id);
+    app.git.check_config(&repo).await?;
+    let (remote, auth) = remote_auth(&app, &repo_id, &repo).await?;
+    let (current, _) = app.git.status(&repo).await?;
+    let current = current.trim().to_string();
+    let branch = match op {
+        RemoteOp::Push => {
+            let branch = branch.unwrap_or_default();
+            if branch.is_empty() || branch != current {
+                return Err(ApiError::validation(format!("Push the checked-out branch ({current}); got {branch:?}.")));
+            }
+            if !remote.branches.iter().any(|b| b == &branch) {
+                return Err(ApiError::validation(format!("Pushing {branch} is not allowed (server.toml branches: {:?}).", remote.branches)));
+            }
+            if confirm.as_deref() != Some(branch.as_str()) {
+                return Err(ApiError::validation("Type the branch name to confirm the push."));
+            }
+            branch
+        }
+        _ => current,
+    };
+    if branch.is_empty() || branch == "(detached)" {
+        return Err(ApiError::validation("The repository is not on a branch."));
+    }
+    let lease = repo_id.strip_prefix("apps/").map(str::to_string).unwrap_or_else(|| format!("repo:{repo_id}"));
+    let ctx = app.jobs.create(op.job_type(), &app.config.workspace.id, &lease)?;
+    let snapshot = ctx.snapshot();
+    tokio::spawn(async move {
+        ctx.start();
+        let name = remote.remote.clone();
+        let result = match op {
+            RemoteOp::Fetch => {
+                ctx.info("git.fetch", format!("Fetching {name} for {repo_id}…"));
+                app.git.fetch(&repo, &name, auth.as_ref()).await.map(|_| None)
+            }
+            RemoteOp::Pull => {
+                ctx.info("git.pull", format!("Pulling {name}/{branch} into {repo_id} (fast-forward only)…"));
+                app.git.pull_ff(&repo, &name, &branch, auth.as_ref()).await.map(Some)
+            }
+            RemoteOp::Push => {
+                ctx.info("git.push", format!("Pushing {branch} to {name}…"));
+                match app.git.push(&repo, &name, &branch, auth.as_ref()).await {
+                    Ok(line) => {
+                        if !line.is_empty() {
+                            ctx.info("git.push", line);
+                        }
+                        Ok(app.git.head(&repo).await.map(|h| h.sha))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        };
+        match result {
+            Ok(sha) => {
+                let (upstream, counts) = app.git.upstream(&repo).await;
+                let mut r = Map::new();
+                r.insert("branch".into(), Value::String(branch.clone()));
+                if let Some(sha) = sha.filter(|s| !s.is_empty()) {
+                    r.insert("sha".into(), Value::String(sha));
+                }
+                if let Some(u) = upstream {
+                    r.insert("upstream".into(), Value::String(u));
+                }
+                if let Some((ahead, behind)) = counts {
+                    r.insert("ahead".into(), json!(ahead));
+                    r.insert("behind".into(), json!(behind));
+                    ctx.info(op.job_type(), format!("{branch}: {ahead} ahead, {behind} behind."));
+                }
+                ctx.succeed(r);
+            }
+            Err(err) => {
+                let hint = match op {
+                    RemoteOp::Push if err.message.contains("rejected") || err.message.contains("non-fast-forward") => " Pull first; the remote has commits this repo does not.",
+                    RemoteOp::Pull if err.message.contains("Not possible to fast-forward") || err.message.contains("diverging") => " The branches have diverged; resolve it on a machine with a shell.",
+                    _ => "",
+                };
+                let err = if hint.is_empty() { err } else { ApiError::git(format!("{}{hint}", err.message)) };
+                ctx.fail(&err, None);
+            }
+        }
+    });
+    Ok(snapshot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,6 +25,10 @@ cp "$REPO/apps/radustanciu/app/components/content/"*.vue "$APP/app/components/co
 echo '{"name":"demo","scripts":{"dev":"nuxt dev","registry:build":"x"}}' > "$APP/package.json"
 echo '<!doctype html><html><head><script>window.x=1</script></head><body>spa</body></html>' > "$WORK/spa/index.html"
 git -C "$APP" init -q -b main && git -C "$APP" add -A && git -C "$APP" -c user.name=t -c user.email=t@t commit -qm init
+REMOTE=$WORK/remote.git
+rm -rf "$REMOTE" "$WORK/other"
+git init -q --bare -b main "$REMOTE"
+git -C "$APP" remote add origin "file://$REMOTE"
 
 cat > "$WORK/server.toml" <<TOML
 [server]
@@ -50,6 +54,12 @@ systemctl = "$HERE/fake-systemctl.sh"
 journalctl = "$HERE/fake-journalctl.sh"
 [services]
 units = ["kangu.service", "cf-dev@demo.service"]
+[git]
+allow_file_remotes = true
+[[git.remotes]]
+repo = "apps/demo"
+url = "file://$REMOTE"
+branches = ["main"]
 [[sites]]
 id = "demo"
 slot_port = $SLOT
@@ -224,6 +234,27 @@ CJ=$(curl -s "${MUT[@]}" -X POST -d "{\"message\":\"Add pricing table\",\"paths\
 for _ in $(seq 1 40); do js=$(curl -s "${TS[@]}" $U/jobs/$CJ | jq -r .data.status); [ "$js" = succeeded ] || [ "$js" = failed ] && break; sleep 0.25; done
 expect "commit job" succeeded "$js"
 git -C "$APP" log -1 --format=%B | grep -q 'Committed-Via: couchfusion-cp' && ok "commit trailer" || bad "trailer"
+
+echo "== git remote (fetch / pull / push)"
+G="$U/workspaces/hetzner1/repos/apps%2Fdemo"
+waitjob() { local id=$1 st=""; for _ in $(seq 1 60); do st=$(curl -s "${TS[@]}" $U/jobs/$id | jq -r .data.status); [ "$st" = succeeded ] || [ "$st" = failed ] && break; sleep 0.25; done; echo "$st"; }
+curl -s "${TS[@]}" $U/workspaces/hetzner1/repos | jq -e '.data[0].pushBranches == ["main"] and (.data[0] | has("upstream") | not)' >/dev/null && ok "repo lists push branches, no upstream yet" || bad "repo summary remote state"
+expect "push needs typed confirmation" 422 "$(code "${MUT[@]}" -X POST -d '{"branch":"main","confirm":"nope"}' $G/push)"
+expect "push only the checked-out branch" 422 "$(code "${MUT[@]}" -X POST -d '{"branch":"other","confirm":"other"}' $G/push)"
+PJ=$(curl -s "${MUT[@]}" -X POST -d '{"branch":"main","confirm":"main"}' $G/push | field id)
+expect "push job" succeeded "$(waitjob "$PJ")"
+[ "$(git -C "$REMOTE" rev-parse main)" = "$(git -C "$APP" rev-parse HEAD)" ] && ok "remote has the pushed commit" || bad "remote head differs"
+curl -s "${TS[@]}" $G/status | jq -e '.data.upstream == "origin/main" and .data.ahead == 0 and .data.behind == 0' >/dev/null && ok "upstream tracked after push" || bad "upstream: $(curl -s "${TS[@]}" $G/status | jq -c '.data|{upstream,ahead,behind}')"
+git clone -q "$REMOTE" "$WORK/other" && echo x > "$WORK/other/elsewhere.txt" && git -C "$WORK/other" add elsewhere.txt && git -C "$WORK/other" -c user.name=t -c user.email=t@t commit -qm elsewhere && git -C "$WORK/other" push -q origin main
+FJ=$(curl -s "${MUT[@]}" -X POST -d '{}' $G/fetch | field id)
+expect "fetch job" succeeded "$(waitjob "$FJ")"
+curl -s "${TS[@]}" $G/status | jq -e '.data.behind == 1' >/dev/null && ok "fetch shows 1 behind" || bad "behind after fetch"
+LJ=$(curl -s "${MUT[@]}" -X POST -d '{}' $G/pull | field id)
+expect "pull job (ff-only)" succeeded "$(waitjob "$LJ")"
+[ -f "$APP/elsewhere.txt" ] && [ "$(git -C "$APP" rev-parse HEAD)" = "$(git -C "$REMOTE" rev-parse main)" ] && ok "pull fast-forwarded" || bad "pull did not fast-forward"
+git -C "$APP" remote set-url origin "file://$WORK/evil.git"
+expect "tampered remote URL refused" 422 "$(code "${MUT[@]}" -X POST -d '{}' $G/fetch)"
+git -C "$APP" remote set-url origin "file://$REMOTE"
 
 echo "== services (read-only)"
 SV=$(curl -s "${TS[@]}" $U/services)

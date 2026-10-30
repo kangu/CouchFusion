@@ -423,6 +423,11 @@ export interface RepoSummary {
   head?: RepoHead
   dirty: number
   hasRemote: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  /** Branches the server may push for this repo (empty: no remote configured). */
+  pushBranches: string[]
 }
 
 export interface RepoStatusFile {
@@ -437,8 +442,14 @@ export interface RepoStatus {
   branch: string
   head?: RepoHead
   hasRemote: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  pushBranches: string[]
   files: RepoStatusFile[]
 }
+
+export type GitRemoteOp = 'fetch' | 'pull' | 'push'
 
 export interface RepoDiff {
   path: string

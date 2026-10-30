@@ -32,6 +32,65 @@ pub struct Config {
     /// Read-only service status/logs (Phase 2).
     #[serde(default)]
     pub services: ServicesConfig,
+    /// Remotes the control plane may fetch from, pull from and push to.
+    #[serde(default)]
+    pub git: GitConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitConfig {
+    #[serde(default)]
+    pub remotes: Vec<GitRemoteConfig>,
+    /// Where credential files live. Defaults to `$CREDENTIALS_DIRECTORY` (systemd `LoadCredential=`).
+    #[serde(default)]
+    pub credentials_dir: Option<PathBuf>,
+    /// Allow `file://` remote URLs (local tests only).
+    #[serde(default)]
+    pub allow_file_remotes: bool,
+}
+
+/// One remote of one workspace repository.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitRemoteConfig {
+    /// Workspace-relative repo path, e.g. `apps/radustanciu` (must be in `workspace.repos`).
+    pub repo: String,
+    #[serde(default = "default_remote_name")]
+    pub remote: String,
+    /// Expected `git remote get-url <remote>`; the credential is only used if it matches.
+    pub url: String,
+    /// File name inside the credentials directory (git credential format: `username=…`, `password=…`).
+    #[serde(default)]
+    pub credential: Option<String>,
+    /// Branches that may be pushed (never forced).
+    #[serde(default)]
+    pub branches: Vec<String>,
+}
+
+fn default_remote_name() -> String {
+    "origin".to_string()
+}
+
+impl GitRemoteConfig {
+    /// `scheme://host[:port]` of the URL, used to scope the credential helper.
+    pub fn url_origin(&self) -> Option<String> {
+        let (scheme, rest) = self.url.split_once("://")?;
+        let host = rest.split('/').next()?;
+        (!host.is_empty()).then(|| format!("{scheme}://{host}"))
+    }
+}
+
+/// Branch names accepted for push: conservative subset of git's ref-name rules.
+pub fn valid_branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 100
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.ends_with(".lock")
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
 }
 
 /// Units whose status and recent logs the control plane may show (read-only).
@@ -264,7 +323,47 @@ impl Config {
                 bail!("invalid repo path {repo:?}");
             }
         }
+        for remote in &self.git.remotes {
+            if !self.workspace.repos.contains(&remote.repo) {
+                bail!("[[git.remotes]] repo {:?} is not in workspace.repos", remote.repo);
+            }
+            if !valid_slug(&remote.remote) {
+                bail!("invalid git remote name {:?}", remote.remote);
+            }
+            let https = remote.url.starts_with("https://");
+            let file = remote.url.starts_with("file://") && self.git.allow_file_remotes;
+            if !(https || file) {
+                bail!("git remote url {:?} must be https:// (file:// only with allow_file_remotes)", remote.url);
+            }
+            if remote.url.split("://").nth(1).is_some_and(|rest| rest.split('/').next().unwrap_or("").contains('@')) {
+                bail!("git remote url {:?} must not embed credentials; use `credential`", remote.url);
+            }
+            if remote.url_origin().is_none() && https {
+                bail!("git remote url {:?} has no host", remote.url);
+            }
+            if let Some(cred) = &remote.credential
+                && !valid_slug(cred)
+            {
+                bail!("invalid git credential name {cred:?}");
+            }
+            if let Some(b) = remote.branches.iter().find(|b| !valid_branch_name(b)) {
+                bail!("invalid push branch {b:?}");
+            }
+        }
+        if self.git.remotes.iter().map(|r| &r.repo).collect::<std::collections::BTreeSet<_>>().len() != self.git.remotes.len() {
+            bail!("at most one [[git.remotes]] entry per repo");
+        }
         Ok(())
+    }
+
+    pub fn git_remote(&self, repo: &str) -> Option<&GitRemoteConfig> {
+        self.git.remotes.iter().find(|r| r.repo == repo)
+    }
+
+    /// Absolute path of a credential file, from `[git] credentials_dir` or `$CREDENTIALS_DIRECTORY`.
+    pub fn credential_path(&self, name: &str) -> Option<PathBuf> {
+        let dir = self.git.credentials_dir.clone().or_else(|| std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from))?;
+        Some(dir.join(name))
     }
 
     pub fn site(&self, id: &str) -> Option<&SiteConfig> {
@@ -342,6 +441,62 @@ mod tests {
         assert_eq!(config.ports(), vec![9180, 9181]);
         assert_eq!(config.sites[0].registry_unit(), "cf-registry@radustanciu.service");
         assert!(config.services.units.contains(&"kangu.service".to_string()));
+    }
+
+    fn example() -> Config {
+        toml::from_str(include_str!("../../packaging/hetzner1/phase1/server.toml")).unwrap()
+    }
+
+    fn remote(url: &str) -> GitRemoteConfig {
+        GitRemoteConfig {
+            repo: "apps/radustanciu".into(),
+            remote: "origin".into(),
+            url: url.into(),
+            credential: Some("git-apps-radustanciu".into()),
+            branches: vec!["main".into()],
+        }
+    }
+
+    #[test]
+    fn git_remote_validation() {
+        let mut c = example();
+        c.git.remotes = vec![remote("https://git2.kangu.ro/radu/radustanciu-src.git")];
+        c.validate().unwrap();
+        assert_eq!(c.git.remotes[0].url_origin().as_deref(), Some("https://git2.kangu.ro"));
+
+        for bad in ["http://git2.kangu.ro/x.git", "https://radu:tok@git2.kangu.ro/x.git", "ssh://git@host/x.git", "file:///tmp/x.git"] {
+            let mut c = example();
+            c.git.remotes = vec![remote(bad)];
+            assert!(c.validate().is_err(), "{bad} must be refused");
+        }
+        let mut c = example();
+        c.git.allow_file_remotes = true;
+        let mut r = remote("file:///tmp/x.git");
+        r.credential = None;
+        c.git.remotes = vec![r];
+        c.validate().unwrap();
+
+        let mut c = example();
+        let mut r = remote("https://git2.kangu.ro/x.git");
+        r.repo = "apps/other".into();
+        c.git.remotes = vec![r];
+        assert!(c.validate().is_err(), "repo must be in workspace.repos");
+
+        let mut c = example();
+        let mut r = remote("https://git2.kangu.ro/x.git");
+        r.branches = vec!["main; rm -rf".into()];
+        c.git.remotes = vec![r];
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn branch_names() {
+        for ok in ["main", "feat/x", "release-1.2", "a_b"] {
+            assert!(valid_branch_name(ok), "{ok}");
+        }
+        for bad in ["", "-x", "/x", "x/", "a..b", "x.lock", "a b", "a//b", ".hidden", "x."] {
+            assert!(!valid_branch_name(bad), "{bad}");
+        }
     }
 
     #[test]

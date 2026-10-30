@@ -435,11 +435,24 @@ pub async fn serve(app: Arc<App>) -> anyhow::Result<()> {
         }
     }
     app.dev.spawn_background();
-    while let Some(result) = tasks.join_next().await {
-        result??;
+    // Graceful shutdown waits for open connections, but SSE streams and proxied HMR
+    // websockets never close on their own; give them a short grace period, then exit.
+    let drain = async {
+        while let Some(result) = tasks.join_next().await {
+            result??;
+        }
+        anyhow::Ok(())
+    };
+    tokio::select! {
+        result = drain => result,
+        _ = async { shutdown().await; tokio::time::sleep(SHUTDOWN_GRACE).await } => {
+            tracing::info!("connections still open {}s after the stop signal; exiting", SHUTDOWN_GRACE.as_secs());
+            Ok(())
+        }
     }
-    Ok(())
 }
+
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 async fn shutdown() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal handler");

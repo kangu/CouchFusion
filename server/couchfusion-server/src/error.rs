@@ -34,6 +34,10 @@ impl ApiError {
     pub fn filesystem(m: impl Into<String>) -> Self {
         Self::new("filesystem", m)
     }
+    /// Server-side configuration problem the user must fix (422 `config`).
+    pub fn config(m: impl Into<String>) -> Self {
+        Self::new("config", m)
+    }
     pub fn git(m: impl Into<String>) -> Self {
         Self::new("git", m)
     }

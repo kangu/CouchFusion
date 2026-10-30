@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { JobSnapshot, RepoDiff, RepoStatus, RepoSummary } from '../types/api'
+import type { GitRemoteOp, JobSnapshot, RepoDiff, RepoStatus, RepoSummary } from '../types/api'
 
 interface GitApi {
   get<T>(path: string): Promise<T>
@@ -22,7 +22,39 @@ export function repoSegment(id: string) {
   return encodeURIComponent(raw)
 }
 
-/** Per-repo git status, diff and commit for one workspace (contract §2.2; no push in Phase 1). */
+export interface RemoteActions {
+  canFetch: boolean
+  canPull: boolean
+  canPush: boolean
+  /** Why push is unavailable (shown next to the button). */
+  pushBlocked?: string
+  /** Short tracking line, e.g. "origin/main · 2 ahead · 0 behind". */
+  summary: string
+}
+
+/** Which remote buttons a repo status allows (pure, for tests). */
+export function remoteActions(status: RepoStatus | undefined): RemoteActions {
+  if (!status || !status.hasRemote || !status.pushBranches) {
+    return { canFetch: false, canPull: false, canPush: false, pushBlocked: 'No remote configured.', summary: 'No remote' }
+  }
+  const configured = status.pushBranches.length > 0
+  const counts = status.ahead !== undefined && status.behind !== undefined ? ` · ${status.ahead} ahead · ${status.behind} behind` : ''
+  const summary = status.upstream ? `${status.upstream}${counts}` : 'Not tracking a remote branch yet'
+  let pushBlocked: string | undefined
+  if (!configured) pushBlocked = 'This repo has no remote in server.toml.'
+  else if (!status.pushBranches.includes(status.branch)) pushBlocked = `Only ${status.pushBranches.join(', ')} may be pushed.`
+  else if ((status.behind ?? 0) > 0) pushBlocked = 'Pull first: the remote has newer commits.'
+  else if (status.upstream && status.ahead === 0) pushBlocked = 'Nothing to push.'
+  return {
+    canFetch: configured,
+    canPull: configured && !!status.upstream && (status.behind ?? 0) > 0,
+    canPush: configured && pushBlocked === undefined,
+    ...(pushBlocked ? { pushBlocked } : {}),
+    summary,
+  }
+}
+
+/** Per-repo git status, diff, commit, fetch, pull and push for one workspace. */
 export function createGitRepos(api: GitApi, workspaceId: string) {
   const repos = ref<RepoSummary[]>([])
   const status = ref<RepoStatus>()
@@ -68,5 +100,10 @@ export function createGitRepos(api: GitApi, workspaceId: string) {
     return api.post<JobSnapshot>(`${base}/${repoSegment(repoId)}/commit`, request)
   }
 
-  return { repos, status, diff, error, loading, dirtyCount, load, loadStatus, loadDiff, commit }
+  /** Starts a fetch, fast-forward pull or push job (push needs the branch typed as `confirm`). */
+  function remote(repoId: string, op: GitRemoteOp, body: { branch?: string; confirm?: string } = {}) {
+    return api.post<JobSnapshot>(`${base}/${repoSegment(repoId)}/${op}`, body)
+  }
+
+  return { repos, status, diff, error, loading, dirtyCount, load, loadStatus, loadDiff, commit, remote }
 }

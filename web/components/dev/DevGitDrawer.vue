@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { RepoDiff, RepoStatus, RepoSummary } from '../../types/api'
+import type { GitRemoteOp, RepoDiff, RepoStatus, RepoSummary } from '../../types/api'
+import { remoteActions } from '../../composables/useGitRepos'
 
 const props = defineProps<{
   repos: RepoSummary[]
@@ -9,18 +10,36 @@ const props = defineProps<{
   selectedRepo?: string | undefined
   error: string
   committing: boolean
+  /** Remote job in progress, if any. */
+  remoteBusy?: GitRemoteOp | undefined
 }>()
 
 const emit = defineEmits<{
   selectRepo: [repoId: string]
   viewDiff: [path: string]
   commit: [request: { message: string; paths: string[]; expectedHead: string }]
+  remote: [op: GitRemoteOp, body: { branch?: string; confirm?: string }]
   refresh: []
   close: []
 }>()
 
 const message = ref('')
 const selected = ref<Set<string>>(new Set())
+const confirmingPush = ref(false)
+const pushConfirm = ref('')
+const actions = computed(() => remoteActions(props.status))
+const pushReady = computed(() => !!props.status && pushConfirm.value === props.status.branch && !props.remoteBusy)
+
+function startPush() {
+  confirmingPush.value = true
+  pushConfirm.value = ''
+}
+
+function push() {
+  if (!pushReady.value || !props.status) return
+  emit('remote', 'push', { branch: props.status.branch, confirm: pushConfirm.value })
+  confirmingPush.value = false
+}
 
 watch(() => props.status, (status) => {
   // Default to every changed file; the user unticks what should stay out.
@@ -58,7 +77,7 @@ watch(() => props.committing, (now, before) => {
 <template>
   <aside class="dev-drawer dev-drawer--wide" aria-labelledby="dev-git-title">
     <header class="dev-drawer__header">
-      <div><p class="eyebrow">Local commits · push comes later</p><h2 id="dev-git-title">Changes</h2></div>
+      <div><p class="eyebrow">Commit · fetch · pull · push</p><h2 id="dev-git-title">Changes</h2></div>
       <button class="dialog__close" type="button" aria-label="Close git drawer" @click="emit('close')">×</button>
     </header>
 
@@ -81,6 +100,25 @@ watch(() => props.committing, (now, before) => {
 
     <section v-if="status" class="dev-git__status">
       <p class="eyebrow">{{ status.branch }}<template v-if="status.head"> · {{ status.head.sha.slice(0, 8) }} {{ status.head.subject }}</template></p>
+      <div v-if="status.hasRemote" class="dev-git__remote">
+        <span class="dev-git__tracking">{{ actions.summary }}</span>
+        <button class="compact-button" type="button" :disabled="!actions.canFetch || !!remoteBusy" @click="emit('remote', 'fetch', {})">
+          {{ remoteBusy === 'fetch' ? 'Fetching…' : 'Fetch' }}
+        </button>
+        <button class="compact-button" type="button" :disabled="!actions.canPull || !!remoteBusy" title="Fast-forward only" @click="emit('remote', 'pull', {})">
+          {{ remoteBusy === 'pull' ? 'Pulling…' : 'Pull' }}
+        </button>
+        <button class="compact-button compact-button--primary" type="button" :disabled="!actions.canPush || !!remoteBusy" :title="actions.pushBlocked ?? 'Push (never forced)'" @click="startPush">
+          {{ remoteBusy === 'push' ? 'Pushing…' : 'Push…' }}
+        </button>
+        <small v-if="actions.pushBlocked && !remoteBusy" class="dev-git__hint">{{ actions.pushBlocked }}</small>
+      </div>
+      <form v-if="confirmingPush" class="dev-git__confirm" @submit.prevent="push">
+        <label for="dev-git-push-confirm">Type <code>{{ status.branch }}</code> to push it to {{ status.upstream ?? 'the remote' }}</label>
+        <input id="dev-git-push-confirm" v-model="pushConfirm" autocomplete="off" spellcheck="false">
+        <button class="compact-button compact-button--primary" type="submit" :disabled="!pushReady">Push {{ status.branch }}</button>
+        <button class="compact-button" type="button" @click="confirmingPush = false">Cancel</button>
+      </form>
       <p v-if="!status.files.length" class="empty-state">Working tree clean.</p>
       <ul v-else class="dev-git__files">
         <li v-for="file in status.files" :key="file.path">

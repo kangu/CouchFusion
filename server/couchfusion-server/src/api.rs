@@ -46,6 +46,9 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos/{repo}/status", get(repo_status))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/diff", get(repo_diff))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/commit", post(repo_commit))
+        .route("/api/v1/workspaces/{ws}/repos/{repo}/fetch", post(repo_fetch))
+        .route("/api/v1/workspaces/{ws}/repos/{repo}/pull", post(repo_pull))
+        .route("/api/v1/workspaces/{ws}/repos/{repo}/push", post(repo_push))
         .route("/api/v1/services", get(services))
         .route("/api/v1/services/{unit}/logs", get(service_logs))
 }
@@ -85,6 +88,7 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
                 "component-source",
                 "registry-rebuild",
                 "services",
+                "git-remote",
             ],
             dev_origins: app.config.sites.iter().map(|s| origin.origin_for_port(s.slot_port)).collect(),
             workspace_id: app.config.workspace.id.clone(),
@@ -390,6 +394,17 @@ async fn repo_summary(app: &App, id: &str) -> RepoSummary {
         head: app.git.head(&path).await,
         dirty: files.len(),
         has_remote: app.git.has_remote(&path).await,
+        remote: remote_state(app, id, &path).await,
+    }
+}
+
+async fn remote_state(app: &App, id: &str, path: &std::path::Path) -> crate::dto::RemoteState {
+    let (upstream, counts) = app.git.upstream(path).await;
+    crate::dto::RemoteState {
+        upstream,
+        ahead: counts.map(|c| c.0),
+        behind: counts.map(|c| c.1),
+        push_branches: app.config.git_remote(id).map(|r| r.branches.clone()).unwrap_or_default(),
     }
 }
 
@@ -409,7 +424,8 @@ async fn repo_status(State(app): S, Path((ws, repo)): Path<(String, String)>) ->
     let path = repo_path(&app, &ws, &repo)?;
     app.git.check_config(&path).await?;
     let (branch, files) = app.git.status(&path).await?;
-    Ok(data(StatusCode::OK, RepoStatus { id: repo.clone(), branch, head: app.git.head(&path).await, has_remote: app.git.has_remote(&path).await, files }))
+    let remote = remote_state(&app, &repo, &path).await;
+    Ok(data(StatusCode::OK, RepoStatus { id: repo.clone(), branch, head: app.git.head(&path).await, has_remote: app.git.has_remote(&path).await, remote, files }))
 }
 
 #[derive(Deserialize)]
@@ -428,6 +444,24 @@ async fn repo_diff(State(app): S, Path((ws, repo)): Path<(String, String)>, Quer
 async fn repo_commit(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(req): JsonBody<CommitRequest>) -> ApiResult {
     repo_path(&app, &ws, &repo)?;
     let job = crate::ops::commit(app, repo, req.message, req.paths, req.expected_head).await?;
+    Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn repo_fetch(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(_): JsonBody<serde_json::Value>) -> ApiResult {
+    repo_path(&app, &ws, &repo)?;
+    let job = crate::ops::remote_job(app, repo, crate::ops::RemoteOp::Fetch, None, None).await?;
+    Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn repo_pull(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(_): JsonBody<serde_json::Value>) -> ApiResult {
+    repo_path(&app, &ws, &repo)?;
+    let job = crate::ops::remote_job(app, repo, crate::ops::RemoteOp::Pull, None, None).await?;
+    Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn repo_push(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(req): JsonBody<crate::dto::PushRequest>) -> ApiResult {
+    repo_path(&app, &ws, &repo)?;
+    let job = crate::ops::remote_job(app, repo, crate::ops::RemoteOp::Push, Some(req.branch), Some(req.confirm)).await?;
     Ok(data(StatusCode::ACCEPTED, job))
 }
 
