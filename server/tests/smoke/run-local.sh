@@ -46,6 +46,10 @@ repos = ["apps/demo"]
 [toolchain]
 git = "/usr/bin/git"
 bun = "/usr/bin/false"
+systemctl = "$HERE/fake-systemctl.sh"
+journalctl = "$HERE/fake-journalctl.sh"
+[services]
+units = ["kangu.service", "cf-dev@demo.service"]
 [[sites]]
 id = "demo"
 slot_port = $SLOT
@@ -60,6 +64,9 @@ env_files = ["$WORK/run/dev/demo.env"]
 argv = ["$BIN", "agent-runner", "--app", "demo", "--spec-dir", "$WORK/run/agent", "--workspace", "$WORK/ws", "--codex", "$HERE/fake-codex.sh"]
 cwd = "$WORK"
 stdout_append = "$WORK/state/agent-out/demo.jsonl"
+[process_group."cf-registry@demo.service"]
+argv = ["python3", "$HERE/fake-dev.py", "--once"]
+cwd = "$APP"
 TOML
 
 "$BIN" serve --config "$WORK/server.toml" > "$WORK/server.log" 2>&1 &
@@ -81,6 +88,7 @@ expect "tailnet wrong login → 401" 401 "$(code --unix-socket "$SOCK" -H "X-For
 expect "tailnet bad host → 403" 403 "$(code --unix-socket "$SOCK" -H "X-Forwarded-Host: evil.example:$CP" -H "Tailscale-User-Login: $LOGIN" $U/bootstrap)"
 expect "tailnet bootstrap → 200" 200 "$(code "${TS[@]}" $U/bootstrap)"
 curl -s "${TS[@]}" $U/bootstrap | jq -e --arg o "https://$HOSTNAME_TS:$SLOT" '.data.devOrigins == [$o]' >/dev/null && ok "bootstrap devOrigins per caller (tailnet)" || bad "bootstrap devOrigins"
+curl -s "${TS[@]}" $U/bootstrap | jq -e '.data.capabilities as $c | ["component-trash","component-source","registry-rebuild","services"] | all(. as $x | $c | index($x))' >/dev/null && ok "bootstrap Phase 2 capabilities" || bad "bootstrap capabilities"
 LINK=$("$BIN" login-url --config "$WORK/server.toml" 2>/dev/null | sed -E "s#http://localhost:[0-9]+#http://127.0.0.1:$CP#")
 JAR=$WORK/jar; rm -f "$JAR"
 expect "login-url exchange → 303" 303 "$(code -c "$JAR" "$LINK")"
@@ -101,12 +109,15 @@ expect "components (manifest missing before dev)" 200 "$(code "${TS[@]}" $U/work
 echo "== dev session"
 curl -s "${TS[@]}" -N "$U/workspaces/hetzner1/sites/demo/events" > "$WORK/events.sse" &
 EVPID=$!
+curl -s -b "$JAR" -N "http://127.0.0.1:$CP/api/v1/workspaces/hetzner1/sites/demo/events" > "$WORK/events-tunnel.sse" &
+EVPID2=$!
 MUT=("${TS[@]}" "${J[@]}" -H "Origin: https://$HOSTNAME_TS:$CP" -H 'Sec-Fetch-Site: same-origin')
 expect "dev start → 202" 202 "$(code "${MUT[@]}" -X POST -d '{}' $U/workspaces/hetzner1/sites/demo/dev/start)"
 st=""
 for _ in $(seq 1 60); do st=$(curl -s "${TS[@]}" $U/workspaces/hetzner1/sites/demo/dev | field status); [ "$st" = ready ] && break; sleep 0.25; done
 expect "dev becomes ready (control ping with token)" ready "$st"
 grep -q '^CF_DEV_PORT=' "$WORK/run/dev/demo.env" && grep -q '^COUCHFUSION_CONTROL_TOKEN=' "$WORK/run/dev/demo.env" && ok "dev env file written" || bad "dev env file"
+grep -qx "COUCHFUSION_AGENT_MARKER=$WORK/run/dev/demo.agent-running" "$WORK/run/dev/demo.env" && ok "dev env carries the agent marker path" || bad "agent marker env"
 for _ in $(seq 1 30); do [ -f "$APP/app/content-builder/component-definitions.json" ] && break; sleep 0.2; done
 sleep 0.5
 curl -s "${TS[@]}" $U/workspaces/hetzner1/sites/demo/components | grep -q '"status":"ready"' && ok "registry ready" || bad "registry"
@@ -150,17 +161,58 @@ expect "delete job" succeeded "$js"
 curl -s "${TS[@]}" $U/workspaces/hetzner1/sites/demo/components | grep -q '"id":"phil"' && bad "phil still registered" || ok "registry no longer lists phil"
 curl -s "${TS[@]}" -N --max-time 2 "$U/jobs/$JOB/events" | grep -q 'event: job' && ok "job SSE replay" || bad "job SSE"
 
+waitjob() { local id=$1 st=""; for _ in $(seq 1 80); do st=$(curl -s "${TS[@]}" $U/jobs/$id | jq -r .data.status); [ "$st" = succeeded ] || [ "$st" = failed ] && break; sleep 0.25; done; echo "$st"; }
+C=$U/workspaces/hetzner1/sites/demo/components
+CONTENT=$APP/app/components/content
+
+echo "== source"
+SRC=$(curl -s "${TS[@]}" $C/network-hero/source)
+echo "$SRC" | jq -e '.data.path == "app/components/content/NetworkHero.vue" and .data.truncated == false and (.data.content|length) > 100 and (.data.sha256|length) == 64 and .data.size > 100' >/dev/null && ok "component source" || bad "source: $(echo "$SRC" | head -c 200)"
+expect "source of unknown component → 404" 404 "$(code "${TS[@]}" $C/nope/source)"
+
+echo "== trash and restore"
+TR=$(curl -s "${TS[@]}" $C/trash)
+echo "$TR" | jq -e --arg j "$JOB" '.data[0].trashId == $j and .data[0].componentId == "phil" and .data[0].source == "app/components/content/Phil.vue" and .data[0].restorable == true' >/dev/null && ok "trash lists phil (restorable)" || bad "trash: $TR"
+RJ=$(curl -s "${MUT[@]}" -X POST -d '{}' $C/trash/$JOB/restore | field id)
+expect "restore job" succeeded "$(waitjob "$RJ")"
+cmp -s "$CONTENT/Phil.vue" "$WORK/state/trash/$JOB/app/components/content/Phil.vue" && ok "file restored (trashed copy kept)" || bad "restore file"
+curl -s "${TS[@]}" $C | grep -q '"id":"phil"' && ok "registry lists phil again" || bad "registry after restore"
+curl -s "${TS[@]}" $U/jobs/$RJ | jq -e '.data.result.componentId == "phil"' >/dev/null && ok "restore result" || bad "restore result"
+expect "restore twice → 409" 409 "$(code "${MUT[@]}" -X POST -d '{}' $C/trash/$JOB/restore)"
+expect "restore unknown → 404" 404 "$(code "${MUT[@]}" -X POST -d '{}' $C/trash/nope/restore)"
+SHA2=$(curl -s "${TS[@]}" $C/phil/usage | field sha256)
+J2=$(curl -s "${MUT[@]}" -X DELETE -d "{\"expectedSha256\":\"$SHA2\",\"acknowledgeUsage\":true}" $C/phil | field id)
+expect "second delete" succeeded "$(waitjob "$J2")"
+echo '<template>other</template>' > "$CONTENT/Phil.vue"
+curl -s "${TS[@]}" $C/trash | jq -e --arg j "$J2" '.data[] | select(.trashId == $j) | .restorable == false and (.problem | test("already exists"))' >/dev/null && ok "trash entry not restorable while a file exists" || bad "restorable flag"
+expect "restore onto an existing file → 409" 409 "$(code "${MUT[@]}" -X POST -d '{}' $C/trash/$J2/restore)"
+grep -q 'other' "$CONTENT/Phil.vue" && ok "existing file untouched" || bad "existing file overwritten"
+rm -f "$CONTENT/Phil.vue"; sleep 1
+RJ2=$(curl -s "${MUT[@]}" -X POST -d '{}' $C/trash/$J2/restore | field id)
+expect "restore after removing the file" succeeded "$(waitjob "$RJ2")"
+
+echo "== registry rebuild"
+RB=$(curl -s "${MUT[@]}" -X POST -d '{}' $C/registry/rebuild | field id)
+expect "rebuild job (cf-registry oneshot)" succeeded "$(waitjob "$RB")"
+curl -s "${TS[@]}" $U/jobs/$RB | jq -e '.data.result.components >= 14' >/dev/null && ok "rebuild result counts components" || bad "rebuild result"
+
 echo "== generate (fake codex)"
 expect "generate without Idempotency-Key → 422" 422 "$(code "${MUT[@]}" -X POST -d '{"prompt":"pricing table"}' $U/workspaces/hetzner1/sites/demo/components/generate)"
 GJ=$(curl -s "${MUT[@]}" -H 'Idempotency-Key: k1' -X POST -d '{"prompt":"pricing table"}' $U/workspaces/hetzner1/sites/demo/components/generate | field id)
 GJ2=$(curl -s "${MUT[@]}" -H 'Idempotency-Key: k1' -X POST -d '{"prompt":"pricing table"}' $U/workspaces/hetzner1/sites/demo/components/generate | field id)
 expect "idempotent retry returns same job" "$GJ" "$GJ2"
+MARK=$WORK/run/dev/demo.agent-running; seen=no
+for _ in $(seq 1 20); do [ -f "$MARK" ] && { seen=yes; break; }; sleep 0.1; done
+expect "agent marker exists while generating" yes "$seen"
 for _ in $(seq 1 120); do js=$(curl -s "${TS[@]}" $U/jobs/$GJ | jq -r .data.status); [ "$js" = succeeded ] || [ "$js" = failed ] && break; sleep 0.25; done
 expect "generate job" succeeded "$js"
 R=$(curl -s "${TS[@]}" $U/jobs/$GJ)
 echo "$R" | jq -e '.data.result.componentId == "pricing-table"' >/dev/null && ok "generated componentId" || bad "componentId: $R"
 echo "$R" | grep -q 'prop `tone`' && ok "builderFieldMeta lint warning" || bad "lint"
 echo "$R" | grep -q 'cat app/components' && bad "raw command leaked" || ok "raw command hidden"
+echo "$R" | jq -e '.data.result.usage == {"inputTokens":100,"cachedInputTokens":30,"outputTokens":20}' >/dev/null && ok "usage captured" || bad "usage: $(echo "$R" | jq -c .data.result.usage)"
+echo "$R" | jq -e '[.data.events[].code] | index("codex.usage")' >/dev/null && ok "codex.usage event" || bad "codex.usage event"
+[ ! -e "$MARK" ] && ok "agent marker removed after the job" || bad "agent marker left behind"
 
 echo "== git"
 expect "repos" 200 "$(code "${TS[@]}" $U/workspaces/hetzner1/repos)"
@@ -173,10 +225,21 @@ for _ in $(seq 1 40); do js=$(curl -s "${TS[@]}" $U/jobs/$CJ | jq -r .data.statu
 expect "commit job" succeeded "$js"
 git -C "$APP" log -1 --format=%B | grep -q 'Committed-Via: couchfusion-cp' && ok "commit trailer" || bad "trailer"
 
+echo "== services (read-only)"
+SV=$(curl -s "${TS[@]}" $U/services)
+echo "$SV" | jq -e '(.data|length) == 2 and .data[0].unit == "kangu.service" and .data[0].activeState == "active" and .data[0].mainPid == 4242 and .data[0].kind == "adopted" and .data[0].since == "2026-10-29T18:53:20Z" and .data[0].user == "radu" and .data[1].kind == "dev" and .data[1].activeState == "inactive" and (.data[1] | has("mainPid") | not)' >/dev/null && ok "services list" || bad "services: $SV"
+LG=$(curl -s "${TS[@]}" "$U/services/kangu.service/logs?lines=50")
+echo "$LG" | jq -e '(.data|length) == 2 and .data[0].text == "started kangu" and .data[1].stream == "stderr" and .data[0].time == "2026-10-29T18:53:20Z"' >/dev/null && ok "service logs" || bad "logs: $LG"
+echo "$LG" | grep -q 'c2VjcmV0dG9rZW4' && bad "session cookie leaked in logs" || ok "service logs redacted"
+expect "logs of a unit outside the allowlist → 404" 404 "$(code "${TS[@]}" $U/services/ssh.service/logs)"
+expect "logs lines out of range → 422" 422 "$(code "${TS[@]}" "$U/services/kangu.service/logs?lines=5000")"
+
 echo "== site SSE"
-sleep 0.5; kill $EVPID 2>/dev/null || true
+sleep 0.5; kill $EVPID $EVPID2 2>/dev/null || true
 grep -q '"type":"dev.status"' "$WORK/events.sse" && grep -q '"type":"registry.changed"' "$WORK/events.sse" && grep -q '"type":"job"' "$WORK/events.sse" && ok "site stream carried dev.status, registry.changed and job" || bad "site SSE"
 grep -q '"type":"log"' "$WORK/events.sse" && ok "site stream carried dev logs" || bad "dev logs"
+grep -q "\"url\":\"http://127.0.0.1:$SLOT\"" "$WORK/events-tunnel.sse" && ! grep -q "\"url\":\"https://" "$WORK/events-tunnel.sse" && ok "tunnel SSE dev.url is the tunnel origin" || bad "tunnel SSE dev.url"
+grep -q "\"url\":\"https://$HOSTNAME_TS:$SLOT\"" "$WORK/events.sse" && ok "tailnet SSE dev.url is the tailnet origin" || bad "tailnet SSE dev.url"
 
 echo "== dev stop"
 expect "dev stop → 202" 202 "$(code "${MUT[@]}" -X POST -d '{}' $U/workspaces/hetzner1/sites/demo/dev/stop)"

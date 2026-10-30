@@ -102,7 +102,7 @@ impl DevManager {
             before != after
         };
         if changed {
-            // Site events carry the tailnet URL; the SPA rewrites to its own origin if needed.
+            // Stored with the tailnet URL; the site SSE handler rewrites `dev.url` per subscriber.
             let caller = CallerOrigin { tailnet: true, host: self.config.server.public_host.clone() };
             if let Some(view) = self.view(site, &caller) {
                 self.hub.dev_status(site, view);
@@ -148,9 +148,10 @@ impl DevManager {
         let host = &self.config.server.public_host;
         let control = self.config.server.control_port;
         let body = format!(
-            "# Written by couchfusion-server on each dev start. Do not edit.\nCF_DEV_PORT={dev}\nCOUCHFUSION_CONTROL_TOKEN={token}\nCOUCHFUSION_PUBLIC_ORIGIN=https://{host}:{slot}\nNUXT_PUBLIC_CONTENT_CONTROL_PLANE_ORIGINS=https://{host}:{control},http://localhost:{control}\n",
+            "# Written by couchfusion-server on each dev start. Do not edit.\nCF_DEV_PORT={dev}\nCOUCHFUSION_CONTROL_TOKEN={token}\nCOUCHFUSION_PUBLIC_ORIGIN=https://{host}:{slot}\nNUXT_PUBLIC_CONTENT_CONTROL_PLANE_ORIGINS=https://{host}:{control},http://localhost:{control}\nCOUCHFUSION_AGENT_MARKER={marker}\n",
             dev = cfg.dev_port,
             slot = cfg.slot_port,
+            marker = self.config.agent_marker(&cfg.id).display(),
         );
         let tmp = path.with_extension("env.tmp");
         {

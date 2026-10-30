@@ -12,6 +12,8 @@ export const BRIDGE_CAPABILITIES = ['component.delete', 'component.create', 'rel
 export const BRIDGE_RATE_LIMIT = 5
 export const BRIDGE_RATE_WINDOW_MS = 1000
 export const BRIDGE_RELOAD_FALLBACK_MS = 3000
+/** After the child acknowledged it is reloading, wait this long for its next `ready` (slow dev compiles). */
+export const BRIDGE_RELOAD_ACKED_TIMEOUT_MS = 90000
 export const BRIDGE_PROMPT_HINT_MAX = 2048
 const COMPONENT_ID = /^[a-z][a-z0-9-]{0,127}$/
 
@@ -133,7 +135,15 @@ export function createBuilderBridge(options: BuilderBridgeOptions) {
         return true
       }
       case 'cf:host.reload.ack':
-        if (payload.reloading === false) {
+        if (payload.reloading === true) {
+          // The child is reloading itself: do not force a second load after 3 s just because the
+          // dev server compiles slowly. Keep only a long safety net in case it never comes back.
+          clearReloadFallback()
+          reloadFallback = schedule(() => {
+            reloadFallback = undefined
+            forceReload()
+          }, BRIDGE_RELOAD_ACKED_TIMEOUT_MS)
+        } else if (payload.reloading === false) {
           clearReloadFallback()
           const reason = typeof payload.reason === 'string' ? payload.reason : 'unsaved'
           reloadDeferred.value = reason
@@ -198,8 +208,9 @@ export function createBuilderBridge(options: BuilderBridgeOptions) {
 
   /**
    * Asks the child to reload. Falls back to re-mounting the frame when the child is not
-   * connected, or when no new `ready` arrives within 3 s. An unsaved-changes ack cancels the
-   * fallback so the parent never discards the user's work.
+   * connected, or when it neither acknowledges nor sends a new `ready` within 3 s. A
+   * `reloading: true` ack extends the wait to 90 s; an unsaved-changes ack cancels the fallback
+   * so the parent never discards the user's work.
    */
   function requestReload(reason: string, focusComponentId?: string) {
     if (focusComponentId) pendingFocus = focusComponentId

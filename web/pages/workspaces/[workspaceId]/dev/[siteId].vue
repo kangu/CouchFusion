@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '../../../../assets/css/dev-session.css'
-import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, JobSnapshot, SiteEvent } from '../../../../types/api'
+import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, ComponentRestoreResult, JobSnapshot, SiteEvent, TrashEntry } from '../../../../types/api'
 import { createBuilderBridge, type BridgeTarget } from '../../../../composables/useBuilderBridge'
 import { createComponentDelete } from '../../../../composables/useComponentDelete'
+import { createComponentsPanel } from '../../../../composables/useComponentsPanel'
 import { createDevSession } from '../../../../composables/useDevSession'
 import { createGitRepos } from '../../../../composables/useGitRepos'
 import { createJobTracker, isTerminalJob } from '../../../../composables/useJobTracker'
@@ -29,10 +30,16 @@ const dev = createDevSession(api, workspaceId, siteId)
 const git = createGitRepos(api, workspaceId)
 const remove = createComponentDelete(api, workspaceId, siteId)
 const tracker = createJobTracker(api)
+const panel = createComponentsPanel(api, workspaceId, siteId)
+const bootstrap = useBootstrap()
+const canViewSource = computed(() => bootstrap.has('component-source'))
+const canUseTrash = computed(() => bootstrap.has('component-trash'))
+const canRebuild = computed(() => bootstrap.has('registry-rebuild'))
+const componentsTab = ref<'registry' | 'trash'>('registry')
 
 const LOG_LIMIT = 800
 const logs = ref<ActivityEvent[]>([])
-const drawer = ref<'agent' | 'git' | 'logs' | null>(null)
+const drawer = ref<'agent' | 'git' | 'logs' | 'components' | null>(null)
 const notice = ref('')
 
 // ---- iframe + bridge ----
@@ -103,7 +110,46 @@ function handleSiteEvent(event: SiteEvent) {
     tracker.update(event.job)
   } else if (event.type === 'registry.changed') {
     void git.load()
+    if (drawer.value === 'components') void refreshComponents()
   }
+}
+
+// ---- components drawer (phase 2) ----
+async function openComponents(tab: 'registry' | 'trash' = componentsTab.value) {
+  componentsTab.value = tab
+  drawer.value = 'components'
+  await refreshComponents()
+}
+
+async function refreshComponents() {
+  await Promise.all([panel.loadRegistry(), canUseTrash.value ? panel.loadTrash() : Promise.resolve()])
+}
+
+async function restoreComponent(entry: TrashEntry) {
+  const job = await panel.restore(entry)
+  if (!job) return
+  const done = await tracker.track(job)
+  await panel.finish(done)
+  if (done.status === 'succeeded') {
+    const result = done.result as ComponentRestoreResult | undefined
+    reloadEverywhere('component.restored', result?.componentId ?? entry.componentId)
+    void git.load()
+  }
+}
+
+async function rebuildRegistry() {
+  const job = await panel.rebuild()
+  if (!job) return
+  const done = await tracker.track(job)
+  await panel.finish(done)
+  if (done.status === 'succeeded') reloadEverywhere('registry.rebuilt')
+}
+
+/** Delete started from the Components drawer (no builder request to answer). */
+async function openDeleteFromPanel(componentId: string) {
+  if (remove.componentId.value) return
+  requestOrigin.value = undefined
+  await remove.open(componentId)
 }
 
 // ---- delete ----
@@ -131,13 +177,15 @@ async function confirmDelete() {
   origin?.bridge.reply(origin.requestId, 'accepted', { componentId })
   requestOrigin.value = undefined
   remove.close()
-  drawer.value = 'logs'
+  // A delete requested by the builder follows in Activity; one from the Components drawer stays there.
+  if (origin || drawer.value !== 'components') drawer.value = 'logs'
   const done = await tracker.track(job)
   if (done.status === 'succeeded') {
     const result = done.result as ComponentDeleteResult | undefined
     origin?.bridge.reply(origin.requestId, 'done', { componentId: result?.componentId ?? componentId })
     reloadEverywhere('component.deleted')
     void git.load()
+    if (drawer.value === 'components') void refreshComponents()
   } else {
     const message = done.error?.message ?? `Delete ${done.status}.`
     origin?.bridge.reply(origin.requestId, 'failed', { message })
@@ -283,6 +331,7 @@ onBeforeUnmount(() => {
 
       <div class="dev-bar__group dev-bar__group--end">
         <button class="dev-btn dev-btn--accent" type="button" :disabled="!dev.ready.value" @click="openAgent('')">New component</button>
+        <button class="dev-btn" type="button" :aria-pressed="drawer === 'components'" @click="drawer === 'components' ? (drawer = null) : openComponents()">Components</button>
         <button class="dev-btn" type="button" :aria-pressed="drawer === 'git'" @click="drawer === 'git' ? (drawer = null) : openGit()">
           Git <span v-if="git.dirtyCount.value" class="dev-badge">{{ git.dirtyCount.value }}</span>
         </button>
@@ -355,6 +404,27 @@ onBeforeUnmount(() => {
         @close="drawer = null"
       />
       <DevLogsDrawer v-else-if="drawer === 'logs'" :logs="logs" :jobs="jobs" @close="drawer = null" />
+      <DevComponentsDrawer
+        v-else-if="drawer === 'components'"
+        v-model:tab="componentsTab"
+        :registry="panel.registry.value"
+        :components="panel.components.value"
+        :trash="panel.trash.value"
+        :loading-registry="panel.loadingRegistry.value"
+        :loading-trash="panel.loadingTrash.value"
+        :busy="panel.busy.value"
+        :error="panel.error.value"
+        :can-rebuild="canRebuild"
+        :can-delete="dev.ready.value"
+        :can-view-source="canViewSource"
+        :can-use-trash="canUseTrash"
+        @rebuild="rebuildRegistry"
+        @view-source="panel.openSource"
+        @delete="openDeleteFromPanel"
+        @restore="restoreComponent"
+        @refresh="refreshComponents"
+        @close="drawer = null"
+      />
     </main>
 
     <DevDeleteModal
@@ -365,8 +435,19 @@ onBeforeUnmount(() => {
       :loading="remove.loading.value"
       :submitting="remove.submitting.value"
       :error="remove.error.value"
+      :can-view-source="canViewSource"
       @confirm="confirmDelete"
       @cancel="cancelDelete"
+      @view-source="panel.openSource"
+    />
+
+    <DevSourceViewer
+      v-if="panel.sourceId.value"
+      :component-id="panel.sourceId.value"
+      :source="panel.source.value"
+      :loading="panel.loadingSource.value"
+      :error="panel.sourceError.value"
+      @close="panel.closeSource()"
     />
   </div>
 </template>

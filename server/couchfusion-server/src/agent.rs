@@ -23,6 +23,18 @@ pub const VPS_LINE: &str = "The dev server is managed by CouchFusion; never star
 /// Unattended-run line: repository instructions that ask the user questions must not block.
 pub const UNATTENDED_LINE: &str = "This is a non-interactive run: do not ask questions. Where repository instructions say to stop and ask, the answers are: the target is this application; the component is a dynamic content-builder component (props and slots exposed); use the existing styling conventions; mark user-facing copy as localized where i18n is enabled; add no dependencies.";
 
+/// Phase 2: keep runs short. Type-checking a Nuxt app took ~2.5 of 3.5 minutes on hetzner1.
+pub const VALIDATION_LINE: &str = "Validation for this run: run only the registry generator (`bun run registry:build`). Do not run `nuxi typecheck`, `vue-tsc`, `nuxt build`, lint, or tests; the control plane validates the registry itself.";
+
+/// Token usage reported by codex `turn.completed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSpec {
@@ -34,7 +46,7 @@ pub struct RunSpec {
 
 pub fn build_prompt(user_prompt: &str) -> String {
     format!(
-        "{DEVELOPER_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n\nFollow this first-party skill:\n\n{SKILL}\n\n---\n\nComponent request:\n\n{}\n",
+        "{DEVELOPER_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n{VALIDATION_LINE}\n\nFollow this first-party skill:\n\n{SKILL}\n\n---\n\nComponent request:\n\n{}\n",
         user_prompt.trim()
     )
 }
@@ -86,7 +98,7 @@ pub enum AgentEvent {
     Thread(String),
     Event { level: &'static str, code: &'static str, text: String },
     Files(Vec<String>),
-    TurnCompleted(String),
+    TurnCompleted { text: String, usage: Option<Usage> },
     Failed(String),
     /// The sandbox could not be applied: fail closed, never retry unsandboxed.
     SandboxFailure(String),
@@ -119,11 +131,16 @@ pub fn map_event(line: &str, app_dir: &Path) -> Option<AgentEvent> {
         "turn.started" => Some(AgentEvent::Event { level: "info", code: "codex.turn", text: "Codex started working.".into() }),
         "turn.completed" => {
             let u = &v["usage"];
-            Some(AgentEvent::TurnCompleted(format!(
-                "Codex finished (tokens in {}, out {}).",
-                u["input_tokens"].as_u64().unwrap_or(0),
-                u["output_tokens"].as_u64().unwrap_or(0)
-            )))
+            let usage = u.is_object().then(|| Usage {
+                input_tokens: u["input_tokens"].as_u64().unwrap_or(0),
+                cached_input_tokens: u["cached_input_tokens"].as_u64().unwrap_or(0),
+                output_tokens: u["output_tokens"].as_u64().unwrap_or(0),
+            });
+            let text = match usage {
+                Some(u) => format!("Codex finished (tokens in {}, out {}).", u.input_tokens, u.output_tokens),
+                None => "Codex finished.".to_string(),
+            };
+            Some(AgentEvent::TurnCompleted { text, usage })
         }
         "turn.failed" | "thread.failed" => {
             let msg = v["error"]["message"].as_str().or(v["message"].as_str()).unwrap_or("Codex turn failed.").to_string();
@@ -185,11 +202,25 @@ mod tests {
         // raw commands never appear
         assert!(events.iter().all(|e| !format!("{e:?}").contains("wc -c")));
         assert!(events.iter().any(|e| matches!(e, AgentEvent::Event { code: "codex.command", text, .. } if text == "Reading project files")));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnCompleted(t) if t.contains("in 38692"))));
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnCompleted { text, usage: Some(u) } if text.contains("in 38692") && u.input_tokens == 38692)));
         assert!(events.iter().any(|e| matches!(e, AgentEvent::Event { code: "codex.reasoning", level: "debug", .. })));
         assert!(events.iter().any(|e| matches!(e, AgentEvent::Event { code: "codex.error", .. })));
         // unknown types ignored: 12 lines, item.started lines and something.new dropped
         assert_eq!(events.len(), 9);
+    }
+
+    #[test]
+    fn usage_capture() {
+        let e = map_event(r#"{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}"#, Path::new("/"));
+        assert_eq!(
+            e,
+            Some(AgentEvent::TurnCompleted {
+                text: "Codex finished (tokens in 100, out 20).".into(),
+                usage: Some(Usage { input_tokens: 100, cached_input_tokens: 40, output_tokens: 20 })
+            })
+        );
+        let e = map_event(r#"{"type":"turn.completed"}"#, Path::new("/"));
+        assert_eq!(e, Some(AgentEvent::TurnCompleted { text: "Codex finished.".into(), usage: None }));
     }
 
     #[test]
@@ -203,6 +234,8 @@ mod tests {
         let p = build_prompt("  A pricing table  ");
         assert!(p.starts_with(DEVELOPER_INSTRUCTIONS));
         assert!(p.contains(VPS_LINE));
+        assert!(p.contains(VALIDATION_LINE));
+        assert!(p.contains("Do not run `nuxi typecheck`"));
         assert!(p.contains("couchfusion-component-builder") || p.contains("builderFieldMeta"));
         assert!(p.trim_end().ends_with("A pricing table"));
     }

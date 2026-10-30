@@ -29,6 +29,10 @@ systemctl = "/usr/bin/systemctl"
 journalctl = "/usr/bin/journalctl"
 codex = "/opt/couchfusion/toolchain/bin/codex"
 
+# Phase 2: read-only status/logs in the control UI (no start/stop). Missing section = this list.
+[services]
+units = ["kangu.service", "clients-kangu.service", "clients-kangu-dev.service", "mindarchy.service", "caddy.service", "couchdb.service", "email-sender.service", "cf-dev@radustanciu.service", "couchfusion.service"]
+
 [[sites]]
 id = "radustanciu"
 slot_port = 9181

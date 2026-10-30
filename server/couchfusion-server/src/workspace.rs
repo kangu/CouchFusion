@@ -238,6 +238,44 @@ pub fn read_contained(root: &Path, rel: &str) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Creates `root/rel` with `O_CREAT|O_EXCL` (never overwrites), walking existing directories
+/// with `O_NOFOLLOW`, writes `bytes`, sets `mode` explicitly (umask-independent) and fsyncs the
+/// file and its directory. Fails with `AlreadyExists` if anything is at `rel` already.
+pub fn create_contained(root: &Path, rel: &str, bytes: &[u8], mode: u32) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe path");
+    let segments: Vec<&str> = rel.split('/').collect();
+    if segments.iter().any(|s| s.is_empty() || *s == "." || *s == "..") {
+        return Err(invalid());
+    }
+    let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC;
+    let root_c = CString::new(root.as_os_str().as_bytes()).map_err(|_| invalid())?;
+    // SAFETY: plain open(2) of the root directory; the fd is wrapped immediately.
+    let raw = unsafe { libc::open(root_c.as_ptr(), (dir_flags.bits()) as libc::c_int) };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut dir = unsafe { OwnedFd::from_raw_fd(raw) };
+    let (last, parents) = segments.split_last().ok_or_else(invalid)?;
+    for seg in parents {
+        dir = openat(&dir, *seg, dir_flags | OFlag::O_NOFOLLOW, Mode::empty()).map_err(std::io::Error::from)?;
+    }
+    let fd = openat(
+        &dir,
+        *last,
+        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(std::io::Error::from)?;
+    let mut file = File::from(fd);
+    file.write_all(bytes)?;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    file.sync_all()?;
+    File::from(dir).sync_all()?;
+    Ok(())
+}
+
 const SKIP_DIRS: &[&str] = &["node_modules", ".nuxt", ".output", ".git", ".data", "dist", "test-results", ".cache"];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>, filter: &dyn Fn(&Path) -> bool) {
@@ -538,6 +576,38 @@ mod tests {
         rename_contained(&f, &target).unwrap();
         assert!(target.exists());
         assert!(!d.join("app/components/content/Real.vue").exists());
+    }
+
+    #[test]
+    fn create_contained_is_exclusive_and_sets_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        std::fs::create_dir_all(d.join("app/components/content")).unwrap();
+        create_contained(d, "app/components/content/New.vue", b"x", 0o664).unwrap();
+        let meta = std::fs::metadata(d.join("app/components/content/New.vue")).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o664);
+        let err = create_contained(d, "app/components/content/New.vue", b"y", 0o664).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(d.join("app/components/content/New.vue")).unwrap(), b"x");
+        assert!(create_contained(d, "app/components/../x.vue", b"y", 0o664).is_err());
+    }
+
+    #[test]
+    fn create_contained_refuses_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.join("app/components")).unwrap();
+        symlink(outside.path(), d.join("app/components/content")).unwrap();
+        assert!(create_contained(d, "app/components/content/X.vue", b"y", 0o664).is_err());
+        assert!(!outside.path().join("X.vue").exists());
+        // A dangling symlink at the final name is not followed either.
+        std::fs::remove_file(d.join("app/components/content")).unwrap();
+        std::fs::create_dir_all(d.join("app/components/content")).unwrap();
+        symlink(outside.path().join("Y.vue"), d.join("app/components/content/Y.vue")).unwrap();
+        assert!(create_contained(d, "app/components/content/Y.vue", b"y", 0o664).is_err());
+        assert!(!outside.path().join("Y.vue").exists());
     }
 
     #[test]

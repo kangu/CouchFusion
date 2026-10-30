@@ -75,6 +75,10 @@ class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True; allow_reuse_address = True
 
 if __name__ == "__main__":
+    if "--once" in sys.argv:
+        # Fake `cf-registry@` oneshot: regenerate the registry once and exit.
+        regenerate()
+        sys.exit(0)
     print(f"fake dev on 127.0.0.1:{PORT} token={'set' if TOKEN else 'missing'}", flush=True)
     threading.Thread(target=watcher, daemon=True).start()
     time.sleep(1.0)  # emulate warm-up

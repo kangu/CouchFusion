@@ -3,6 +3,7 @@ const route = useRoute()
 const { activeWorkspaceId } = useWorkspace()
 const menuOpen = ref(false)
 const onboarding = useOnboarding()
+const bootstrap = useBootstrap()
 
 onMounted(() => { void onboarding.load().catch(() => undefined) })
 
@@ -15,6 +16,8 @@ const primaryNavigation = computed(() => [
   { label: 'Workspaces', to: '/', index: '02' },
   { label: 'Activity', to: '/activity', index: '03' },
   { label: 'System', to: '/system', index: '04' },
+  // Rust control plane only (phase 2): read-only systemd units on the server.
+  ...(bootstrap.has('services') ? [{ label: 'Services', to: '/services', index: '05' }] : []),
 ])
 
 const workspaceNavigation = computed(() => activeWorkspaceId.value ? [

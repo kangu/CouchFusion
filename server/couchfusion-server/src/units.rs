@@ -91,6 +91,59 @@ impl Units {
         }
     }
 
+    /// Runs a oneshot unit to completion (`systemctl start` blocks for `Type=oneshot`; locally
+    /// the process is awaited). Errors if it fails or exceeds `timeout`.
+    pub async fn run_oneshot(&self, unit: &str, timeout: Duration) -> anyhow::Result<()> {
+        check_unit_name(unit)?;
+        match self.kind {
+            RunnerKind::Systemd => match tokio::time::timeout(timeout, self.systemctl(&["start", unit])).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let _ = self.systemctl(&["stop", unit]).await;
+                    bail!("{unit} did not finish within {}s", timeout.as_secs())
+                }
+            },
+            RunnerKind::ProcessGroup => {
+                if let Some(p) = self.local.lock().expect("local lock").remove(unit) {
+                    // A finished previous run; drop it so a new one can start.
+                    drop(p);
+                }
+                self.local_start(unit)?;
+                let deadline = tokio::time::Instant::now() + timeout;
+                loop {
+                    let state = self.local_state(unit);
+                    if let Some(code) = state.exit_status {
+                        if code == 0 {
+                            return Ok(());
+                        }
+                        bail!("{unit} exited with status {code}");
+                    }
+                    if tokio::time::Instant::now() > deadline {
+                        let _ = self.local_stop(unit).await;
+                        bail!("{unit} did not finish within {}s", timeout.as_secs());
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+
+    /// Last `lines` journal messages of a unit (systemd only; empty for local units).
+    pub async fn journal_tail(&self, unit: &str, lines: u32) -> Vec<String> {
+        if self.kind != RunnerKind::Systemd || check_unit_name(unit).is_err() {
+            return vec![];
+        }
+        let out = Command::new(&self.journalctl)
+            .args(["-u", unit, "-n", &lines.to_string(), "-o", "cat", "--no-pager"])
+            .stdin(Stdio::null())
+            .output()
+            .await;
+        match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect(),
+            Err(_) => vec![],
+        }
+    }
+
     pub async fn state(&self, unit: &str) -> anyhow::Result<UnitState> {
         check_unit_name(unit)?;
         match self.kind {
@@ -268,7 +321,7 @@ fn pump(reader: impl AsyncRead + Unpin + Send + 'static, priority: u8, tx: broad
 }
 
 fn check_unit_name(unit: &str) -> anyhow::Result<()> {
-    let ok = ["cf-dev@", "cf-agent@"].iter().any(|p| {
+    let ok = ["cf-dev@", "cf-agent@", "cf-registry@"].iter().any(|p| {
         unit.strip_prefix(p)
             .and_then(|rest| rest.strip_suffix(".service"))
             .is_some_and(crate::config::valid_slug)
@@ -326,6 +379,8 @@ mod tests {
     fn unit_names_are_allowlisted() {
         assert!(check_unit_name("cf-dev@radustanciu.service").is_ok());
         assert!(check_unit_name("cf-agent@radustanciu.service").is_ok());
+        assert!(check_unit_name("cf-registry@radustanciu.service").is_ok());
+        assert!(check_unit_name("cf-registry@x.timer").is_err());
         assert!(check_unit_name("ssh.service").is_err());
         assert!(check_unit_name("cf-dev@../x.service").is_err());
         assert!(check_unit_name("cf-dev@Rad.service").is_err());

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  BRIDGE_RELOAD_ACKED_TIMEOUT_MS,
   BRIDGE_RELOAD_FALLBACK_MS,
   createBuilderBridge,
   type BridgeEnvelope,
@@ -158,6 +159,22 @@ describe('builder bridge (parent)', () => {
     fire()
     expect(reassignFrame).not.toHaveBeenCalled()
     expect(child.last('cf:host.component.focus')!.message.payload).toEqual({ componentId: 'pricing-table' })
+  })
+
+  it('waits for a slow reload once the child acknowledged it is reloading', () => {
+    const reassignFrame = vi.fn()
+    const { bridge, handshake, send, timers, fire } = setup({ reassignFrame })
+    const nonce = handshake()
+    bridge.requestReload('component.deleted')
+    const shortTimer = timers.at(-1)!
+    expect(shortTimer.delay).toBe(BRIDGE_RELOAD_FALLBACK_MS)
+    send('cf:host.reload.ack', { reloading: true }, { nonce })
+    expect(shortTimer.cancelled).toBe(true)
+    expect(timers.at(-1)!.delay).toBe(BRIDGE_RELOAD_ACKED_TIMEOUT_MS)
+    // The builder comes back after a slow compile: no second, forced load.
+    handshake()
+    fire()
+    expect(reassignFrame).not.toHaveBeenCalled()
   })
 
   it('never force-reloads over unsaved builder changes', () => {

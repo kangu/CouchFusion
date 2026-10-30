@@ -18,6 +18,7 @@ mod http;
 mod jobs;
 mod ops;
 mod proxy;
+mod services;
 mod store;
 mod units;
 mod util;

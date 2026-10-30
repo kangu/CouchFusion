@@ -28,8 +28,12 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}", get(workspace))
         .route(&format!("{site}/components"), get(components))
         .route(&format!("{site}/components/generate"), post(generate))
+        .route(&format!("{site}/components/trash"), get(trash_list))
+        .route(&format!("{site}/components/trash/{{tid}}/restore"), post(trash_restore))
+        .route(&format!("{site}/components/registry/rebuild"), post(registry_rebuild))
         .route(&format!("{site}/components/{{cid}}"), delete(delete_component))
         .route(&format!("{site}/components/{{cid}}/usage"), get(usage))
+        .route(&format!("{site}/components/{{cid}}/source"), get(source))
         .route(&format!("{site}/dev"), get(dev_view))
         .route(&format!("{site}/dev/start"), post(dev_start))
         .route(&format!("{site}/dev/stop"), post(dev_stop))
@@ -42,6 +46,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos/{repo}/status", get(repo_status))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/diff", get(repo_diff))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/commit", post(repo_commit))
+        .route("/api/v1/services", get(services))
+        .route("/api/v1/services/{unit}/logs", get(service_logs))
 }
 
 fn check_ws(app: &App, ws: &str) -> Result<(), ApiError> {
@@ -70,7 +76,16 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
         Bootstrap {
             version: "1",
             backend: "rust",
-            capabilities: vec!["dev-sessions", "component-delete", "component-generate", "git"],
+            capabilities: vec![
+                "dev-sessions",
+                "component-delete",
+                "component-generate",
+                "git",
+                "component-trash",
+                "component-source",
+                "registry-rebuild",
+                "services",
+            ],
             dev_origins: app.config.sites.iter().map(|s| origin.origin_for_port(s.slot_port)).collect(),
             workspace_id: app.config.workspace.id.clone(),
             site_id: app.config.sites.first().map(|s| s.id.clone()).unwrap_or_default(),
@@ -207,16 +222,38 @@ struct AfterQuery {
     after: Option<String>,
 }
 
-async fn site_events(State(app): S, Path((ws, site)): Path<(String, String)>, Query(q): Query<AfterQuery>, headers: HeaderMap) -> ApiResult {
+/// Serializes a site event for one subscriber: `dev.url` becomes the slot origin as that
+/// subscriber reaches it (tunnel callers are never handed the tailnet origin).
+pub fn site_event_json(event: &SiteEvent, slot_url: &str) -> String {
+    match &event.dev {
+        Some(dev) if dev.url != slot_url => {
+            let mut e = event.clone();
+            if let Some(d) = e.dev.as_mut() {
+                d.url = slot_url.to_string();
+            }
+            serde_json::to_string(&e).unwrap_or_default()
+        }
+        _ => serde_json::to_string(event).unwrap_or_default(),
+    }
+}
+
+async fn site_events(
+    State(app): S,
+    Extension(caller): Extension<Caller>,
+    Path((ws, site)): Path<(String, String)>,
+    Query(q): Query<AfterQuery>,
+    headers: HeaderMap,
+) -> ApiResult {
     let cfg = site_cfg(&app, &ws, &site)?;
     let cursor = resume_cursor(headers.get("last-event-id").and_then(|v| v.to_str().ok()), q.after.as_deref());
     let sub = app.hub.subscribe(&cfg.id, cursor);
+    let slot_url = caller.origin().origin_for_port(cfg.slot_port);
     Ok(sse_response(move |tx| async move {
         let mut rx = sub.rx;
         let mut last = cursor;
         for e in sub.replay {
             last = e.seq;
-            if tx.send(sse_frame(e.seq, "site", &serde_json::to_string(&e).unwrap_or_default())).await.is_err() {
+            if tx.send(sse_frame(e.seq, "site", &site_event_json(&e, &slot_url))).await.is_err() {
                 return;
             }
         }
@@ -224,7 +261,7 @@ async fn site_events(State(app): S, Path((ws, site)): Path<(String, String)>, Qu
             match rx.recv().await {
                 Ok(e) if e.seq > last => {
                     last = e.seq;
-                    if tx.send(sse_frame(e.seq, "site", &serde_json::to_string(&e).unwrap_or_default())).await.is_err() {
+                    if tx.send(sse_frame(e.seq, "site", &site_event_json(&e, &slot_url))).await.is_err() {
                         return;
                     }
                 }
@@ -254,6 +291,49 @@ async fn generate(State(app): S, Path((ws, site)): Path<(String, String)>, heade
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let job = crate::ops::generate_component(app, cfg, req.prompt, key).await?;
     Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn source(State(app): S, Path((ws, site, cid)): Path<(String, String, String)>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::OK, crate::ops::component_source(&app, &cfg, &cid).await?))
+}
+
+async fn trash_list(State(app): S, Path((ws, site)): Path<(String, String)>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::OK, crate::ops::trash_list(&app, &cfg)?))
+}
+
+async fn trash_restore(State(app): S, Path((ws, site, tid)): Path<(String, String, String)>, JsonBody(_): JsonBody<Empty>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::ACCEPTED, crate::ops::restore_component(app, cfg, tid).await?))
+}
+
+async fn registry_rebuild(State(app): S, Path((ws, site)): Path<(String, String)>, JsonBody(_): JsonBody<Empty>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::ACCEPTED, crate::ops::rebuild_registry(app, cfg).await?))
+}
+
+// ---- services (read-only) ----
+
+async fn services(State(app): S) -> Response {
+    data(StatusCode::OK, app.services.list().await)
+}
+
+#[derive(Deserialize)]
+struct LogsQuery {
+    lines: Option<String>,
+}
+
+async fn service_logs(State(app): S, Path(unit): Path<String>, Query(q): Query<LogsQuery>) -> ApiResult {
+    if !app.services.allowed(&unit) {
+        return Err(ApiError::not_found("Service not found."));
+    }
+    let lines = match q.lines.as_deref() {
+        None | Some("") => 200,
+        Some(v) => v.parse::<u32>().ok().filter(|n| (1..=1000).contains(n)).ok_or_else(|| ApiError::validation("lines must be 1–1000."))?,
+    };
+    let logs = app.services.logs(&unit, lines).await.map_err(|e| ApiError::new("unavailable", format!("Could not read the journal: {e:#}")))?;
+    Ok(data(StatusCode::OK, logs))
 }
 
 // ---- jobs ----
@@ -349,4 +429,41 @@ async fn repo_commit(State(app): S, Path((ws, repo)): Path<(String, String)>, Js
     repo_path(&app, &ws, &repo)?;
     let job = crate::ops::commit(app, repo, req.message, req.paths, req.expected_head).await?;
     Ok(data(StatusCode::ACCEPTED, job))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dev_event(url: &str) -> SiteEvent {
+        SiteEvent {
+            seq: 3,
+            kind: "dev.status",
+            time: "t".into(),
+            dev: Some(DevSessionView {
+                site_id: "s".into(),
+                unit: "cf-dev@s.service".into(),
+                status: DevStatus::Ready,
+                url: url.into(),
+                started_at: None,
+                memory_bytes: None,
+                needs_restart: None,
+                problem: None,
+            }),
+            log: None,
+            registry: None,
+            job: None,
+        }
+    }
+
+    #[test]
+    fn site_events_rewrite_dev_url_per_subscriber() {
+        let e = dev_event("https://h.ts.net:9181");
+        let tunnel: serde_json::Value = serde_json::from_str(&site_event_json(&e, "http://localhost:9181")).unwrap();
+        assert_eq!(tunnel["dev"]["url"], "http://localhost:9181");
+        let tailnet: serde_json::Value = serde_json::from_str(&site_event_json(&e, "https://h.ts.net:9181")).unwrap();
+        assert_eq!(tailnet["dev"]["url"], "https://h.ts.net:9181");
+        let other = SiteEvent { kind: "log", dev: None, ..dev_event("x") };
+        assert!(site_event_json(&other, "http://localhost:9181").contains("\"type\":\"log\""));
+    }
 }

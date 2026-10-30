@@ -81,3 +81,29 @@
 .dev-delete__usage ul { margin: 0; padding-left: 1.1rem; font: .72rem/1.6 var(--mono); }
 .dev-delete__ack { display: flex !important; align-items: center; gap: .6rem; margin: 1rem 0; text-transform: none !important; font-size: .74rem !important; color: var(--danger) !important; }
 .dev-delete__actions { margin-top: 1.4rem; }
+
+/* Phase 2: Components drawer, source viewer, token usage. */
+.dev-tabs__end { margin-left: auto; }
+.dev-components { display: grid; gap: .8rem; }
+.dev-components__status { display: flex; align-items: center; gap: .6rem; font: .66rem/1.4 var(--mono); }
+.dev-components__status .dev-pill { background: var(--ink); }
+.dev-components__list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line-paper); }
+.dev-components__row { display: flex; align-items: center; gap: .8rem; padding: .65rem 0; border-bottom: 1px solid var(--line-paper); }
+.dev-components__name { display: grid; gap: .15rem; min-width: 0; flex: 1 1 auto; }
+.dev-components__name strong { font: 700 .82rem/1.2 var(--mono); }
+.dev-components__name code, .dev-components__name small { font: .64rem/1.4 var(--mono); color: #4c5651; overflow-wrap: anywhere; }
+.dev-components__problem { color: var(--danger) !important; }
+.dev-components__actions { display: flex; gap: .35rem; flex: none; }
+.dev-drawer__usage { margin: 0; font: .64rem/1.4 var(--mono); color: #4c5651; }
+
+.dev-source { width: min(60rem, 100%); max-height: calc(100dvh - 2rem); display: flex; flex-direction: column; overflow: hidden; }
+.dev-source h2 { margin: 0 0 .8rem; font: 700 var(--display-section)/1 var(--display); text-transform: uppercase; }
+.dev-source__facts { display: grid; gap: .3rem; margin: 0 0 .8rem; font: .7rem/1.5 var(--mono); }
+.dev-source__facts div { display: grid; grid-template-columns: 5rem 1fr; gap: .6rem; align-items: center; }
+.dev-source__facts dt { color: #59625e; text-transform: uppercase; font-size: .6rem; }
+.dev-source__facts dd { margin: 0; overflow-wrap: anywhere; }
+.dev-source__facts .compact-button { margin-left: .4rem; }
+.dev-source__code { flex: 1 1 auto; min-height: 0; margin: 0; padding: .8rem 0; overflow: auto; background: #0b0f0e; color: #cfd7d2; font: .72rem/1.6 var(--mono); tab-size: 2; }
+.dev-source__line { display: block; padding-right: 1rem; white-space: pre; }
+.dev-source__line:hover { background: rgba(111, 228, 224, .06); }
+.dev-source__no { display: inline-block; width: var(--gutter, 4ch); margin-right: 1rem; padding-right: .6rem; border-right: 1px solid #26302d; color: #56645e; text-align: right; user-select: none; }

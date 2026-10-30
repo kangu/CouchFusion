@@ -22,6 +22,11 @@ const running = computed(() => !!props.job && !isTerminalJob(props.job))
 const result = computed(() => props.job?.result as ComponentGenerateResult | undefined)
 const canSubmit = computed(() => props.prompt.trim().length > 0 && !props.busy && !running.value)
 const events = computed(() => (props.job?.events ?? []).slice(-200))
+const usage = computed(() => result.value?.usage)
+
+function tokens(value: number) {
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 100000 ? 0 : 1)}k` : String(value)
+}
 
 function eventClass(code: string, level?: string) {
   if (level === 'error' || code.endsWith('failed') || code === 'policy.dependency_change') return 'dev-events__row--error'
@@ -68,8 +73,11 @@ function eventClass(code: string, level?: string) {
         <ul v-if="result.changedFiles.length" class="dev-drawer__files"><li v-for="file in result.changedFiles" :key="file"><code>{{ file }}</code></li></ul>
         <p v-for="warning in result.lint" :key="warning" class="notice">{{ warning }}</p>
         <p v-if="result.needsRestart" class="notice">Needs a dev restart: {{ result.needsRestart.reason }}</p>
-        <button class="compact-button" type="button" @click="emit('commit')">Commit…</button>
       </template>
+      <p v-if="usage" class="dev-drawer__usage" data-testid="codex-usage">
+        Tokens: {{ tokens(usage.inputTokens) }} in<template v-if="usage.cachedInputTokens"> ({{ tokens(usage.cachedInputTokens) }} cached)</template> · {{ tokens(usage.outputTokens) }} out
+      </p>
+      <button v-if="job.status === 'succeeded' && result" class="compact-button" type="button" @click="emit('commit')">Commit…</button>
     </section>
   </aside>
 </template>

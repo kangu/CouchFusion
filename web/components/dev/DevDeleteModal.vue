@@ -10,12 +10,14 @@ const props = defineProps<{
   submitting: boolean
   error: string
   acknowledged: boolean
+  canViewSource?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:acknowledged': [value: boolean]
   confirm: []
   cancel: []
+  viewSource: [componentId: string]
 }>()
 
 const gitLabels: Record<ComponentUsage['git'], string> = {
@@ -39,7 +41,7 @@ const canConfirm = computed(() => !!props.usage && !props.submitting && (!requir
       <p v-if="loading" class="empty-state">Checking file, git state and page usage…</p>
       <template v-else-if="usage">
         <dl class="dev-delete__facts">
-          <div><dt>File</dt><dd><code>{{ usage.source }}</code></dd></div>
+          <div><dt>File</dt><dd><code>{{ usage.source }}</code> <button v-if="canViewSource" class="compact-button" type="button" data-testid="view-source" @click="emit('viewSource', componentId)">View source</button></dd></div>
           <div><dt>SHA-256</dt><dd><code>{{ usage.sha256.slice(0, 16) }}…</code></dd></div>
           <div><dt>Git</dt><dd>{{ gitLabels[usage.git] }}</dd></div>
         </dl>

@@ -29,6 +29,49 @@ pub struct Config {
     /// Local unit definitions for the `process_group` runner, keyed by unit name.
     #[serde(default)]
     pub process_group: BTreeMap<String, LocalUnit>,
+    /// Read-only service status/logs (Phase 2).
+    #[serde(default)]
+    pub services: ServicesConfig,
+}
+
+/// Units whose status and recent logs the control plane may show (read-only).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServicesConfig {
+    #[serde(default = "default_service_units")]
+    pub units: Vec<String>,
+}
+
+impl Default for ServicesConfig {
+    fn default() -> Self {
+        Self { units: default_service_units() }
+    }
+}
+
+fn default_service_units() -> Vec<String> {
+    [
+        "kangu.service",
+        "clients-kangu.service",
+        "clients-kangu-dev.service",
+        "mindarchy.service",
+        "caddy.service",
+        "couchdb.service",
+        "email-sender.service",
+        "cf-dev@radustanciu.service",
+        "couchfusion.service",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// systemd unit names accepted in `[services]`: plain `.service` names, no paths or globs.
+pub fn valid_service_unit(unit: &str) -> bool {
+    let Some(stem) = unit.strip_suffix(".service") else { return false };
+    !stem.is_empty()
+        && stem.len() <= 120
+        && !stem.starts_with('-')
+        && stem.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'@' | b'.' | b'_' | b'-' | b':'))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,6 +159,15 @@ pub struct SiteConfig {
     pub dev_port: u16,
     pub dev_unit: String,
     pub agent_unit: String,
+    /// Oneshot registry rebuild unit; defaults to `cf-registry@<id>.service`.
+    #[serde(default)]
+    pub registry_unit: Option<String>,
+}
+
+impl SiteConfig {
+    pub fn registry_unit(&self) -> String {
+        self.registry_unit.clone().unwrap_or_else(|| format!("cf-registry@{}.service", self.id))
+    }
 }
 
 /// A unit run by the `process_group` runner.
@@ -193,14 +245,18 @@ impl Config {
             if !valid_slug(&site.id) {
                 bail!("invalid site id {:?}", site.id);
             }
-            for unit in [&site.dev_unit, &site.agent_unit] {
-                let expected_prefixes = ["cf-dev@", "cf-agent@"];
-                if !expected_prefixes.iter().any(|p| unit.starts_with(p)) || !unit.ends_with(".service") {
-                    bail!("unit {unit:?} must be cf-dev@<site>.service or cf-agent@<site>.service");
+            for (unit, prefix) in [(site.dev_unit.clone(), "cf-dev@"), (site.agent_unit.clone(), "cf-agent@"), (site.registry_unit(), "cf-registry@")] {
+                if !unit.starts_with(prefix) || !unit.ends_with(".service") {
+                    bail!("unit {unit:?} must be {prefix}<site>.service");
                 }
             }
             if site.slot_port == self.server.control_port {
                 bail!("slot port {} collides with the control port", site.slot_port);
+            }
+        }
+        for unit in &self.services.units {
+            if !valid_service_unit(unit) {
+                bail!("invalid [services] unit {unit:?}");
             }
         }
         for repo in &self.workspace.repos {
@@ -243,6 +299,12 @@ impl Config {
         self.server.run_dir.join("dev").join(format!("{site}.env"))
     }
 
+    /// Exists while a Codex generate job runs for `site`; the dev server (gated Vite plugin in
+    /// layers/content) suppresses full reloads while it is present.
+    pub fn agent_marker(&self, site: &str) -> PathBuf {
+        self.server.run_dir.join("dev").join(format!("{site}.agent-running"))
+    }
+
     pub fn socket_path(&self, port: u16) -> PathBuf {
         self.server.run_dir.join(format!("ts-{port}.sock"))
     }
@@ -278,5 +340,18 @@ mod tests {
         config.validate().unwrap();
         assert_eq!(config.sites[0].id, "radustanciu");
         assert_eq!(config.ports(), vec![9180, 9181]);
+        assert_eq!(config.sites[0].registry_unit(), "cf-registry@radustanciu.service");
+        assert!(config.services.units.contains(&"kangu.service".to_string()));
+    }
+
+    #[test]
+    fn service_unit_names() {
+        assert!(valid_service_unit("kangu.service"));
+        assert!(valid_service_unit("cf-dev@radustanciu.service"));
+        assert!(!valid_service_unit("kangu"));
+        assert!(!valid_service_unit("../x.service"));
+        assert!(!valid_service_unit("a b.service"));
+        assert!(!valid_service_unit("*.service"));
+        assert!(!valid_service_unit("-x.service"));
     }
 }

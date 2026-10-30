@@ -355,7 +355,16 @@ export interface ProcessSnapshot {
 // Rust control plane, Phase 1 (docs/superpowers/specs/2026-10-29-phase1-mvp-contract.md §2.2)
 // ---------------------------------------------------------------------------
 
-export type BootstrapCapability = 'dev-sessions' | 'component-delete' | 'component-generate' | 'git'
+export type BootstrapCapability =
+  | 'dev-sessions'
+  | 'component-delete'
+  | 'component-generate'
+  | 'git'
+  // Phase 2 (docs/superpowers/specs/2026-10-30-phase2-workbench-contract.md)
+  | 'component-trash'
+  | 'component-source'
+  | 'registry-rebuild'
+  | 'services'
 
 export interface Bootstrap {
   version: string
@@ -450,15 +459,72 @@ export interface SiteEvent {
   job?: JobSnapshot
 }
 
+export interface CodexUsage {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+}
+
 export interface ComponentGenerateResult {
   componentId?: string
   changedFiles: string[]
   threadId?: string
   lint: string[]
   needsRestart?: { reason: string }
+  /** Phase 2: Codex `turn.completed.usage`. */
+  usage?: CodexUsage
 }
 
 export interface ComponentDeleteResult {
   componentId: string
   trashId: string
+}
+
+// ---------------------------------------------------------------------------
+// Rust control plane, Phase 2 (docs/superpowers/specs/2026-10-30-phase2-workbench-contract.md §1)
+// ---------------------------------------------------------------------------
+
+export interface ComponentSource {
+  componentId: string
+  path: string
+  sha256: string
+  size: number
+  content: string
+  truncated: boolean
+}
+
+export interface TrashEntry {
+  /** The delete job id. */
+  trashId: string
+  componentId: string
+  source: string
+  sha256: string
+  git: ComponentGitState
+  deletedAt: string
+  /** False when a file now exists at `source`, or the trashed file is missing. */
+  restorable: boolean
+  problem?: string
+}
+
+export interface ComponentRestoreResult {
+  componentId: string
+  trashId: string
+}
+
+export interface RegistryRebuildResult {
+  components: number
+}
+
+export type ServiceKind = 'adopted' | 'dev' | 'system'
+
+export interface ServiceSnapshot {
+  unit: string
+  description: string
+  kind: ServiceKind
+  activeState: string
+  subState: string
+  mainPid?: number
+  memoryCurrentBytes?: number
+  since?: string
+  user?: string
 }

@@ -7,19 +7,26 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-use crate::agent::{AgentEvent, RunSpec, map_event};
+use crate::agent::{AgentEvent, RunSpec, Usage, map_event};
 use crate::config::SiteConfig;
-use crate::dto::{ComponentUsage, DevStatus, PageRef, RegistryChange};
+use crate::dto::{ComponentSource, ComponentUsage, DevStatus, PageRef, RegistryChange, TrashEntry};
 use crate::error::ApiError;
 use crate::http::App;
 use crate::jobs::JobCtx;
 use crate::util::sha256_hex;
 use crate::workspace::{
-    CONTENT_DIR_REL, diff_snapshots, inspect_registry, lint_builder_field_meta, new_component_ids, open_contained, read_contained,
-    rename_contained, restart_reason, snapshot,
+    CONTENT_DIR_REL, create_contained, diff_snapshots, inspect_registry, lint_builder_field_meta, new_component_ids, open_contained,
+    read_contained, rename_contained, restart_reason, snapshot,
 };
 
 const AGENT_MAX_RUNTIME: Duration = Duration::from_secs(1800);
+/// Upper bound for one `cf-registry@` run (the unit itself has `TimeoutStartSec=120`).
+const REGISTRY_UNIT_TIMEOUT: Duration = Duration::from_secs(150);
+const SOURCE_MAX_BYTES: usize = 256 * 1024;
+/// After the registry updated, the watcher often runs once more (queued file events). Keep the
+/// reload guard until the registry files have been unchanged this long, so that run is covered too.
+const REGISTRY_QUIET: Duration = Duration::from_secs(4);
+const REGISTRY_SETTLE_MAX: Duration = Duration::from_secs(15);
 
 // ---------------------------------------------------------------- usage
 
@@ -38,7 +45,7 @@ fn resolve_component(app_dir: &Path, component_id: &str) -> Result<Resolved, Api
     }
     let component = registry.find(component_id).ok_or_else(|| ApiError::not_found("Component not found in the registry."))?;
     if !component.source.starts_with(&format!("{CONTENT_DIR_REL}/")) {
-        return Err(ApiError::validation("Only app content components (app/components/content/*.vue) can be deleted here."));
+        return Err(ApiError::validation("Only app content components (app/components/content/*.vue) are supported here."));
     }
     let bytes = read_contained(app_dir, &component.source).map_err(|_| ApiError::validation("The component source is unsafe or unavailable."))?;
     Ok(Resolved { source: component.source.clone(), sha256: sha256_hex(&bytes) })
@@ -119,25 +126,65 @@ async fn wait_registry(app: &App, ctx: &JobCtx, site: &str, pred: impl Fn(&[Stri
     ctx.info("registry.wait", "Waiting for the component registry to update…");
     if let Some(ids) = poll_registry(&app_dir, timeout, &pred).await {
         ctx.info("registry.updated", "Component registry updated.");
+        settle_registry(&app_dir).await;
         return Ok(ids);
     }
-    ctx.warn("registry.fallback", "The registry watcher did not update in time; running the generator directly.");
-    let script = app.config.workspace.root.join("layers/content/scripts/generate-component-registry.mjs");
-    let out = tokio::process::Command::new(&app.config.toolchain.bun)
-        .arg(&script)
-        .arg(format!("--app={site}"))
-        .current_dir(&app.config.workspace.root)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(|e| ApiError::filesystem(format!("Could not run the registry generator: {e}")))?;
-    if !out.status.success() {
-        ctx.warn("registry.fallback", String::from_utf8_lossy(&out.stderr).chars().take(2000).collect::<String>());
+    ctx.warn("registry.fallback", "The registry watcher did not update in time; running the generator (cf-registry) once.");
+    if let Some(cfg) = app.config.site(site)
+        && let Err(err) = run_registry_unit(app, cfg).await
+    {
+        ctx.warn("registry.fallback", err);
     }
-    poll_registry(&app_dir, Duration::from_secs(3), &pred)
+    let ids = poll_registry(&app_dir, Duration::from_secs(3), &pred)
         .await
         .inspect(|_| ctx.info("registry.updated", "Component registry updated."))
-        .ok_or_else(|| ApiError::filesystem("The component registry did not update."))
+        .ok_or_else(|| ApiError::filesystem("The component registry did not update."))?;
+    settle_registry(&app_dir).await;
+    Ok(ids)
+}
+
+/// Waits until `component-definitions.{ts,json}` have not changed for [`REGISTRY_QUIET`]
+/// (at most [`REGISTRY_SETTLE_MAX`]), so the watcher's follow-up run finishes while the reload
+/// guard is still held and the builder gets exactly one (bridge) reload.
+async fn settle_registry(app_dir: &Path) {
+    let files = [
+        app_dir.join("app/content-builder/component-definitions.ts"),
+        app_dir.join(crate::workspace::MANIFEST_REL),
+    ];
+    let stamp = || files.iter().map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
+    let start = tokio::time::Instant::now();
+    let mut last = stamp();
+    let mut quiet_since = tokio::time::Instant::now();
+    while start.elapsed() < REGISTRY_SETTLE_MAX {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let now = stamp();
+        if now != last {
+            last = now;
+            quiet_since = tokio::time::Instant::now();
+        } else if quiet_since.elapsed() >= REGISTRY_QUIET {
+            return;
+        }
+    }
+}
+
+/// Runs the layer's registry generator as `cfdev` through the oneshot `cf-registry@<site>` unit.
+/// Repository code is never executed as `cfcp` (agent/dev-writable code must not run as the
+/// push-key holder). Returns a redacted error message on failure.
+async fn run_registry_unit(app: &App, site: &SiteConfig) -> Result<(), String> {
+    let unit = site.registry_unit();
+    match app.units.run_oneshot(&unit, REGISTRY_UNIT_TIMEOUT).await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let redactor = crate::util::Redactor::new(vec![]);
+            let tail = app.units.journal_tail(&unit, 15).await;
+            let mut msg = format!("{unit} failed: {err:#}");
+            if !tail.is_empty() {
+                msg.push('\n');
+                msg.push_str(&tail.iter().map(|l| redactor.redact(l)).collect::<Vec<_>>().join("\n"));
+            }
+            Err(msg.chars().take(4000).collect())
+        }
+    }
 }
 
 async fn poll_registry(app_dir: &Path, timeout: Duration, pred: &impl Fn(&[String]) -> bool) -> Option<Vec<String>> {
@@ -195,6 +242,9 @@ pub async fn delete_component(
 
 async fn run_delete(app: &App, ctx: &JobCtx, site: &SiteConfig, component_id: &str, expected: &str, git: &str) -> Result<(), ApiError> {
     ctx.start();
+    // Hold the reload guard so the builder sees one controlled reload at the end, not Vite's.
+    let _marker = AgentMarker::create(app.config.agent_marker(&site.id))
+        .map_err(|e| ApiError::filesystem(format!("Creating the reload-guard marker: {e}")))?;
     let app_dir = app.config.app_dir(&site.id);
     let resolved = resolve_component(&app_dir, component_id)?;
     ctx.info("component.resolve", format!("{component_id} → {}", resolved.source));
@@ -280,8 +330,39 @@ fn write_private(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
 }
 
+/// Marker file that exists while a component job (generate, delete, restore, rebuild) runs;
+/// removed on drop, i.e. on every outcome. The dev server's gated Vite plugin suppresses its own
+/// full reloads while it exists, so the builder only gets the bridge's single reload afterwards.
+struct AgentMarker(PathBuf);
+
+impl AgentMarker {
+    fn create(path: PathBuf) -> std::io::Result<Self> {
+        write_private(&path, b"", 0o640)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for AgentMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Startup recovery: jobs that were running when the previous process died are failed, so no
+/// marker may survive (it would block the builder's reloads forever).
+pub fn clear_agent_markers(config: &crate::config::Config) {
+    for site in &config.sites {
+        let marker = config.agent_marker(&site.id);
+        if std::fs::remove_file(&marker).is_ok() {
+            tracing::info!("removed stale agent marker {}", marker.display());
+        }
+    }
+}
+
 async fn run_generate(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, result: &mut Map<String, Value>) -> Result<(), ApiError> {
     ctx.start();
+    let _marker = AgentMarker::create(app.config.agent_marker(&site.id))
+        .map_err(|e| ApiError::filesystem(format!("Creating the agent marker: {e}")))?;
     let app_dir = app.config.app_dir(&site.id);
     let before = {
         let dir = app_dir.clone();
@@ -301,6 +382,13 @@ async fn run_generate(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, 
     let outcome = tail_agent(app, ctx, site, &out_path, &app_dir).await;
     if let Some(thread) = &outcome.thread_id {
         result.insert("threadId".into(), Value::String(thread.clone()));
+    }
+    if let Some(usage) = outcome.usage {
+        result.insert("usage".into(), json!(usage));
+        ctx.info(
+            "codex.usage",
+            format!("Tokens: in {} ({} cached), out {}.", usage.input_tokens, usage.cached_input_tokens, usage.output_tokens),
+        );
     }
 
     let after = {
@@ -358,6 +446,7 @@ async fn run_generate(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, 
 #[derive(Default)]
 struct AgentOutcome {
     thread_id: Option<String>,
+    usage: Option<Usage>,
     completed: bool,
     failure: Option<String>,
     sandbox_failure: Option<String>,
@@ -389,8 +478,9 @@ async fn tail_agent(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &PathBuf, 
                 Some(AgentEvent::Thread(t)) => outcome.thread_id = Some(t),
                 Some(AgentEvent::Event { level, code, text }) => ctx.event(level, code, text),
                 Some(AgentEvent::Files(files)) => ctx.info("codex.files", format!("Changed: {}", files.join(", "))),
-                Some(AgentEvent::TurnCompleted(text)) => {
+                Some(AgentEvent::TurnCompleted { text, usage }) => {
                     outcome.completed = true;
+                    outcome.usage = usage.or(outcome.usage);
                     ctx.info("codex.done", text);
                 }
                 Some(AgentEvent::Failed(msg)) => outcome.failure = Some(msg),
@@ -422,6 +512,189 @@ async fn tail_agent(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &PathBuf, 
         }
     }
     outcome
+}
+
+// ---------------------------------------------------------------- source
+
+pub async fn component_source(app: &App, site: &SiteConfig, component_id: &str) -> Result<ComponentSource, ApiError> {
+    let app_dir = app.config.app_dir(&site.id);
+    let id = component_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let resolved = resolve_component(&app_dir, &id)?;
+        let bytes = read_contained(&app_dir, &resolved.source).map_err(|_| ApiError::validation("The component source is unsafe or unavailable."))?;
+        Ok(source_view(&id, &resolved.source, &bytes))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+}
+
+/// Caps the content at 256 KiB on a UTF-8 character boundary.
+fn source_view(component_id: &str, path: &str, bytes: &[u8]) -> ComponentSource {
+    let text = String::from_utf8_lossy(bytes);
+    let truncated = text.len() > SOURCE_MAX_BYTES;
+    let mut end = text.len().min(SOURCE_MAX_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    ComponentSource {
+        component_id: component_id.to_string(),
+        path: path.to_string(),
+        sha256: sha256_hex(bytes),
+        size: bytes.len() as u64,
+        content: text[..end].to_string(),
+        truncated,
+    }
+}
+
+// ---------------------------------------------------------------- trash and restore
+
+/// Component id of a trash entry: `meta.json` when present, else the registry rule (kebab case
+/// of the file stem).
+fn trash_component_id(app: &App, row: &crate::store::TrashRow) -> String {
+    let meta = app.config.trash_dir().join(&row.job_id).join("meta.json");
+    std::fs::read(&meta)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v["componentId"].as_str().map(str::to_string))
+        .unwrap_or_else(|| {
+            let stem = Path::new(&row.source).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            crate::util::kebab_case(&stem)
+        })
+}
+
+/// Why an entry cannot be restored right now, if anything.
+fn restore_problem(app: &App, row: &crate::store::TrashRow) -> Option<String> {
+    if row.restored.is_some() {
+        return Some("Already restored.".into());
+    }
+    if !crate::workspace::valid_source(&row.source) || !row.source.starts_with(&format!("{CONTENT_DIR_REL}/")) {
+        return Some("The recorded source path is not a content component.".into());
+    }
+    let trashed = Path::new(&row.trash_path);
+    if !trashed.starts_with(app.config.trash_dir()) || !trashed.is_file() {
+        return Some("The trashed copy is missing.".into());
+    }
+    if std::fs::symlink_metadata(app.config.app_dir(&row.site).join(&row.source)).is_ok() {
+        return Some(format!("A file already exists at {}.", row.source));
+    }
+    None
+}
+
+pub fn trash_list(app: &App, site: &SiteConfig) -> Result<Vec<TrashEntry>, ApiError> {
+    let rows = app.store.trash_entries(&site.id).map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let problem = restore_problem(app, row);
+            TrashEntry {
+                trash_id: row.job_id.clone(),
+                component_id: trash_component_id(app, row),
+                source: row.source.clone(),
+                sha256: row.sha256.clone(),
+                git: row.git.clone(),
+                deleted_at: time::OffsetDateTime::from_unix_timestamp(row.created).map(crate::util::format_time).unwrap_or_default(),
+                restorable: problem.is_none(),
+                problem,
+            }
+        })
+        .collect())
+}
+
+/// Synchronous checks (404/409), then a `component.restore` job.
+pub async fn restore_component(app: Arc<App>, site: SiteConfig, trash_id: String) -> Result<crate::dto::JobSnapshot, ApiError> {
+    if !crate::workspace::valid_resource_id(&trash_id) {
+        return Err(ApiError::validation("Invalid trash id."));
+    }
+    let row = app
+        .store
+        .trash_entry(&trash_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .filter(|r| r.site == site.id)
+        .ok_or_else(|| ApiError::not_found("Trash entry not found."))?;
+    if let Some(problem) = restore_problem(&app, &row) {
+        return Err(ApiError::conflict(format!("Cannot restore: {problem}")));
+    }
+    let ctx = app.jobs.create("component.restore", &app.config.workspace.id, &site.id)?;
+    let snapshot = ctx.snapshot();
+    tokio::spawn(async move {
+        if let Err(err) = run_restore(&app, &ctx, &site, &row).await {
+            ctx.fail(&err, None);
+        }
+    });
+    Ok(snapshot)
+}
+
+async fn run_restore(app: &App, ctx: &JobCtx, site: &SiteConfig, row: &crate::store::TrashRow) -> Result<(), ApiError> {
+    ctx.start();
+    // Hold the reload guard so the builder sees one controlled reload at the end, not Vite's.
+    let _marker = AgentMarker::create(app.config.agent_marker(&site.id))
+        .map_err(|e| ApiError::filesystem(format!("Creating the reload-guard marker: {e}")))?;
+    if let Some(problem) = restore_problem(app, row) {
+        return Err(ApiError::conflict(format!("Cannot restore: {problem}")));
+    }
+    let component_id = trash_component_id(app, row);
+    let bytes = std::fs::read(&row.trash_path).map_err(|e| ApiError::filesystem(format!("Reading the trashed copy: {e}")))?;
+    if sha256_hex(&bytes) != row.sha256 {
+        return Err(ApiError::conflict("The trashed copy does not match the recorded sha256; not restoring."));
+    }
+    let app_dir = app.config.app_dir(&site.id);
+    create_contained(&app_dir, &row.source, &bytes, 0o664).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => ApiError::conflict(format!("A file already exists at {}.", row.source)),
+        _ => ApiError::filesystem(format!("Restoring {}: {e}", row.source)),
+    })?;
+    ctx.info("component.restore", format!("Restored {} from trash ({}).", row.source, row.job_id));
+    let _ = app.store.mark_trash_restored(&row.job_id);
+
+    let id = component_id.clone();
+    wait_registry(app, ctx, &site.id, move |ids| ids.contains(&id)).await?;
+    app.hub.registry(&site.id, RegistryChange { added: vec![component_id.clone()], removed: vec![] });
+    let mut result = Map::new();
+    result.insert("componentId".into(), Value::String(component_id.clone()));
+    result.insert("trashId".into(), Value::String(row.job_id.clone()));
+    ctx.info("component.restored", format!("Restored {component_id}."));
+    ctx.succeed(result);
+    spawn_health_check(app, site);
+    Ok(())
+}
+
+// ---------------------------------------------------------------- registry rebuild
+
+pub async fn rebuild_registry(app: Arc<App>, site: SiteConfig) -> Result<crate::dto::JobSnapshot, ApiError> {
+    let ctx = app.jobs.create("component-registry.rebuild", &app.config.workspace.id, &site.id)?;
+    let snapshot = ctx.snapshot();
+    tokio::spawn(async move {
+        if let Err(err) = run_rebuild(&app, &ctx, &site).await {
+            ctx.fail(&err, None);
+        }
+    });
+    Ok(snapshot)
+}
+
+async fn run_rebuild(app: &App, ctx: &JobCtx, site: &SiteConfig) -> Result<(), ApiError> {
+    ctx.start();
+    // Hold the reload guard so the builder sees one controlled reload at the end, not Vite's.
+    let _marker = AgentMarker::create(app.config.agent_marker(&site.id))
+        .map_err(|e| ApiError::filesystem(format!("Creating the reload-guard marker: {e}")))?;
+    let app_dir = app.config.app_dir(&site.id);
+    let before = {
+        let dir = app_dir.clone();
+        tokio::task::spawn_blocking(move || inspect_registry(&dir).ids()).await.unwrap_or_default()
+    };
+    ctx.info("registry.rebuild", format!("Running {}…", site.registry_unit()));
+    run_registry_unit(app, site).await.map_err(ApiError::filesystem)?;
+    let ids = poll_registry(&app_dir, Duration::from_secs(5), &|_: &[String]| true)
+        .await
+        .ok_or_else(|| ApiError::filesystem("The registry generator ran, but the manifest is not usable."))?;
+    let added: Vec<String> = ids.iter().filter(|i| !before.contains(i)).cloned().collect();
+    let removed: Vec<String> = before.iter().filter(|i| !ids.contains(i)).cloned().collect();
+    if !added.is_empty() || !removed.is_empty() {
+        app.hub.registry(&site.id, RegistryChange { added, removed });
+    }
+    ctx.info("registry.updated", format!("Component registry rebuilt ({} components).", ids.len()));
+    let mut result = Map::new();
+    result.insert("components".into(), json!(ids.len()));
+    ctx.succeed(result);
+    Ok(())
 }
 
 // ---------------------------------------------------------------- commit
@@ -474,6 +747,44 @@ pub async fn commit(app: Arc<App>, repo_id: String, message: String, paths: Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_is_capped_on_char_boundary() {
+        let small = source_view("x", "app/components/content/X.vue", b"<template>hi</template>");
+        assert!(!small.truncated);
+        assert_eq!(small.size, 23);
+        assert_eq!(small.sha256.len(), 64);
+        // 'é' is 2 bytes; put one across the cap.
+        let mut big = vec![b'a'; SOURCE_MAX_BYTES - 1];
+        big.extend("é".as_bytes());
+        big.extend(b"tail");
+        let v = source_view("x", "p", &big);
+        assert!(v.truncated);
+        assert_eq!(v.content.len(), SOURCE_MAX_BYTES - 1);
+        assert_eq!(v.size, big.len() as u64);
+    }
+
+    #[test]
+    fn stale_agent_markers_are_cleared_on_startup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let text = format!(
+            "[server]\nstate_dir = \"{0}/state\"\nrun_dir = \"{0}/run\"\nspa_dir = \"{0}/spa\"\npublic_host = \"h\"\n[auth]\nallowed_logins = [\"a@b\"]\n[workspace]\nid = \"w\"\nname = \"w\"\nroot = \"{0}/ws\"\n[[sites]]\nid = \"demo\"\nslot_port = 9181\ndev_port = 4401\ndev_unit = \"cf-dev@demo.service\"\nagent_unit = \"cf-agent@demo.service\"\n",
+            d.display()
+        );
+        let config: crate::config::Config = toml::from_str(&text).unwrap();
+        let marker = config.agent_marker("demo");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, b"").unwrap();
+        clear_agent_markers(&config);
+        assert!(!marker.exists());
+        // The guard removes its marker on drop, whatever the job outcome.
+        {
+            let _m = AgentMarker::create(marker.clone()).unwrap();
+            assert!(marker.exists());
+        }
+        assert!(!marker.exists());
+    }
 
     #[test]
     fn url_encoding() {

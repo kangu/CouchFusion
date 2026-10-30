@@ -1,0 +1,13 @@
+/* Services page (pages/services.vue). Uses main.css tokens. */
+.services-table { width: 100%; border-collapse: collapse; font: .72rem/1.4 var(--mono); }
+.services-table th { padding: .5rem .6rem; border-bottom: 1px solid var(--line-paper); color: #59625e; font-size: .6rem; text-align: left; text-transform: uppercase; }
+.services-table td { padding: .55rem .6rem; border-bottom: 1px solid var(--line-paper); vertical-align: top; }
+.services-table td small { display: block; color: #64706a; font-size: .62rem; }
+.services-table tr[aria-selected="true"] td { background: rgba(111, 228, 224, .08); }
+.services-state { display: inline-block; padding: .2rem .45rem; border: 1px solid currentColor; border-radius: 1rem; font-size: .6rem; white-space: nowrap; }
+.services-state[data-tone="ok"] { color: var(--cyan-deep); }
+.services-state[data-tone="busy"] { color: #a8741c; }
+.services-state[data-tone="down"] { color: var(--danger); }
+.services-logs header .compact-button { color: var(--paper); border-color: var(--line-dark); }
+.services-logs .dev-log--err, .services-logs code.dev-log--err { color: #f1a596; }
+@media (max-width: 720px) { .services-table th:nth-child(3), .services-table td:nth-child(3), .services-table th:nth-child(5), .services-table td:nth-child(5) { display: none; } }

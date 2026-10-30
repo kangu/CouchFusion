@@ -37,6 +37,7 @@ pub struct App {
     pub dev: Arc<DevManager>,
     pub git: Git,
     pub client: HttpClient,
+    pub services: crate::services::Services,
 }
 
 impl App {
@@ -50,7 +51,10 @@ impl App {
             .build_http();
         let dev = DevManager::new(config.clone(), store.clone(), hub.clone(), units.clone(), client.clone());
         let git = Git { bin: config.toolchain.git.clone() };
-        Ok(Arc::new(Self { config, store, hub, jobs, units, dev, git, client }))
+        let services = crate::services::Services::new(&config);
+        // Generate jobs from a previous process were failed by `Jobs::new`; drop their markers.
+        crate::ops::clear_agent_markers(&config);
+        Ok(Arc::new(Self { config, store, hub, jobs, units, dev, git, client, services }))
     }
 
     /// Origins allowed to frame a dev slot (the control plane, tailnet and tunnel).

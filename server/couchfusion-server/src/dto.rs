@@ -326,6 +326,50 @@ pub struct SiteEvent {
     pub job: Option<JobSnapshot>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentSource {
+    pub component_id: String,
+    pub path: String,
+    pub sha256: String,
+    pub size: u64,
+    pub content: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashEntry {
+    pub trash_id: String,
+    pub component_id: String,
+    pub source: String,
+    pub sha256: String,
+    pub git: String,
+    pub deleted_at: String,
+    pub restorable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceSnapshot {
+    pub unit: String,
+    pub description: String,
+    /// adopted | dev | system
+    pub kind: &'static str,
+    pub active_state: String,
+    pub sub_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_current_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+}
+
 // ---- request bodies ----
 
 #[derive(Debug, Deserialize)]

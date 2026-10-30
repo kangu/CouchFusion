@@ -89,6 +89,8 @@ impl Redactor {
             r#"(?i)((?:password|passwd|token|secret|cookie_secret|admin_auth|api_key|private_key)["']?\s*[:=]\s*["']?)([^\s"',&]+)"#,
             r"(?i)(cookie:\s*)(.+)",
             r"(?i)(https?://)([^/\s:@]+:[^/\s@]+)@",
+            // CouchDB session cookies in dumped responses (`'AuthSession=…; Version=1'`).
+            r"(AuthSession=)([^;\s'\x22]+)",
         ]
         .iter()
         .map(|p| regex::Regex::new(p).expect("valid redaction regex"))
@@ -140,6 +142,8 @@ mod tests {
         assert_eq!(r.redact("http://radu:pw@127.0.0.1:5984/x"), "http://[redacted]@127.0.0.1:5984/x");
         assert_eq!(r.redact("value supersecretvalue here"), "value [redacted] here");
         assert_eq!(r.redact("plain line"), "plain line");
+        assert_eq!(r.redact("'AuthSession=cmFkdTo2QUU; Version=1'"), "'AuthSession=[redacted]; Version=1'");
+        assert!(!r.redact("Set-Cookie: AuthSession=abc123; Path=/").contains("abc123"));
     }
 
 }

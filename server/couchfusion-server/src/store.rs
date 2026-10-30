@@ -30,6 +30,39 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
+/// A trashed component file (the delete job id is the trash id).
+#[derive(Debug, Clone)]
+pub struct TrashRow {
+    pub job_id: String,
+    pub site: String,
+    pub source: String,
+    pub trash_path: String,
+    pub sha256: String,
+    pub git: String,
+    pub created: i64,
+    pub restored: Option<i64>,
+}
+
+/// Columns added after Phase 1; `ALTER TABLE` fails harmlessly when they already exist.
+fn migrate(conn: &Connection) {
+    let _ = conn.execute("ALTER TABLE trash ADD COLUMN restored INTEGER", []);
+}
+
+const TRASH_COLUMNS: &str = "job_id, site, source, trash_path, sha256, git, created, restored";
+
+fn trash_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrashRow> {
+    Ok(TrashRow {
+        job_id: r.get(0)?,
+        site: r.get(1)?,
+        source: r.get(2)?,
+        trash_path: r.get(3)?,
+        sha256: r.get(4)?,
+        git: r.get(5)?,
+        created: r.get(6)?,
+        restored: r.get(7)?,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct DevSessionRow {
     pub status: DevStatus,
@@ -52,6 +85,7 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -59,6 +93,7 @@ impl Store {
     pub fn memory() -> Self {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn);
         Self { conn: Mutex::new(conn) }
     }
 
@@ -231,6 +266,25 @@ impl Store {
         })?;
         Ok(())
     }
+
+    /// Trash rows of a site, newest first.
+    pub fn trash_entries(&self, site: &str) -> anyhow::Result<Vec<TrashRow>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!("SELECT {TRASH_COLUMNS} FROM trash WHERE site = ?1 ORDER BY created DESC, rowid DESC"))?;
+            let rows = stmt.query_map(params![site], trash_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn trash_entry(&self, job_id: &str) -> anyhow::Result<Option<TrashRow>> {
+        self.with(|c| c.query_row(&format!("SELECT {TRASH_COLUMNS} FROM trash WHERE job_id = ?1"), params![job_id], trash_row).optional())
+    }
+
+    /// Marks a trash entry restored (the trashed copy is kept, never unlinked).
+    pub fn mark_trash_restored(&self, job_id: &str) -> anyhow::Result<()> {
+        self.with(|c| c.execute("UPDATE trash SET restored = ?2 WHERE job_id = ?1", params![job_id, unix_now()]))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +300,29 @@ mod tests {
         assert!(store.session_valid("sess").unwrap());
         assert!(!store.session_valid("sess2").unwrap());
         assert!(!store.exchange_login_token("other", "x").unwrap());
+    }
+
+    #[test]
+    fn trash_rows() {
+        let store = Store::memory();
+        store.record_trash("j1", "s", "app/components/content/A.vue", "/t/j1/a", "sha", "untracked").unwrap();
+        store.record_trash("j2", "s", "app/components/content/B.vue", "/t/j2/b", "sha", "tracked_clean").unwrap();
+        store.record_trash("j3", "other", "app/components/content/C.vue", "/t/j3/c", "sha", "unknown").unwrap();
+        let rows = store.trash_entries("s").unwrap();
+        assert_eq!(rows.iter().map(|r| r.job_id.as_str()).collect::<Vec<_>>(), vec!["j2", "j1"]);
+        assert!(rows[0].restored.is_none());
+        store.mark_trash_restored("j1").unwrap();
+        assert!(store.trash_entry("j1").unwrap().unwrap().restored.is_some());
+        assert!(store.trash_entry("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        conn.execute("UPDATE trash SET restored = 1", []).unwrap();
     }
 
     #[test]
