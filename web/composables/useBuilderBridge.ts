@@ -98,11 +98,12 @@ export function createBuilderBridge(options: BuilderBridgeOptions) {
     const expectedOrigin = options.slotOrigin()
     const target = options.target()
     if (!expectedOrigin || !target) return false
-    if (event.origin !== expectedOrigin) return drop()
-    if (event.source !== target) return drop()
+    // Other postMessage traffic (builder live updates, Vite, extensions) is ignored silently.
     const data = event.data as Partial<BridgeEnvelope> | null
     if (!data || typeof data !== 'object' || data.cf !== 1) return false
     if (typeof data.type !== 'string' || !data.type.startsWith('cf:host.')) return false
+    if (event.origin !== expectedOrigin) return drop()
+    if (event.source !== target) return drop()
     if (typeof data.id !== 'string' || !data.id) return drop()
     if (!withinRateLimit()) return drop()
     const payload = (data.payload && typeof data.payload === 'object' ? data.payload : {}) as Record<string, unknown>
@@ -147,7 +148,9 @@ export function createBuilderBridge(options: BuilderBridgeOptions) {
   function handleReady(payload: Record<string, unknown>) {
     clearReloadFallback()
     reloadDeferred.value = undefined
-    nonce = randomId()
+    // One nonce per bridge session: the child retries `ready` until it sees `welcome`, so
+    // repeated `ready` messages must get the same nonce. reset()/forced reloads clear it.
+    if (!nonce) nonce = randomId()
     connected.value = true
     dirty.value = payload.dirty === true
     const info: BridgeReadyInfo = {

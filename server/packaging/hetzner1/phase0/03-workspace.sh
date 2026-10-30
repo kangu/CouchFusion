@@ -12,12 +12,16 @@ install -d -m 2775 -o radu -g cfsrc "$CF_WORKSPACE" "$CF_WORKSPACE/apps"
 
 if [ -n "$(ls -A "$CF_WORKSPACE/apps" 2>/dev/null)" ] || [ -d "$CF_WORKSPACE/layers" ]; then
   log "fixing ownership and modes under $CF_WORKSPACE"
-  chown -R radu:cfsrc "$CF_WORKSPACE"
-  chmod -R g+rwX,o-rwx "$CF_WORKSPACE"
-  find "$CF_WORKSPACE" -type d -not -path '*/.git/*' -not -name .git -exec chmod g+s {} +
-  setfacl -R -m d:g:cfsrc:rwX -m g:cfsrc:rwX "$CF_WORKSPACE"
+  # Work tree only: .git directories are never touched here (Phase 1 hands them to cfcp).
+  NOGIT=(-path '*/.git' -prune -o)
+  find "$CF_WORKSPACE" "${NOGIT[@]}" -exec chown radu:cfsrc {} +
+  find "$CF_WORKSPACE" "${NOGIT[@]}" -exec chmod g+rwX,o-rwx {} +
+  find "$CF_WORKSPACE" "${NOGIT[@]}" -type d -exec chmod g+s {} +
+  find "$CF_WORKSPACE" "${NOGIT[@]}" -type d -exec setfacl -m d:g:cfsrc:rwX -m g:cfsrc:rwX {} +
+  find "$CF_WORKSPACE" "${NOGIT[@]}" -type f -exec setfacl -m g:cfsrc:rwX {} +
 
   while IFS= read -r gitdir; do
+    if [ "$(stat -c %U "$gitdir")" = cfcp ]; then log "keeping $gitdir (owned by cfcp, Phase 1)"; continue; fi
     setfacl -R -b "$gitdir"
     chmod -R g-w,o-rwx "$gitdir"
     find "$gitdir" -type d -exec chmod g-s {} +

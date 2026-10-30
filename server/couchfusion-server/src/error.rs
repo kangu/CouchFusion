@@ -28,9 +28,6 @@ impl ApiError {
     pub fn not_found(m: impl Into<String>) -> Self {
         Self::new("not_found", m)
     }
-    pub fn unavailable(m: impl Into<String>) -> Self {
-        Self::new("unavailable", m)
-    }
     pub fn internal(m: impl Into<String>) -> Self {
         Self::new("internal", m)
     }
@@ -77,11 +74,12 @@ impl From<anyhow::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let status = self.status();
         let mut body = json!({"code": self.code, "message": self.message});
         if let Some(fields) = self.fields {
             body["fields"] = Value::Object(fields);
         }
-        let mut res = (self.status(), axum::Json(json!({"error": body}))).into_response();
+        let mut res = (status, axum::Json(json!({"error": body}))).into_response();
         res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         res
     }

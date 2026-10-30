@@ -48,8 +48,10 @@ export function createApiClient(fetcher: FetchLike) {
 }
 
 export function useApi() {
-  const fetcher: FetchLike = (url, options) =>
-    $fetch(url, options as Parameters<typeof $fetch>[1]) as Promise<ApiEnvelope<never>>
+  // A plain signature on purpose: Nuxt's route-typed $fetch overloads make `nuxt typecheck`
+  // fail with TS2321 (excessive stack depth) on this call.
+  const plainFetch = $fetch as unknown as (url: string, options: FetchOptions) => Promise<unknown>
+  const fetcher: FetchLike = (url, options) => plainFetch(url, options) as Promise<ApiEnvelope<never>>
   return createApiClient(fetcher)
 }
 

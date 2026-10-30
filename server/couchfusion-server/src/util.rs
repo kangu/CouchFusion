@@ -1,10 +1,7 @@
 //! Small shared helpers: time, randomness, hashing, redaction.
 
-use std::path::Path;
-
 use base64::Engine;
 use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -43,14 +40,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
-pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    Ok(sha256_hex(&std::fs::read(path)?))
-}
 
-/// Constant-time string comparison.
-pub fn ct_eq(a: &str, b: &str) -> bool {
-    a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
-}
 
 /// Kebab-case from a PascalCase file stem (`NetworkHero` → `network-hero`). Same three
 /// regex steps as `toKebabCase` in `layers/content/scripts/generate-component-registry.mjs`.
@@ -95,8 +85,8 @@ pub struct Redactor {
 impl Redactor {
     pub fn new(extra: Vec<String>) -> Self {
         let patterns = [
-            r#"(?i)((?:password|passwd|token|secret|authorization|cookie_secret|admin_auth|api_key|private_key)["']?\s*[:=]\s*["']?)([^\s"',&]+)"#,
             r"(?i)(authorization:\s*(?:basic|bearer)\s+)(\S+)",
+            r#"(?i)((?:password|passwd|token|secret|cookie_secret|admin_auth|api_key|private_key)["']?\s*[:=]\s*["']?)([^\s"',&]+)"#,
             r"(?i)(cookie:\s*)(.+)",
             r"(?i)(https?://)([^/\s:@]+:[^/\s@]+)@",
         ]
@@ -152,10 +142,4 @@ mod tests {
         assert_eq!(r.redact("plain line"), "plain line");
     }
 
-    #[test]
-    fn constant_time_compare() {
-        assert!(ct_eq("abc", "abc"));
-        assert!(!ct_eq("abc", "abd"));
-        assert!(!ct_eq("abc", "abcd"));
-    }
 }

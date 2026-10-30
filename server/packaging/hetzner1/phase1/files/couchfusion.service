@@ -1,0 +1,47 @@
+[Unit]
+Description=CouchFusion control plane (dev sessions, components, git)
+After=network-online.target couchfusion-nft.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cfcp
+Group=cfcp
+SupplementaryGroups=cfsrc systemd-journal
+ExecStart=/opt/couchfusion/current/couchfusion-server serve --config /etc/couchfusion/server.toml
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=2
+UMask=0002
+
+# /run/couchfusion: unix sockets for tailscale serve, dev env files, agent run specs.
+# Preserved across restarts so dev units keep their env file.
+RuntimeDirectory=couchfusion
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+# /var/lib/couchfusion: sqlite, trash, agent output.
+StateDirectory=couchfusion
+StateDirectoryMode=0750
+
+MemoryMax=256M
+TasksMax=256
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/srv/couchfusion/workspace
+InaccessiblePaths=-/etc/caddy -/var/www -/var/lib/cfagent -/etc/couchfusion/env
+
+[Install]
+WantedBy=multi-user.target
