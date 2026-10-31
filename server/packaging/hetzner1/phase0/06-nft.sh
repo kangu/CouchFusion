@@ -70,7 +70,7 @@ nft -c -f "$CF_ETC/nft/couchfusion.nft" || die "nft syntax check failed; nothing
 systemctl daemon-reload
 systemctl enable couchfusion-nft.service >/dev/null
 systemctl restart couchfusion-nft.service
-log "table loaded:"; nft list table inet couchfusion | head -5
+log "table loaded:"; nft list table inet couchfusion | sed -n 1,5p   # sed reads all input (head would SIGPIPE under pipefail)
 
 log "self-test (expect BLOCKED for the protected ones):"
 probe() {

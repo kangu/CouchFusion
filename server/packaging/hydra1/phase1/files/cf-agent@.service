@@ -1,0 +1,51 @@
+[Unit]
+Description=CouchFusion Codex run for %i
+After=network-online.target couchfusion-nft.service
+Requires=couchfusion-nft.service
+
+[Service]
+Type=simple
+User=cfagent
+Group=cfagent
+SupplementaryGroups=cfsrc
+Slice=couchfusion.slice
+UMask=0002
+WorkingDirectory=/srv/couchfusion/workspace/apps/%i
+Environment=HOME=/var/lib/cfagent
+Environment=CODEX_HOME=/var/lib/cfagent/.codex
+Environment=PATH=/opt/couchfusion/toolchain/bin:/usr/bin:/bin
+ExecStart=/opt/couchfusion/current/couchfusion-server agent-runner --app %i
+# Opened by the service manager before privileges drop; cfagent only writes via its stdout fd.
+StandardOutput=append:/var/lib/couchfusion/agent-out/%i.jsonl
+StandardError=journal
+Restart=no
+RuntimeMaxSec=1800
+KillSignal=SIGINT
+TimeoutStopSec=10
+MemoryMax=1G
+CPUQuota=150%
+TasksMax=256
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# RestrictNamespaces/PrivateUsers are deliberately unset: the Codex Linux sandbox needs user
+# namespaces (spike S4 passed with this setup).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Cloud metadata only; tailnet and loopback ports are covered by the nft guard, which still lets
+# DNS reach Tailscale MagicDNS (100.100.100.100) — a 100.64.0.0/10 deny here would break DNS.
+IPAddressDeny=169.254.0.0/16
+ReadWritePaths=/srv/couchfusion/workspace/apps/%i /var/lib/cfagent
+InaccessiblePaths=-/srv/couchfusion/workspace/apps/%i/.git -/srv/couchfusion/workspace/layers/.git -/srv/couchfusion/workspace/cli-content/.git
+InaccessiblePaths=-/etc/couchfusion -/var/lib/couchfusion -/etc/caddy -/var/www -/home -/var/lib/cfdev

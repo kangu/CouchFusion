@@ -10,6 +10,12 @@ caddy_user=$(systemctl show -p User --value caddy.service)
 caddy_user=${caddy_user:-root}
 log "caddy.service runs as: $caddy_user"
 
+shopt -s nullglob
+sites=(/etc/caddy/sites/*.caddy)
+if [ ${#sites[@]} -eq 0 ]; then
+  log "no /etc/caddy/sites/*.caddy yet; nothing to tighten (re-run after adding site files)"
+  exit 0
+fi
 log "before:"; ls -l /etc/caddy/sites/
 chown root:caddy /etc/caddy/sites/*.caddy
 chmod 0640 /etc/caddy/sites/*.caddy

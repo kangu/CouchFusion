@@ -44,3 +44,7 @@ Remote: `origin` → `https://git2.kangu.ro/radu/radustanciu-src.git` (Forgejo, 
 ### Rules
 - Never run git as root on the VPS (root-owned index breaks cfcp); use `sudo -u cfcp git -c safe.directory=…`.
 - Optional hardening: swap the personal token for a bot user with Write on `radustanciu-src` only.
+
+## Next / reference (2026-10-30)
+- Phase 3 (production) waits for a new server with more RAM; deploy there instead of hetzner1.
+- Setup and deploy reference distilled into the user skill `couchfusion-vps-site` (`~/.claude/skills/couchfusion-vps-site/`: `SKILL.md`, `references/{server-setup,operations,production-deploy,troubleshooting}.md`).
