@@ -24,7 +24,7 @@ install_file "$CF_ETC/nft/couchfusion.nft" "table inet couchfusion {
     type inet_service; flags interval
     # hydra1 (2026-10-30): exim 25, stats.pl 557, Caddy admin 2019, epmd 4369, Hermes 9119 + its
     # helper ports, Webmin 10000, CouchDB erlang distribution 42703 (re-check with ss -tlnp after restarts).
-    elements = { 25, 557, 2019, 4369, 9119, 9180-9199, 9223, 9224, 10000, 34483, 34543, 42703 }
+    elements = { 25, 557, 2019, 4369, 4501-4509, 9119, 9180-9199, 9223, 9224, 10000, 34483, 34543, 42703 }
   }
 
   chain output {

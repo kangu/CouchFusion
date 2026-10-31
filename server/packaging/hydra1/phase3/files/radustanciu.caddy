@@ -1,0 +1,13 @@
+# /etc/caddy/sites/radustanciu.caddy — edited by hand (spec §7.3); the control plane never touches Caddy.
+# Behind Cloudflare's proxy with SSL mode "Full": Caddy's own self-signed certificate
+# (tls internal) on the origin, Cloudflare's certificate to visitors.
+radustanciu.ro {
+	tls internal
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:4501
+}
+
+www.radustanciu.ro, radustanciu.com, www.radustanciu.com {
+	tls internal
+	redir https://radustanciu.ro{uri} permanent
+}

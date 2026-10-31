@@ -62,3 +62,35 @@ The builder page (`https://<host>:9181/builder/`, which the workbench frames) wa
 - Phase 3 (production) on hydra1. Once hetzner1 is retired, revoke its Forgejo token.
 - Network: fix UDP handling on the user's router/network, or use a TCP path.
 - Fewer dev requests: the builder loads 742 unbundled modules in dev. Pre-bundling more of the layer's dependencies (`optimizeDeps.include`) would cut both the request count and the first-load re-optimization.
+
+## Network diagnosis (why the tailnet is slow)
+
+The laptop is on Wi-Fi: 5 GHz 802.11ac, −71 dBm signal / −88 dBm noise, 130 Mbit/s link rate. `tailscale netcheck` shows UDP ok, an easy NAT (direct path, no relay) and no UPnP/NAT-PMP port mapping. Pings at 5/s, idle and during a 12 MB tailnet transfer (1.15 MB/s):
+
+| Target | Idle | During the transfer |
+|---|---|---|
+| Home router (Wi-Fi hop only) | 0% loss, avg 25 ms, max 136 ms | 1.7% loss, avg 86 ms, max 292 ms |
+| hydra1 public IP (plain internet) | 0% loss, avg 74 ms | 3.3% loss, avg 91 ms |
+| hydra1 tailnet IP (WireGuard/UDP) | 0% loss, avg 87 ms | 1.7% loss, avg 77 ms |
+
+The loss and delay already show up on the hop to the router, and the public path suffers equally. So this is not a Tailscale/UDP problem but the Wi-Fi link (weak signal, plus queueing in the router). TCP inside the tunnel cannot go faster than about 1–2 MB/s with that loss at 60–90 ms RTT, while a nearby server (Cloudflare edge, short RTT) still reaches about 10 MB/s.
+
+Fixes in order of effect: Ethernet or a stronger Wi-Fi position/AP; SQM (fq_codel/cake) on the router against bufferbloat; fewer dev modules (`optimizeDeps.include`). Updating the laptop's Tailscale (1.102.4 → 1.104.x) and enabling UPnP/NAT-PMP help connection stability, not speed.
+
+### Retest after router changes (same day)
+
+- Wi-Fi unchanged (−71 dBm, 130 Mbit/s). Idle ping to the router improved (avg 25 → 10 ms), but during downloads it still reaches avg 97–122 ms with 0–5% loss. The tailnet transfer ran at 0.27–0.93 MB/s, and Cloudflare at 3.7–10 MB/s (very variable).
+- hydra1 builder in Canary: warm 4.7–5.3 s (before 4.6–5.0 s), cache cleared 11 s (before 7.7 s). No real change.
+- A warm load still makes 742 requests: ~580 come from cache, but ~88 revalidations (304) and ~70 uncached modules go to the server. ES module imports are discovered level by level, so the warm time is about RTT × import depth, not bandwidth. Better Wi-Fi mostly helps cold loads. Warm loads improve with fewer round trips: deeper dependency pre-bundling (`optimizeDeps.include` for the layer packages), or fewer small source modules on the builder's startup path.
+
+### Where the warm builder load goes (Nuxt 4.1.2, Vite 7.3.6)
+
+The 742 requests break down as: raw `node_modules` 324 (nuxt 117, unhead 30, vue-router 28, …; versioned and immutable, so only 8 go to the server warm), layer source 237 (all go to the server; `no-cache` + ETag), app source 46, virtual/Vite modules 44, API 40, fonts/images 29, pre-bundled deps 15.
+
+- The import waterfall is 14 levels deep (`/builder/` → entry → plugins → routes → `pages/builder/[[...target]].vue` → InlineLiveEditor → ContentAdminWorkbench → Workbench → … → minimark). Modules finish at 3.3 s; API calls and the inline preview document run until 4.7 s; everything settles at 5.4 s.
+- Nuxt deliberately excludes vue, nuxt, unhead, vue-router etc. from `optimizeDeps` (chunk-conflict reloads). Those files are immutable-cached anyway, so pre-bundling them would only help cold loads.
+- Debug-safe levers, from best ratio: (1) a dev-only modulepreload list for the builder route, built from Vite's module graph, which collapses the 14 waves into about 1–2 with the same files, source maps and HMR; (2) lazy-load builder panels that are not visible at start (also helps production); (3) `optimizeDeps.include` for non-core deps (cold-only gain); (4) Vite 8/Rolldown full-bundle dev mode later, once Nuxt supports it; (5) content-only editing on the production builder after Phase 3.
+
+### Dev module preload prototype (same day)
+
+`layers/content/utils/dev-module-preload.ts` (dev only) preloads each page's module graph in one go, from a list the page reports after each load. Same files, source maps and HMR. On hydra1 over the tailnet, a warm builder load's modules finish in 0.95 s instead of 2.4–2.7 s on a clean link, and 3–9 s instead of 14–26 s during loss bursts; the page settles about 0.5 s sooner (the rest is API calls and the inline preview). Details: `layers/content/docs/implementation_results/2026-10-31T13-00-00+0200_dev-module-preload.md`. The three layer files were copied to hydra1's workspace for the test (not committed).

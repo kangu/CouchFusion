@@ -31,7 +31,7 @@ codex = "/opt/couchfusion/toolchain/bin/codex"
 
 # Phase 2: read-only status/logs in the control UI (no start/stop). Missing section = this list.
 [services]
-units = ["caddy.service", "couchdb.service", "webmin.service", "tailscaled.service", "cf-dev@radustanciu.service", "couchfusion.service"]
+units = ["caddy.service", "couchdb.service", "webmin.service", "tailscaled.service", "cf-dev@radustanciu.service", "cf-site@radustanciu.service", "cf-build@radustanciu.service", "couchfusion.service"]
 
 [[sites]]
 id = "radustanciu"
@@ -39,3 +39,11 @@ slot_port = 9181
 dev_port = 4401
 dev_unit = "cf-dev@radustanciu.service"
 agent_unit = "cf-agent@radustanciu.service"
+
+# Phase 3 (added by phase3/09-control-plane.sh): production releases, deploy/rollback from the UI.
+[sites.prod]
+unit = "cf-site@radustanciu.service"
+build_unit = "cf-build@radustanciu.service"
+port = 4501
+www_dir = "/var/www/radustanciu"
+build_dir = "/var/cache/cf-build/radustanciu"
