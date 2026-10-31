@@ -221,6 +221,59 @@ pub struct SiteConfig {
     /// Oneshot registry rebuild unit; defaults to `cf-registry@<id>.service`.
     #[serde(default)]
     pub registry_unit: Option<String>,
+    /// Production releases (Phase 3). Absent = no deploy/rollback for this site.
+    #[serde(default)]
+    pub prod: Option<ProdConfig>,
+}
+
+/// Production site served from `<www_dir>/current` by `unit`, built by `build_unit` (spec §7.2).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProdConfig {
+    /// `cf-site@<id>.service`.
+    pub unit: String,
+    /// Oneshot `cf-build@<id>.service`; builds `<build_dir>/next` as cfdev.
+    pub build_unit: String,
+    /// Loopback port the production server listens on (health checks).
+    pub port: u16,
+    /// Holds `releases/` and the `current` symlink (owned by cfcp).
+    pub www_dir: PathBuf,
+    /// Snapshots of the workspace for builds (cfcp writes, cfdev builds).
+    pub build_dir: PathBuf,
+    #[serde(default = "default_keep_releases")]
+    pub keep_releases: usize,
+    #[serde(default = "default_keep_snapshots")]
+    pub keep_snapshots: usize,
+    #[serde(default = "default_build_timeout")]
+    pub build_timeout_secs: u64,
+    /// Admission: free memory (MemAvailable) needed to start a build.
+    #[serde(default = "default_min_memory")]
+    pub min_memory_mib: u64,
+    /// Admission: free disk on `build_dir` needed to start a build.
+    #[serde(default = "default_min_disk")]
+    pub min_disk_gib: u64,
+    /// Path probed for the health check (3 consecutive answers below 500).
+    #[serde(default = "default_probe_path")]
+    pub probe_path: String,
+}
+
+fn default_keep_releases() -> usize {
+    5
+}
+fn default_keep_snapshots() -> usize {
+    2
+}
+fn default_build_timeout() -> u64 {
+    1200
+}
+fn default_min_memory() -> u64 {
+    1229
+}
+fn default_min_disk() -> u64 {
+    3
+}
+fn default_probe_path() -> String {
+    "/".to_string()
 }
 
 impl SiteConfig {
@@ -311,6 +364,25 @@ impl Config {
             }
             if site.slot_port == self.server.control_port {
                 bail!("slot port {} collides with the control port", site.slot_port);
+            }
+            if let Some(prod) = &site.prod {
+                for (unit, prefix) in [(&prod.unit, "cf-site@"), (&prod.build_unit, "cf-build@")] {
+                    if unit != &format!("{prefix}{}.service", site.id) {
+                        bail!("prod unit {unit:?} must be {prefix}{}.service", site.id);
+                    }
+                }
+                if [self.server.control_port, site.slot_port, site.dev_port].contains(&prod.port) {
+                    bail!("prod port {} collides with the control, slot or dev port", prod.port);
+                }
+                if !prod.www_dir.is_absolute() || !prod.build_dir.is_absolute() {
+                    bail!("prod www_dir and build_dir must be absolute");
+                }
+                if prod.keep_releases < 2 || prod.keep_snapshots < 1 {
+                    bail!("prod keep_releases must be ≥ 2 and keep_snapshots ≥ 1");
+                }
+                if !prod.probe_path.starts_with('/') {
+                    bail!("prod probe_path must start with /");
+                }
             }
         }
         for unit in &self.services.units {

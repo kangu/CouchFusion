@@ -22,6 +22,8 @@ describe('service helpers', () => {
     expect(serviceTone(service({ activeState: 'activating' }))).toBe('busy')
     expect(serviceTone(service({ activeState: 'failed' }))).toBe('down')
     expect(serviceTone(service({ activeState: 'inactive' }))).toBe('down')
+    expect(serviceTone(service({ unit: 'cf-build@radustanciu.service', activeState: 'inactive' }))).toBe('ok')
+    expect(serviceTone(service({ unit: 'cf-build@radustanciu.service', activeState: 'failed' }))).toBe('down')
   })
 
   it('formats memory', () => {

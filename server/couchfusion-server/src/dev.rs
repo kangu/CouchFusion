@@ -346,7 +346,7 @@ impl DevManager {
     fn spawn_log_follower(self: &Arc<Self>, cfg: SiteConfig) {
         let this = self.clone();
         tokio::spawn(async move {
-            let mut rx = this.units.follow_logs(&cfg.dev_unit);
+            let mut rx = this.units.follow_logs(&cfg.dev_unit, 30);
             let mut next_id: u64 = 1;
             loop {
                 let Some(first) = rx.recv().await else { return };

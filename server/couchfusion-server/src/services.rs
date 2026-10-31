@@ -2,7 +2,7 @@
 //!
 //! Always shells out to the configured `systemctl`/`journalctl` (argv only, never a shell),
 //! independent of the dev unit runner, so the same code serves hetzner1 and test fakes.
-//! Nothing here starts, stops or restarts a unit (that is Phase 3).
+//! Nothing here starts, stops or restarts a unit; production deploys live in `release.rs`.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -41,7 +41,8 @@ impl Services {
         futures_util::future::join_all(futures).await
     }
 
-    async fn show(&self, unit: &str) -> ServiceSnapshot {
+    /// Status of one unit (not limited to the allowlist; callers pass configured units only).
+    pub async fn show(&self, unit: &str) -> ServiceSnapshot {
         let out = Command::new(&self.systemctl)
             .args(["show", unit, "-p", SHOW_PROPS, "--timestamp=unix"])
             .stdin(Stdio::null())
@@ -90,7 +91,9 @@ fn micros_to_rfc3339(micros: i64) -> String {
 }
 
 fn kind_of(unit: &str) -> &'static str {
-    if unit.starts_with("cf-") {
+    if unit.starts_with("cf-site@") || unit.starts_with("cf-build@") {
+        "prod"
+    } else if unit.starts_with("cf-") {
         "dev"
     } else if SYSTEM_UNITS.contains(&unit) {
         "system"

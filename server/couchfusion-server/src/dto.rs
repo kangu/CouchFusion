@@ -374,7 +374,7 @@ pub struct TrashEntry {
 pub struct ServiceSnapshot {
     pub unit: String,
     pub description: String,
-    /// adopted | dev | system
+    /// adopted | dev | prod | system
     pub kind: &'static str,
     pub active_state: String,
     pub sub_state: String,
@@ -414,6 +414,68 @@ pub struct CommitRequest {
     pub message: String,
     pub paths: Vec<String>,
     pub expected_head: String,
+}
+
+/// One production release (`<www_dir>/releases/<id>/release.json`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInfo {
+    pub id: String,
+    /// UTC time the snapshot was taken (from the id).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_head: Option<String>,
+    pub app_dirty: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers_head: Option<String>,
+    pub layers_dirty: bool,
+    pub current: bool,
+}
+
+/// Whether a build may start now (spec §7.2 step 1).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Admission {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_available_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_free_gib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+/// `GET …/sites/{site}/prod`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProdView {
+    pub site_id: String,
+    pub unit: String,
+    pub port: u16,
+    pub service: ServiceSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+    /// Newest first.
+    pub releases: Vec<ReleaseInfo>,
+    pub admission: Admission,
+    /// Running deploy/rollback (or other site job holding the lease), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_job_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeployRequest {
+    /// The site id, typed by the user (step-up confirmation).
+    pub confirm: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RollbackRequest {
+    pub release_id: String,
+    pub confirm: String,
 }
 
 #[derive(Debug, Deserialize)]

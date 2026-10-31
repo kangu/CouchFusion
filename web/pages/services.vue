@@ -2,12 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '../assets/css/services.css'
 import { createServices, formatBytes, serviceTone } from '../composables/useServices'
+import ProductionPanel from '../components/prod/ProductionPanel.vue'
 
 /** Read-only status and recent logs of the server's systemd units (phase 2 contract §4). */
 const bootstrap = useBootstrap()
 const state = createServices(useApi())
 const logPre = ref<HTMLElement>()
 const available = computed(() => bootstrap.has('services'))
+const prodSite = computed(() => {
+  const state = bootstrap.state.value
+  return bootstrap.has('prod-releases') && state?.workspaceId && state.siteId ? { workspaceId: state.workspaceId, siteId: state.siteId } : undefined
+})
 
 function since(value: string | undefined) {
   if (!value) return ''
@@ -36,9 +41,9 @@ onBeforeUnmount(() => state.stop())
   <section class="page-sheet">
     <header class="page-header">
       <div>
-        <p class="eyebrow">Server · read only</p>
+        <p class="eyebrow">Server</p>
         <h1>Services</h1>
-        <p>systemd units on this server. Refreshes every 10 seconds; starting and stopping production arrives with deploys.</p>
+        <p>Production releases, and the systemd units on this server (status refreshes every 10 seconds).</p>
       </div>
       <button class="compact-button" type="button" :disabled="!available || state.loading.value" @click="state.load()">Refresh</button>
     </header>
@@ -48,6 +53,7 @@ onBeforeUnmount(() => state.stop())
       <p>This control plane does not report services.</p>
     </div>
     <template v-else>
+      <ProductionPanel v-if="prodSite" :workspace-id="prodSite.workspaceId" :site-id="prodSite.siteId" />
       <p v-if="state.error.value" class="notice notice--error" role="alert">{{ state.error.value }}</p>
       <p v-if="state.lastLoaded.value" class="dialog__note">
         Updated {{ state.lastLoaded.value.toLocaleTimeString() }}<template v-if="state.failing.value"> · {{ state.failing.value }} not running</template>

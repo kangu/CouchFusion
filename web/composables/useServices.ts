@@ -9,8 +9,10 @@ export const SERVICES_REFRESH_MS = 10_000
 export const DEFAULT_LOG_LINES = 200
 
 /** Visual state for a unit: `ok` (active/running), `busy` (transitioning), `down` (failed/inactive). */
-export function serviceTone(service: Pick<ServiceSnapshot, 'activeState'>): 'ok' | 'busy' | 'down' {
+export function serviceTone(service: Pick<ServiceSnapshot, 'activeState'> & { unit?: string }): 'ok' | 'busy' | 'down' {
   if (service.activeState === 'active') return 'ok'
+  // Oneshot jobs (production build, registry rebuild) are idle between runs, not down.
+  if (service.activeState === 'inactive' && /^cf-(build|registry)@/.test(service.unit ?? '')) return 'ok'
   if (['activating', 'deactivating', 'reloading', 'refreshing'].includes(service.activeState)) return 'busy'
   return 'down'
 }

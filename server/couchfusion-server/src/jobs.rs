@@ -142,6 +142,11 @@ impl Jobs {
         }
     }
 
+    /// Id of the job currently holding the site lease, if any.
+    pub fn active(&self, site: &str) -> Option<String> {
+        self.leases.lock().expect("lease lock").get(site).cloned()
+    }
+
     fn release(&self, site: &str, id: &str) {
         let mut leases = self.leases.lock().expect("lease lock");
         if leases.get(site).is_some_and(|j| j == id) {

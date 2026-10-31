@@ -49,6 +49,9 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos/{repo}/fetch", post(repo_fetch))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/pull", post(repo_pull))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/push", post(repo_push))
+        .route(&format!("{site}/prod"), get(prod_view))
+        .route(&format!("{site}/prod/deploy"), post(prod_deploy))
+        .route(&format!("{site}/prod/rollback"), post(prod_rollback))
         .route("/api/v1/services", get(services))
         .route("/api/v1/services/{unit}/logs", get(service_logs))
 }
@@ -89,6 +92,7 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
                 "registry-rebuild",
                 "services",
                 "git-remote",
+                "prod-releases",
             ],
             dev_origins: app.config.sites.iter().map(|s| origin.origin_for_port(s.slot_port)).collect(),
             workspace_id: app.config.workspace.id.clone(),
@@ -315,6 +319,23 @@ async fn trash_restore(State(app): S, Path((ws, site, tid)): Path<(String, Strin
 async fn registry_rebuild(State(app): S, Path((ws, site)): Path<(String, String)>, JsonBody(_): JsonBody<Empty>) -> ApiResult {
     let cfg = site_cfg(&app, &ws, &site)?;
     Ok(data(StatusCode::ACCEPTED, crate::ops::rebuild_registry(app, cfg).await?))
+}
+
+// ---- production releases (Phase 3) ----
+
+async fn prod_view(State(app): S, Path((ws, site)): Path<(String, String)>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::OK, crate::release::view(&app, &cfg).await?))
+}
+
+async fn prod_deploy(State(app): S, Path((ws, site)): Path<(String, String)>, JsonBody(req): JsonBody<DeployRequest>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::ACCEPTED, crate::release::deploy(app, cfg, req.confirm).await?))
+}
+
+async fn prod_rollback(State(app): S, Path((ws, site)): Path<(String, String)>, JsonBody(req): JsonBody<RollbackRequest>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::ACCEPTED, crate::release::rollback(app, cfg, req.release_id, req.confirm).await?))
 }
 
 // ---- services (read-only) ----

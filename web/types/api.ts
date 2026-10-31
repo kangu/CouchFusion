@@ -365,6 +365,9 @@ export type BootstrapCapability =
   | 'component-source'
   | 'registry-rebuild'
   | 'services'
+  | 'git-remote'
+  // Phase 3: production releases (deploy, rollback)
+  | 'prod-releases'
 
 export interface Bootstrap {
   version: string
@@ -526,7 +529,7 @@ export interface RegistryRebuildResult {
   components: number
 }
 
-export type ServiceKind = 'adopted' | 'dev' | 'system'
+export type ServiceKind = 'adopted' | 'dev' | 'prod' | 'system'
 
 export interface ServiceSnapshot {
   unit: string
@@ -538,4 +541,36 @@ export interface ServiceSnapshot {
   memoryCurrentBytes?: number
   since?: string
   user?: string
+}
+
+/** One production release (`GET …/sites/{site}/prod`, Phase 3). */
+export interface ReleaseInfo {
+  id: string
+  createdAt?: string
+  appHead?: string
+  appDirty: boolean
+  layersHead?: string
+  layersDirty: boolean
+  current: boolean
+}
+
+/** Whether a build may start now (free memory and disk). */
+export interface ReleaseAdmission {
+  ok: boolean
+  memoryAvailableMib?: number
+  diskFreeGib?: number
+  problem?: string
+}
+
+export interface ProdView {
+  siteId: string
+  unit: string
+  port: number
+  service: ServiceSnapshot
+  current?: string
+  /** Newest first. */
+  releases: ReleaseInfo[]
+  admission: ReleaseAdmission
+  /** Job holding the site lease (a deploy, rollback or any other site job). */
+  activeJobId?: string
 }

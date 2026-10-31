@@ -11,3 +11,19 @@
 .services-logs header .compact-button { color: var(--paper); border-color: var(--line-dark); }
 .services-logs .dev-log--err, .services-logs code.dev-log--err { color: #f1a596; }
 @media (max-width: 720px) { .services-table th:nth-child(3), .services-table td:nth-child(3), .services-table th:nth-child(5), .services-table td:nth-child(5) { display: none; } }
+/* Production panel (components/prod/ProductionPanel.vue). */
+.prod-panel { margin: 0 0 2rem; padding: 1rem 1.1rem; border: 1px solid var(--line-paper); border-radius: .5rem; }
+.prod-panel__header { display: flex; flex-wrap: wrap; gap: .8rem; align-items: flex-start; justify-content: space-between; }
+.prod-panel__header h2 { margin: .1rem 0 .3rem; }
+.prod-panel__header p:last-child { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 0; font: .7rem/1.4 var(--mono); }
+.prod-panel__actions { display: flex; gap: .5rem; }
+.prod-panel__confirm { margin: .9rem 0; padding: .8rem; border: 1px solid var(--line-paper); border-radius: .4rem; background: rgba(111, 228, 224, .06); }
+.prod-panel__confirm p { margin: 0 0 .6rem; }
+.prod-panel__confirm label { display: block; margin-bottom: .35rem; font-size: .75rem; }
+.prod-panel__confirm-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.prod-panel__confirm-row input { flex: 1 1 12rem; min-width: 0; padding: .4rem .5rem; font: .8rem var(--mono); }
+.prod-panel__job { margin: .9rem 0; }
+.prod-panel__job pre { max-height: 18rem; overflow: auto; }
+.prod-panel__releases { margin-top: .9rem; }
+.prod-panel__releases td:first-child code { white-space: nowrap; font-size: .64rem; }
+@media (max-width: 720px) { .prod-panel__releases th:nth-child(4), .prod-panel__releases td:nth-child(4) { display: none; } }

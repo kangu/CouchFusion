@@ -144,6 +144,23 @@ impl Units {
         }
     }
 
+    /// Last `lines` journal messages of a unit logged since `since` (systemd only).
+    pub async fn journal_since(&self, unit: &str, since: std::time::SystemTime, lines: u32) -> Vec<String> {
+        if self.kind != RunnerKind::Systemd || check_unit_name(unit).is_err() {
+            return vec![];
+        }
+        let secs = since.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let out = Command::new(&self.journalctl)
+            .args(["-u", unit, "--since", &format!("@{secs}"), "-n", &lines.to_string(), "-o", "cat", "--no-pager"])
+            .stdin(Stdio::null())
+            .output()
+            .await;
+        match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect(),
+            Err(_) => vec![],
+        }
+    }
+
     pub async fn state(&self, unit: &str) -> anyhow::Result<UnitState> {
         check_unit_name(unit)?;
         match self.kind {
@@ -160,8 +177,9 @@ impl Units {
         }
     }
 
-    /// Streams new log lines of a unit until the receiver is dropped.
-    pub fn follow_logs(self: &Arc<Self>, unit: &str) -> mpsc::Receiver<LogLine> {
+    /// Streams new log lines of a unit until the receiver is dropped, starting with the last
+    /// `backlog` lines (systemd only).
+    pub fn follow_logs(self: &Arc<Self>, unit: &str, backlog: u32) -> mpsc::Receiver<LogLine> {
         let (tx, rx) = mpsc::channel(512);
         let unit = unit.to_string();
         let this = self.clone();
@@ -169,7 +187,7 @@ impl Units {
             match this.kind {
                 RunnerKind::Systemd => {
                     let child = Command::new(&this.journalctl)
-                        .args(["-u", &unit, "-o", "json", "-f", "-n", "30", "--no-pager"])
+                        .args(["-u", &unit, "-o", "json", "-f", "-n", &backlog.to_string(), "--no-pager"])
                         .stdin(Stdio::null())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null())
@@ -321,7 +339,9 @@ fn pump(reader: impl AsyncRead + Unpin + Send + 'static, priority: u8, tx: broad
 }
 
 fn check_unit_name(unit: &str) -> anyhow::Result<()> {
-    let ok = ["cf-dev@", "cf-agent@", "cf-registry@"].iter().any(|p| {
+    // Same families as the polkit rule (50-couchfusion.rules); config validation pins
+    // cf-site@/cf-build@ to the configured site ids.
+    let ok = ["cf-dev@", "cf-agent@", "cf-registry@", "cf-build@", "cf-site@"].iter().any(|p| {
         unit.strip_prefix(p)
             .and_then(|rest| rest.strip_suffix(".service"))
             .is_some_and(crate::config::valid_slug)
@@ -380,6 +400,9 @@ mod tests {
         assert!(check_unit_name("cf-dev@radustanciu.service").is_ok());
         assert!(check_unit_name("cf-agent@radustanciu.service").is_ok());
         assert!(check_unit_name("cf-registry@radustanciu.service").is_ok());
+        assert!(check_unit_name("cf-build@radustanciu.service").is_ok());
+        assert!(check_unit_name("cf-site@radustanciu.service").is_ok());
+        assert!(check_unit_name("cf-site@../x.service").is_err());
         assert!(check_unit_name("cf-registry@x.timer").is_err());
         assert!(check_unit_name("ssh.service").is_err());
         assert!(check_unit_name("cf-dev@../x.service").is_err());
