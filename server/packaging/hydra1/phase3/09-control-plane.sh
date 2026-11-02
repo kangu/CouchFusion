@@ -19,7 +19,7 @@ cp -a "$TOML" "$TOML.prev"
 if grep -q '^\[sites\.prod\]' "$TOML"; then
   log "server.toml already has [sites.prod]"
 else
-  awk -v app="$CF_APP" -v port="$CF_PROD_PORT" '
+  awk -v app="$CF_APP" -v port="$CF_PROD_PORT" -v preview="$CF_PREVIEW_PORT" -v public="${CF_PUBLIC_URL:-https://radustanciu.ro}" '
     { print }
     $0 == "agent_unit = \"cf-agent@" app ".service\"" {
       print ""
@@ -30,6 +30,8 @@ else
       print "port = " port
       print "www_dir = \"/var/www/" app "\""
       print "build_dir = \"/var/cache/cf-build/" app "\""
+      print "preview_port = " preview
+      print "public_url = \"" public "\""
     }' "$TOML.prev" > "$TOML.new"
   grep -q '^\[sites\.prod\]' "$TOML.new" || { rm -f "$TOML.new"; die "could not find agent_unit for $CF_APP in $TOML"; }
   cat "$TOML.new" > "$TOML"; rm -f "$TOML.new"

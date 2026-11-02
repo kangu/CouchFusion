@@ -652,4 +652,8 @@ export interface ProdView {
   admission: ReleaseAdmission
   /** Job holding the site lease (a deploy, rollback or any other site job). */
   activeJobId?: string
+  /** Tailnet preview of the production server. */
+  previewUrl?: string
+  /** Public address of the site. */
+  publicUrl?: string
 }

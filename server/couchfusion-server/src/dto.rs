@@ -481,6 +481,12 @@ pub struct ProdView {
     /// Running deploy/rollback (or other site job holding the lease), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_job_id: Option<String>,
+    /// Tailnet preview of the production server (`[sites.prod] preview_port`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
+    /// Public address (`[sites.prod] public_url`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

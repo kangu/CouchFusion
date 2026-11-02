@@ -144,6 +144,9 @@ pub async fn view(app: &App, site: &SiteConfig) -> Result<ProdView, ApiError> {
         releases,
         admission: adm,
         active_job_id: app.jobs.active(&site.id),
+        // The preview is a `tailscale serve` port, so it is always the tailnet host.
+        preview_url: prod.preview_port.map(|p| format!("https://{}:{p}/", app.config.server.public_host)),
+        public_url: prod.public_url.clone(),
     })
 }
 

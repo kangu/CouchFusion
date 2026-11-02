@@ -554,14 +554,14 @@ describe('site detail on the Rust control plane', () => {
   it('shows the dev session, production and components, and skips Go-only routes', async () => {
     const get = vi.fn(async (path: string) => {
       if (path.endsWith('/components')) return { status: 'ready', canRebuild: true, components: [{ id: 'network-hero', label: 'Network hero', description: '', source: 'app/components/content/NetworkHero.vue', propCount: 4, allowChildren: false }] }
-      if (path.endsWith('/dev')) return { siteId: 'radustanciu', unit: 'cf-dev@radustanciu.service', status: 'ready', url: '' }
-      if (path.endsWith('/prod')) return undefined
+      if (path.endsWith('/dev')) return { siteId: 'radustanciu', unit: 'cf-dev@radustanciu.service', status: 'ready', url: 'https://hydra1.example.ts.net:9181' }
+      if (path.endsWith('/prod')) return { siteId: 'radustanciu', unit: 'cf-site@radustanciu.service', port: 4501, service: { unit: 'cf-site@radustanciu.service', description: '', kind: 'prod', activeState: 'active', subState: 'running' }, releases: [], admission: { ok: true }, previewUrl: 'https://hydra1.example.ts.net:9189/', publicUrl: 'https://radustanciu.ro' }
       return { id: 'radustanciu', name: 'radustanciu', root: '/srv/couchfusion/workspace/apps/radustanciu', packageManager: 'bun', modules: [], scripts: {}, dependencies: {}, devDependencies: {}, dependenciesInstalled: true, lockfiles: ['bun.lock'], warnings: [] }
     })
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'hydra1', siteId: 'radustanciu' } }))
     vi.stubGlobal('useApi', () => ({ get, post: vi.fn() }))
-    vi.stubGlobal('useBootstrap', () => ({ load: async () => undefined, isRust: { value: true }, has: () => false, state: { value: { agent: { model: 'gpt-5.6-sol', reasoningEffort: null } } } }))
+    vi.stubGlobal('useBootstrap', () => ({ load: async () => undefined, isRust: { value: true }, has: (c: string) => c === 'prod-releases', state: { value: { agent: { model: 'gpt-5.6-sol', reasoningEffort: null } } } }))
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -574,6 +574,13 @@ describe('site detail on the Rust control plane', () => {
     expect(view.text()).toContain('gpt-5.6-sol')
     expect(view.text()).toContain('network-hero')
     expect(wrapper.text()).not.toContain('Could not')
+    const links = wrapper.get('[data-testid="site-links"]').findAll('a').map((a) => [a.text(), a.attributes('href')])
+    expect(links).toEqual([
+      ['Dev site ↗', 'https://hydra1.example.ts.net:9181/'],
+      ['Dev builder ↗', 'https://hydra1.example.ts.net:9181/builder/'],
+      ['Production preview ↗', 'https://hydra1.example.ts.net:9189/'],
+      ['Public site ↗', 'https://radustanciu.ro'],
+    ])
     wrapper.unmount()
   })
 })

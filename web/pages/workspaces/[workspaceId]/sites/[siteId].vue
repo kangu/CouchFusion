@@ -16,6 +16,7 @@ import type {
   ComponentPreviewHost,
   ContentComponent,
   DevSessionView,
+  ProdView,
   JobSnapshot,
   ProcessSnapshot,
   Site,
@@ -31,6 +32,9 @@ const bootstrap = useBootstrap()
 /** The Rust control plane (VPS) has no curated tasks, preview host or Go agent conversations. */
 const isRust = computed(() => bootstrap.isRust.value)
 const devView = ref<DevSessionView>()
+const prodView = ref<ProdView>()
+/** Dev slot origin as this browser reaches it (tailnet or SSH tunnel). */
+const devSiteUrl = computed(() => devView.value?.url?.replace(/\/+$/, '') || '')
 const hub = useActivity()
 const activity = useActivityStore()
 const agent = useAgentConversation()
@@ -92,11 +96,13 @@ async function load() {
   registryError.value = ''
   await bootstrap.load()
   if (isRust.value) {
-    const [siteResult, registryResult, devResult] = await Promise.allSettled([
+    const [siteResult, registryResult, devResult, prodResult] = await Promise.allSettled([
       api.get<Site>(base.value),
       api.get<ComponentRegistryResponse>(`${base.value}/components`),
       api.get<DevSessionView>(`${base.value}/dev`),
+      bootstrap.has('prod-releases') ? api.get<ProdView>(`${base.value}/prod`) : Promise.resolve(undefined),
     ])
+    if (prodResult.status === 'fulfilled' && prodResult.value) prodView.value = prodResult.value
     if (siteResult.status === 'fulfilled') site.value = siteResult.value
     else error.value = message(siteResult.reason, 'Could not inspect site.')
     if (registryResult.status === 'fulfilled') registry.value = registryResult.value
@@ -348,6 +354,15 @@ function message(cause: unknown, fallback: string) {
             <div class="button-row"><NuxtLink class="compact-button compact-button--primary" :to="`/workspaces/${workspaceId}/dev/${siteId}`">Open dev page</NuxtLink></div>
             <p class="site-rust__meta">Builder, New component, LLM request, components, git and the dev log live on the dev page.</p>
           </section>
+          <section class="panel" data-testid="site-links">
+            <p class="eyebrow">Open the site</p>
+            <ul class="site-rust__links">
+              <li v-if="devSiteUrl"><a :href="`${devSiteUrl}/`" target="_blank" rel="noreferrer">Dev site ↗</a><small>nuxt dev, live code</small></li>
+              <li v-if="devSiteUrl"><a :href="`${devSiteUrl}/builder/`" target="_blank" rel="noreferrer">Dev builder ↗</a><small>editor on the dev server</small></li>
+              <li v-if="prodView?.previewUrl"><a :href="prodView.previewUrl" target="_blank" rel="noreferrer">Production preview ↗</a><small>live release, tailnet only</small></li>
+              <li v-if="prodView?.publicUrl"><a :href="prodView.publicUrl" target="_blank" rel="noreferrer">Public site ↗</a><small>{{ prodView.publicUrl.replace(/^https?:\/\//, '') }}</small></li>
+            </ul>
+          </section>
           <section class="panel fingerprint-panel">
             <p class="eyebrow">Project fingerprint</p>
             <dl class="review-list">
@@ -472,6 +487,9 @@ function message(cause: unknown, fallback: string) {
 <style scoped>
 .site-rust__main { display: grid; gap: 1rem; min-width: 0; }
 .site-rust__meta { margin: .4rem 0; font: .72rem/1.5 var(--mono); color: #4c5651; }
+.site-rust__links { display: grid; gap: .55rem; margin: .4rem 0 0; padding: 0; list-style: none; font: .76rem/1.4 var(--mono); }
+.site-rust__links a { font-weight: 700; color: var(--ink); }
+.site-rust__links small { display: block; color: #4c5651; font-size: .66rem; }
 .site-detail-grid {
   display: grid;
   grid-template-columns: minmax(15rem, .62fr) minmax(0, 1.38fr);

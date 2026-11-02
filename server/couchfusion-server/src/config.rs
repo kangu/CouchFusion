@@ -278,6 +278,12 @@ pub struct ProdConfig {
     /// Path probed for the health check (3 consecutive answers below 500).
     #[serde(default = "default_probe_path")]
     pub probe_path: String,
+    /// Tailnet-only `tailscale serve` port that shows the production server (phase3/05-preview.sh).
+    #[serde(default)]
+    pub preview_port: Option<u16>,
+    /// The public address of the site (shown as a link; e.g. `https://radustanciu.ro`).
+    #[serde(default)]
+    pub public_url: Option<String>,
 }
 
 fn default_keep_releases() -> usize {
@@ -416,6 +422,11 @@ impl Config {
                 if !prod.probe_path.starts_with('/') {
                     bail!("prod probe_path must start with /");
                 }
+                if let Some(url) = &prod.public_url
+                    && (!(url.starts_with("https://") || url.starts_with("http://")) || url.chars().any(|c| c.is_whitespace() || c.is_control()) || url.len() > 200)
+                {
+                    bail!("prod public_url must be an http(s) URL");
+                }
             }
         }
         for unit in &self.services.units {
@@ -543,6 +554,9 @@ mod tests {
         let config: Config = toml::from_str(text).unwrap();
         config.validate().unwrap();
         assert_eq!(config.agent.model.as_deref(), Some("gpt-5.6-sol"));
+        let prod = config.sites[0].prod.as_ref().unwrap();
+        assert_eq!(prod.preview_port, Some(9189));
+        assert_eq!(prod.public_url.as_deref(), Some("https://radustanciu.ro"));
         assert_eq!(config.agent.reasoning_effort, None);
         let mut bad = config.clone();
         bad.agent.model = Some("-oops".into());
