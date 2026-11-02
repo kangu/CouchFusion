@@ -35,6 +35,29 @@ pub struct Config {
     /// Remotes the control plane may fetch from, pull from and push to.
     #[serde(default)]
     pub git: GitConfig,
+    /// Codex model settings for every LLM run (generate and request).
+    #[serde(default)]
+    pub agent: AgentConfig,
+}
+
+/// `[agent]`: model and reasoning effort passed to `codex exec`. Unset = Codex's account default.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfig {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+pub const REASONING_EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh"];
+
+/// Model slugs as Codex lists them (`gpt-5.6-sol`): letters, digits, `.`, `-`, `_`, `:`.
+pub fn valid_model(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 64
+        && !model.starts_with('-')
+        && model.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b':'))
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -350,6 +373,16 @@ impl Config {
         if !self.workspace.root.is_absolute() {
             bail!("workspace.root must be absolute");
         }
+        if let Some(model) = &self.agent.model
+            && !valid_model(model)
+        {
+            bail!("invalid [agent] model {model:?}");
+        }
+        if let Some(effort) = &self.agent.reasoning_effort
+            && !REASONING_EFFORTS.contains(&effort.as_str())
+        {
+            bail!("[agent] reasoning_effort must be one of {}", REASONING_EFFORTS.join(", "));
+        }
         if self.auth.allowed_logins.is_empty() && self.server.unix_listeners {
             bail!("auth.allowed_logins must not be empty when unix listeners are enabled");
         }
@@ -502,6 +535,22 @@ mod tests {
         assert!(!valid_slug("a/b"));
         assert!(!valid_slug("a..b."));
         assert!(!valid_slug(&"a".repeat(41)));
+    }
+
+    #[test]
+    fn hydra1_config_parses_with_agent_model() {
+        let text = include_str!("../../packaging/hydra1/phase1/server.toml");
+        let config: Config = toml::from_str(text).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.agent.model.as_deref(), Some("gpt-5.6-sol"));
+        assert_eq!(config.agent.reasoning_effort, None);
+        let mut bad = config.clone();
+        bad.agent.model = Some("-oops".into());
+        assert!(bad.validate().is_err());
+        let mut bad = config.clone();
+        bad.agent.reasoning_effort = Some("max".into());
+        assert!(bad.validate().is_err());
+        assert!(valid_model("gpt-5.6-sol") && valid_model("o4-mini") && !valid_model("a b") && !valid_model(""));
     }
 
     #[test]

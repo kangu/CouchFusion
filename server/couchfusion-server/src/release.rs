@@ -20,7 +20,7 @@ use crate::http::App;
 use crate::jobs::JobCtx;
 
 /// Names never copied into a snapshot (at any depth), like the rsync excludes in the script.
-const SNAPSHOT_EXCLUDES: &[&str] = &["node_modules", ".nuxt", ".output", ".git", "test-results"];
+const SNAPSHOT_EXCLUDES: &[&str] = &["node_modules", ".nuxt", ".output", ".git", "test-results", ".couchfusion"];
 const ACTIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 const HEALTHY_IN_A_ROW: u32 = 3;

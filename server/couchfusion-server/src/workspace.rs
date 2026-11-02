@@ -163,7 +163,8 @@ pub fn open_contained(root: &Path, rel: &str) -> std::io::Result<ContainedFile> 
     for seg in parents {
         dir = openat(&dir, *seg, dir_flags | OFlag::O_NOFOLLOW, Mode::empty()).map_err(std::io::Error::from)?;
     }
-    let fd = openat(&dir, *last, OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC, Mode::empty())
+    // O_NONBLOCK: opening a FIFO planted at `rel` must not hang (no effect on regular files).
+    let fd = openat(&dir, *last, OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK, Mode::empty())
         .map_err(std::io::Error::from)?;
     let file = File::from(fd);
     if !file.metadata()?.is_file() {
@@ -276,7 +277,118 @@ pub fn create_contained(root: &Path, rel: &str, bytes: &[u8], mode: u32) -> std:
     Ok(())
 }
 
-const SKIP_DIRS: &[&str] = &["node_modules", ".nuxt", ".output", ".git", ".data", "dist", "test-results", ".cache"];
+/// Opens the directory `root/rel` (empty `rel` = `root`) walking every component with
+/// `O_NOFOLLOW`, so a symlink anywhere below `root` is refused.
+fn open_dir_contained(root: &Path, rel: &str) -> std::io::Result<OwnedFd> {
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe path");
+    let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC;
+    let root_c = CString::new(root.as_os_str().as_bytes()).map_err(|_| invalid())?;
+    // SAFETY: plain open(2) of the root directory; the fd is wrapped immediately.
+    let raw = unsafe { libc::open(root_c.as_ptr(), (dir_flags.bits()) as libc::c_int) };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut dir = unsafe { OwnedFd::from_raw_fd(raw) };
+    if rel.is_empty() {
+        return Ok(dir);
+    }
+    for seg in rel.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(invalid());
+        }
+        dir = openat(&dir, seg, dir_flags | OFlag::O_NOFOLLOW, Mode::empty()).map_err(std::io::Error::from)?;
+    }
+    Ok(dir)
+}
+
+/// `mkdir -p root/rel` without following symlinks; existing directories are kept. New
+/// directories get `mode` (minus the umask; a setgid parent's group bit is inherited by the kernel).
+pub fn mkdir_contained(root: &Path, rel: &str, mode: u32) -> std::io::Result<()> {
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe path");
+    let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW;
+    let mut dir = open_dir_contained(root, "")?;
+    for seg in rel.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(invalid());
+        }
+        let name = CString::new(seg).map_err(|_| invalid())?;
+        // SAFETY: dir fd is open and name is NUL-terminated.
+        let rc = unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), mode as libc::mode_t) };
+        if rc != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(err);
+            }
+        }
+        dir = openat(&dir, seg, dir_flags, Mode::empty()).map_err(std::io::Error::from)?;
+    }
+    Ok(())
+}
+
+/// `rm -r root/rel` without following any symlink: entries are listed and unlinked through
+/// directory fds, symlinks are removed as links. A missing `rel` is not an error.
+pub fn remove_tree_contained(root: &Path, rel: &str) -> std::io::Result<()> {
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe path");
+    let (parent_rel, name) = match rel.rsplit_once('/') {
+        Some((p, n)) => (p, n),
+        None => ("", rel),
+    };
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(invalid());
+    }
+    let parent = match open_dir_contained(root, parent_rel) {
+        Ok(fd) => fd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    remove_entry_at(&parent, name, 0)
+}
+
+fn remove_entry_at(parent: &OwnedFd, name: &str, depth: usize) -> std::io::Result<()> {
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe path");
+    if depth > 32 {
+        return Err(std::io::Error::other("directory tree too deep"));
+    }
+    let name_c = CString::new(name).map_err(|_| invalid())?;
+    // SAFETY: zeroed stat buffer is valid for fstatat to fill; name is NUL-terminated.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::fstatat(parent.as_raw_fd(), name_c.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        return if err.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(err) };
+    }
+    if (st.st_mode & libc::S_IFMT) == libc::S_IFDIR {
+        let dir_fd = openat(parent, name, OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW, Mode::empty())
+            .map_err(std::io::Error::from)?;
+        let names: Vec<String> = {
+            let dup = dir_fd.try_clone()?;
+            let mut listing = nix::dir::Dir::from_fd(dup).map_err(std::io::Error::from)?;
+            listing
+                .iter()
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().to_str().ok().map(str::to_string))
+                .filter(|n| n != "." && n != "..")
+                .collect()
+        };
+        for child in names {
+            remove_entry_at(&dir_fd, &child, depth + 1)?;
+        }
+        // SAFETY: parent fd is open and name is NUL-terminated.
+        let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name_c.as_ptr(), libc::AT_REMOVEDIR) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    } else {
+        // SAFETY: parent fd is open and name is NUL-terminated.
+        let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name_c.as_ptr(), 0) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+const SKIP_DIRS: &[&str] = &["node_modules", ".nuxt", ".output", ".git", ".data", "dist", "test-results", ".cache", ".couchfusion"];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>, filter: &dyn Fn(&Path) -> bool) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -348,6 +460,23 @@ const ROOT_FILES: &[&str] = &[
     "content.config.ts",
     "tailwind.config.js",
 ];
+
+/// Every file under the app dir (minus [`SKIP_DIRS`] and the generated registry): the scope of an
+/// LLM request, which may change any app file.
+pub fn snapshot_all(app_dir: &Path) -> Snapshot {
+    let mut files = Vec::new();
+    walk(app_dir, &mut files, &|_| true);
+    files
+        .into_iter()
+        .filter_map(|p| {
+            let r = rel(app_dir, &p);
+            if r.starts_with("app/content-builder/component-definitions.") {
+                return None;
+            }
+            std::fs::read(&p).ok().map(|bytes| (r, sha256_hex(&bytes)))
+        })
+        .collect()
+}
 
 pub fn snapshot(app_dir: &Path) -> Snapshot {
     let mut files = Vec::new();
@@ -651,6 +780,18 @@ mod tests {
             found,
             vec![("app/components/content/Landing.vue", 2), ("app/components/content/Landing.vue", 3), ("app/pages/x.vue", 1), ("app/pages/x.vue", 2)]
         );
+    }
+
+    #[test]
+    fn snapshot_all_covers_every_app_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        for f in ["docs/notes.md", "app/pages/x.vue", "nuxt.config.ts", "node_modules/p/i.js", ".couchfusion/request/context.json", "app/content-builder/component-definitions.json"] {
+            std::fs::create_dir_all(d.join(f).parent().unwrap()).unwrap();
+            std::fs::write(d.join(f), f).unwrap();
+        }
+        let files: Vec<String> = snapshot_all(d).into_keys().collect();
+        assert_eq!(files, vec!["app/pages/x.vue", "docs/notes.md", "nuxt.config.ts"]);
     }
 
     #[test]

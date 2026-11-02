@@ -8,6 +8,8 @@ import { createComponentsPanel } from '../../../../composables/useComponentsPane
 import { createDevSession } from '../../../../composables/useDevSession'
 import { createGitRepos } from '../../../../composables/useGitRepos'
 import { createJobTracker, isTerminalJob } from '../../../../composables/useJobTracker'
+import { createLlmRequest, modelLabel, pathFromBuilderRoute } from '../../../../composables/useLlmRequest'
+import { formatSecs, startProgress } from '../../../../composables/useDevStartProgress'
 import { useSiteEvents } from '../../../../composables/useSiteEvents'
 
 /**
@@ -36,10 +38,13 @@ const canViewSource = computed(() => bootstrap.has('component-source'))
 const canUseTrash = computed(() => bootstrap.has('component-trash'))
 const canRebuild = computed(() => bootstrap.has('registry-rebuild'))
 const componentsTab = ref<'registry' | 'trash'>('registry')
+const canRequest = computed(() => bootstrap.has('llm-request'))
+const canUseLlm = computed(() => canRequest.value || bootstrap.has('component-generate'))
+const llmModel = computed(() => modelLabel(bootstrap.state.value?.agent))
 
 const LOG_LIMIT = 800
 const logs = ref<ActivityEvent[]>([])
-const drawer = ref<'agent' | 'git' | 'logs' | 'components' | null>(null)
+const drawer = ref<'agent' | 'request' | 'git' | 'logs' | 'components' | null>(null)
 const notice = ref('')
 
 // ---- iframe + bridge ----
@@ -252,6 +257,44 @@ async function cancelAgent() {
   }
 }
 
+// ---- LLM request (contract 2026-11-02) ----
+const request = createLlmRequest(api, workspaceId, siteId, tracker)
+
+function openRequest() {
+  drawer.value = 'request'
+  if (!request.currentPath.value && !request.running.value) {
+    request.currentPath.value = pathFromBuilderRoute(frameBridge.ready.value?.route) ?? ''
+  }
+  void request.loadPages()
+}
+
+async function sendRequest() {
+  const done = await request.submit()
+  const result = request.result.value
+  if (done?.status === 'succeeded' && result?.changedFiles.length) {
+    reloadEverywhere('request.files', result.addedComponents?.[0])
+    void git.load()
+  }
+}
+
+async function applyRequest() {
+  const done = await request.apply()
+  if (done?.status === 'succeeded') {
+    reloadEverywhere('request.applied')
+    void request.loadPages()
+  }
+}
+
+async function cancelRequest() {
+  const id = request.jobId.value
+  if (!id) return
+  try {
+    tracker.update(await api.post<JobSnapshot>(`/jobs/${encodeURIComponent(id)}/cancel`, {}))
+  } catch (cause) {
+    request.error.value = cause instanceof Error ? cause.message : 'Cancel failed.'
+  }
+}
+
 // ---- git ----
 const selectedRepo = ref<string>()
 const committing = ref(false)
@@ -309,6 +352,26 @@ const memory = computed(() => {
   const bytes = dev.view.value?.memoryBytes
   return bytes ? `${Math.round(bytes / 1048576)} MiB` : ''
 })
+// ---- start progress ----
+// While dev is starting or stopping, re-read the status every 3 s: the site stream can miss a
+// transition (e.g. while the control plane restarts), and a stale "Starting" looks like a hang.
+const now = ref(Date.now())
+let transitionTimer: ReturnType<typeof setInterval> | undefined
+watch(() => dev.status.value, (status) => {
+  const transitional = status === 'starting' || status === 'stopping'
+  if (transitional && !transitionTimer) {
+    transitionTimer = setInterval(() => {
+      now.value = Date.now()
+      if (Math.floor(now.value / 1000) % 3 === 0) void dev.load()
+    }, 1000)
+  } else if (!transitional && transitionTimer) {
+    clearInterval(transitionTimer)
+    transitionTimer = undefined
+  }
+}, { immediate: true })
+onBeforeUnmount(() => { if (transitionTimer) clearInterval(transitionTimer) })
+const progress = computed(() => startProgress(dev.view.value, logs.value, now.value))
+
 const statusLabel = computed(() => ({
   stopped: 'Stopped', starting: 'Starting', ready: 'Ready', stopping: 'Stopping', failed: 'Failed',
 }[dev.status.value]))
@@ -337,6 +400,7 @@ onBeforeUnmount(() => {
       <span class="dev-pill" :data-status="dev.status.value" role="status">{{ statusLabel }}</span>
       <small v-if="memory" class="dev-bar__meta">{{ memory }}</small>
       <small v-if="frameBridge.connected.value" class="dev-bar__meta" title="Builder bridge connected">bridge ●</small>
+      <small v-if="canUseLlm" class="dev-bar__model" data-testid="llm-model" title="Model used for LLM work (New component and LLM request)">LLM · {{ llmModel }}</small>
 
       <div class="dev-bar__group">
         <button v-if="dev.status.value === 'stopped' || dev.status.value === 'failed'" class="dev-btn" type="button" :disabled="!!dev.busy.value" @click="dev.start()">Start</button>
@@ -348,6 +412,7 @@ onBeforeUnmount(() => {
 
       <div class="dev-bar__group dev-bar__group--end">
         <button class="dev-btn dev-btn--accent" type="button" :disabled="!dev.ready.value" @click="openAgent('')">New component</button>
+        <button v-if="canRequest" class="dev-btn dev-btn--accent" type="button" :disabled="!dev.ready.value" :aria-pressed="drawer === 'request'" @click="drawer === 'request' ? (drawer = null) : openRequest()">LLM request</button>
         <button class="dev-btn" type="button" :aria-pressed="drawer === 'components'" @click="drawer === 'components' ? (drawer = null) : openComponents()">Components</button>
         <button class="dev-btn" type="button" :aria-pressed="drawer === 'git'" @click="drawer === 'git' ? (drawer = null) : openGit()">
           Git <span v-if="git.dirtyCount.value" class="dev-badge">{{ git.dirtyCount.value }}</span>
@@ -379,7 +444,15 @@ onBeforeUnmount(() => {
         <template v-if="dev.status.value === 'starting'">
           <span class="dev-spinner" aria-hidden="true" />
           <h1>Starting the dev server…</h1>
-          <p>Nuxt compiles on first start; this can take a minute.</p>
+          <p data-testid="dev-start-elapsed">{{ formatSecs(progress.elapsedSecs) }} so far · Nuxt compiles on start, usually 20–70 s · gives up after {{ formatSecs(progress.timeoutSecs) }}</p>
+          <div class="dev-progress" role="progressbar" :aria-valuenow="Math.round(progress.fraction * 100)" aria-valuemin="0" aria-valuemax="100" aria-label="Time used of the start timeout"><span :style="{ width: `${Math.round(progress.fraction * 100)}%` }" /></div>
+          <pre v-if="progress.lines.length" class="dev-start-log" aria-live="polite" data-testid="dev-start-log">{{ progress.lines.join('\n') }}</pre>
+          <p v-else class="dev-start-hint">No output from the dev server yet.</p>
+          <p v-if="!events.connected.value" class="dev-start-hint" role="status">Live updates are reconnecting; the status is re-checked every 3 s.</p>
+          <div v-if="progress.stalled" class="dev-start-stalled" role="alert">
+            <p>No new output for {{ formatSecs(progress.quietSecs) }}. It may be stuck.</p>
+            <div class="button-row"><button class="compact-button compact-button--primary" type="button" :disabled="!!dev.busy.value" @click="dev.restart()">Restart</button><button class="compact-button" type="button" @click="drawer = 'logs'">Show log</button></div>
+          </div>
         </template>
         <template v-else-if="dev.status.value === 'stopping'"><h1>Stopping…</h1></template>
         <template v-else-if="dev.status.value === 'failed'">
@@ -403,6 +476,29 @@ onBeforeUnmount(() => {
         :error="agentError"
         @submit="generate"
         @cancel-job="cancelAgent"
+        @commit="openGit"
+        @close="drawer = null"
+      />
+      <DevRequestDrawer
+        v-else-if="drawer === 'request'"
+        v-model:prompt="request.prompt.value"
+        v-model:current-path="request.currentPath.value"
+        :pages="request.pages.value"
+        :pages-error="request.pagesError.value"
+        :model="llmModel"
+        :job="request.job.value"
+        :apply-job="request.applyJob.value"
+        :result="request.result.value"
+        :apply-result="request.applyResult.value"
+        :can-submit="request.canSubmit.value && dev.ready.value"
+        :can-apply="request.canApply.value && dev.ready.value"
+        :running="request.running.value"
+        :busy="request.busy.value"
+        :error="request.error.value"
+        @submit="sendRequest"
+        @apply="applyRequest"
+        @discard="request.discard()"
+        @cancel-job="cancelRequest"
         @commit="openGit"
         @close="drawer = null"
       />

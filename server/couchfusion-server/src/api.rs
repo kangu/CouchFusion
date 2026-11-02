@@ -49,6 +49,9 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos/{repo}/fetch", post(repo_fetch))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/pull", post(repo_pull))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/push", post(repo_push))
+        .route(&format!("{site}/pages"), get(site_pages))
+        .route(&format!("{site}/requests"), post(request_create))
+        .route(&format!("{site}/requests/{{jid}}/apply"), post(request_apply))
         .route(&format!("{site}/prod"), get(prod_view))
         .route(&format!("{site}/prod/deploy"), post(prod_deploy))
         .route(&format!("{site}/prod/rollback"), post(prod_rollback))
@@ -93,10 +96,12 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
                 "services",
                 "git-remote",
                 "prod-releases",
+                "llm-request",
             ],
             dev_origins: app.config.sites.iter().map(|s| origin.origin_for_port(s.slot_port)).collect(),
             workspace_id: app.config.workspace.id.clone(),
             site_id: app.config.sites.first().map(|s| s.id.clone()).unwrap_or_default(),
+            agent: AgentInfo { model: app.config.agent.model.clone(), reasoning_effort: app.config.agent.reasoning_effort.clone() },
         },
     )
 }
@@ -258,7 +263,7 @@ async fn site_events(
     let slot_url = caller.origin().origin_for_port(cfg.slot_port);
     Ok(sse_response(move |tx| async move {
         let mut rx = sub.rx;
-        let mut last = cursor;
+        let mut last = sub.cursor;
         for e in sub.replay {
             last = e.seq;
             if tx.send(sse_frame(e.seq, "site", &site_event_json(&e, &slot_url))).await.is_err() {
@@ -299,6 +304,23 @@ async fn generate(State(app): S, Path((ws, site)): Path<(String, String)>, heade
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let job = crate::ops::generate_component(app, cfg, req.prompt, key).await?;
     Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn site_pages(State(app): S, Path((ws, site)): Path<(String, String)>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::OK, crate::request::pages(&app, &cfg).await?))
+}
+
+async fn request_create(State(app): S, Path((ws, site)): Path<(String, String)>, headers: HeaderMap, JsonBody(req): JsonBody<LlmRequest>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let job = crate::request::start(app, cfg, req.prompt, req.current_path, key).await?;
+    Ok(data(StatusCode::ACCEPTED, job))
+}
+
+async fn request_apply(State(app): S, Path((ws, site, jid)): Path<(String, String, String)>, JsonBody(_): JsonBody<Empty>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::ACCEPTED, crate::request::apply(app, cfg, jid).await?))
 }
 
 async fn source(State(app): S, Path((ws, site, cid)): Path<(String, String, String)>) -> ApiResult {
@@ -504,6 +526,7 @@ mod tests {
                 memory_bytes: None,
                 needs_restart: None,
                 problem: None,
+                ready_timeout_secs: 180,
             }),
             log: None,
             registry: None,

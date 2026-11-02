@@ -13,6 +13,15 @@ pub struct Bootstrap {
     pub dev_origins: Vec<String>,
     pub workspace_id: String,
     pub site_id: String,
+    /// Model settings for LLM runs; `null` fields = Codex's account default.
+    pub agent: AgentInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInfo {
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +141,8 @@ pub struct DevSessionView {
     pub needs_restart: Option<NeedsRestart>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// How long a start may take before it is marked failed (`server.dev_ready_timeout_secs`).
+    pub ready_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -410,6 +421,14 @@ pub struct GenerateRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LlmRequest {
+    pub prompt: String,
+    #[serde(default)]
+    pub current_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommitRequest {
     pub message: String,
     pub paths: Vec<String>,
@@ -500,11 +519,12 @@ mod tests {
             memory_bytes: None,
             needs_restart: None,
             problem: None,
+            ready_timeout_secs: 180,
         };
         let json = serde_json::to_string(&view).unwrap();
         assert_eq!(
             json,
-            r#"{"siteId":"radustanciu","unit":"cf-dev@radustanciu.service","status":"stopped","url":"https://h:9181"}"#
+            r#"{"siteId":"radustanciu","unit":"cf-dev@radustanciu.service","status":"stopped","url":"https://h:9181","readyTimeoutSecs":180}"#
         );
     }
 

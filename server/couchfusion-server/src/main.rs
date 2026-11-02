@@ -19,6 +19,7 @@ mod jobs;
 mod ops;
 mod proxy;
 mod release;
+mod request;
 mod services;
 mod store;
 mod units;

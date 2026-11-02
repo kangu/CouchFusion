@@ -35,6 +35,15 @@ pub struct Usage {
     pub output_tokens: u64,
 }
 
+/// What a run is for: a new component (Phase 1) or a generic request (contract 2026-11-02).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunKind {
+    #[default]
+    Component,
+    Request,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSpec {
@@ -42,11 +51,32 @@ pub struct RunSpec {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    #[serde(default)]
+    pub kind: RunKind,
+    /// `codex exec -m` (from `[agent] model`); None = Codex's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `-c model_reasoning_effort=…` (from `[agent] reasoning_effort`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 pub fn build_prompt(user_prompt: &str) -> String {
     format!(
         "{DEVELOPER_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n{VALIDATION_LINE}\n\nFollow this first-party skill:\n\n{SKILL}\n\n---\n\nComponent request:\n\n{}\n",
+        user_prompt.trim()
+    )
+}
+
+/// Generic request: app files plus proposed page operations (pages live in CouchDB, which the
+/// sandbox cannot reach; the user reviews and applies the proposal).
+pub const REQUEST_INSTRUCTIONS: &str = "You are handling a change request for a CouchFusion site (Nuxt app with the content layer). Work only inside the selected application root. You may create or change any file there except dependency manifests and lockfiles (package.json, bun.lock, bun.lockb, package-lock.json, pnpm-lock.yaml, yarn.lock); add no dependencies. Do not stage, commit, branch, tag, reset, clean, restore, or otherwise change Git history or index state. Preserve existing uncommitted work and avoid unrelated rewrites. Stay within CouchFusion site work: pages, content components, styles, layouts and app code. Requests about servers, deployments, other apps, git, credentials or anything outside this app are out of scope: change nothing and say so in the summary. Do not write task reports, implementation_results notes or other documentation about this run unless the request asks for documentation; the control plane records the run itself.";
+
+pub const REQUEST_PAGES: &str = "Pages are stored in a database you cannot access. A read-only copy is in `.couchfusion/request/`: `context.json` lists every page (path, title, locales, publication state, redirect) and names the file in `.couchfusion/request/pages/` that holds its documents (one per locale, with `body` in minimark form: `{\"type\":\"minimal\",\"value\":[...]}`, where each node is `[tag, props, ...children]` or a text string). `currentPath` is the page the user has open in the builder, if known; \"this page\" means that page. Never edit files in `.couchfusion/request/` except `operations.json`.\n\nTo change pages, write `.couchfusion/request/operations.json` (UTF-8 JSON, at most 50 operations):\n\n{\"summary\": \"one short paragraph for a non-technical user: what you changed in files and what page changes you propose\", \"operations\": [\n  {\"op\": \"page.create\", \"path\": \"/new-page\", \"title\": \"…\", \"seo\": {\"title\": \"…\", \"description\": \"…\", \"image\": null}, \"body\": {\"type\": \"minimal\", \"value\": []}, \"layout\": {}, \"publicationState\": \"draft\"},\n  {\"op\": \"page.update\", \"path\": \"/about\", \"locale\": \"en\", \"title\": \"…\", \"seo\": {\"title\": \"…\", \"description\": \"…\", \"image\": null}, \"body\": {\"type\": \"minimal\", \"value\": []}, \"layout\": {}},\n  {\"op\": \"page.move\", \"from\": \"/old\", \"to\": \"/new\", \"keepRedirect\": true},\n  {\"op\": \"page.copyContent\", \"from\": \"/b\", \"to\": \"/a\"},\n  {\"op\": \"page.publication\", \"path\": \"/x\", \"state\": \"draft\"}\n]}\n\nRules: `page.create` adds a new page in the default locale (title and body required; seo and layout optional; it stays a draft unless you set `publicationState` to `published`, which you do only when the request asks for a public page); base its body and layout on an existing page of the same kind, and later operations in the same list may update it (e.g. add translations with `page.update` + `locale`). `page.update` changes one locale (omit `locale` for the default locale) and needs at least one of title, seo (partial is fine), body, layout; when you change a body, start from the existing document and keep everything you were not asked to change. `page.move` gives a page a new URL (keepRedirect leaves a redirect at the old URL). `page.copyContent` makes page `to` show the body and layout of page `from` while keeping its own URL, title and SEO (this is what \"replace route A with route B\" means). `page.publication` sets `published` or `draft`. Pages cannot be deleted. In bodies use only components registered in `app/content-builder/component-definitions.json` (registry id or PascalCase name) and plain HTML. If you create a new content component for a page, build it first (following the component skill below), then reference it. The user reviews the operations and applies them; never say that pages were already changed. Always write `operations.json`, with an empty `operations` list when no page changes are needed.";
+
+pub fn build_request_prompt(user_prompt: &str) -> String {
+    format!(
+        "{REQUEST_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n{VALIDATION_LINE}\n\n{REQUEST_PAGES}\n\nFor content components follow this first-party skill:\n\n{SKILL}\n\n---\n\nRequest:\n\n{}\n",
         user_prompt.trim()
     )
 }
@@ -76,6 +106,18 @@ pub fn run_agent(args: &RunnerArgs) -> anyhow::Result<i32> {
     cmd.arg("exec");
     cmd.args(["--json", "--skip-git-repo-check", "-C"]).arg(&app_dir);
     cmd.args(["--sandbox", "workspace-write", "-c", "approval_policy=\"never\"", "-c", "sandbox_workspace_write.network_access=false", "-c", "notify=[]"]);
+    if let Some(model) = &spec.model {
+        if !crate::config::valid_model(model) {
+            bail!("invalid model {model:?}");
+        }
+        cmd.args(["-m", model]);
+    }
+    if let Some(effort) = &spec.reasoning_effort {
+        if !crate::config::REASONING_EFFORTS.contains(&effort.as_str()) {
+            bail!("invalid reasoning effort {effort:?}");
+        }
+        cmd.args(["-c", &format!("model_reasoning_effort=\"{effort}\"")]);
+    }
     if let Some(thread) = &spec.thread_id {
         cmd.args(["resume", thread]);
     }
@@ -84,7 +126,11 @@ pub fn run_agent(args: &RunnerArgs) -> anyhow::Result<i32> {
     let mut child = cmd.spawn().context("spawning codex")?;
     {
         let mut stdin = child.stdin.take().context("codex stdin")?;
-        let prompt = if spec.thread_id.is_some() { trimmed.to_string() } else { build_prompt(trimmed) };
+        let prompt = match (spec.thread_id.is_some(), spec.kind) {
+            (true, _) => trimmed.to_string(),
+            (false, RunKind::Component) => build_prompt(trimmed),
+            (false, RunKind::Request) => build_request_prompt(trimmed),
+        };
         stdin.write_all(prompt.as_bytes())?;
         // stdin is dropped (closed) here, so codex does not wait for more input.
     }
@@ -241,12 +287,45 @@ mod tests {
     }
 
     #[test]
+    fn request_runs_pass_model_and_request_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        std::fs::create_dir_all(d.join("apps/demo")).unwrap();
+        std::fs::create_dir_all(d.join("spec")).unwrap();
+        let spec = RunSpec {
+            job_id: "j".into(),
+            prompt: "replace /a with /b".into(),
+            thread_id: None,
+            kind: RunKind::Request,
+            model: Some("gpt-5.6-sol".into()),
+            reasoning_effort: Some("high".into()),
+        };
+        std::fs::write(d.join("spec/demo.json"), serde_json::to_string(&spec).unwrap()).unwrap();
+        let fake = d.join("codex");
+        std::fs::write(&fake, format!("#!/bin/sh\necho \"$@\" > {0}/args\ncat > {0}/stdin\n", d.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(run_agent(&RunnerArgs { app: "demo".into(), spec_dir: d.join("spec"), workspace: d.to_path_buf(), codex: fake.clone() }).unwrap(), 0);
+        let args = std::fs::read_to_string(d.join("args")).unwrap();
+        assert!(args.contains("-m gpt-5.6-sol"));
+        assert!(args.contains("model_reasoning_effort=\"high\""));
+        let stdin = std::fs::read_to_string(d.join("stdin")).unwrap();
+        assert!(stdin.starts_with(REQUEST_INSTRUCTIONS));
+        assert!(stdin.contains(".couchfusion/request/operations.json"));
+        assert!(stdin.trim_end().ends_with("replace /a with /b"));
+        // An invalid model in the spec is refused before codex runs.
+        let bad = RunSpec { model: Some("--dangerously".into()), ..spec };
+        std::fs::write(d.join("spec/demo.json"), serde_json::to_string(&bad).unwrap()).unwrap();
+        assert!(run_agent(&RunnerArgs { app: "demo".into(), spec_dir: d.join("spec"), workspace: d.to_path_buf(), codex: fake }).is_err());
+    }
+
+    #[test]
     fn runner_feeds_prompt_on_stdin_and_closes_it() {
         let tmp = tempfile::tempdir().unwrap();
         let d = tmp.path();
         std::fs::create_dir_all(d.join("apps/demo")).unwrap();
         std::fs::create_dir_all(d.join("spec")).unwrap();
-        let spec = RunSpec { job_id: "j".into(), prompt: "make a hero".into(), thread_id: None };
+        let spec = RunSpec { job_id: "j".into(), prompt: "make a hero".into(), thread_id: None, kind: RunKind::Component, model: None, reasoning_effort: None };
         std::fs::write(d.join("spec/demo.json"), serde_json::to_string(&spec).unwrap()).unwrap();
         // fake codex: records args and stdin, exits 0 only after stdin EOF
         let fake = d.join("codex");

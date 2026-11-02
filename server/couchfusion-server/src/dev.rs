@@ -122,6 +122,7 @@ impl DevManager {
             memory_bytes: s.memory,
             needs_restart: s.needs_restart,
             problem: s.problem,
+            ready_timeout_secs: self.config.server.dev_ready_timeout_secs,
         })
     }
 
@@ -286,6 +287,34 @@ impl DevManager {
         let res = tokio::time::timeout(timeout, self.client.request(req)).await??;
         let status = res.status().as_u16();
         let bytes = tokio::time::timeout(timeout, res.into_body().collect()).await??.to_bytes();
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// POST JSON to a token-guarded control route on the dev server. Returns (status, body).
+    /// The response body is capped at `max_bytes` (the dev server runs agent-writable code).
+    pub async fn control_post(&self, cfg: &SiteConfig, path: &str, token: &str, body: Vec<u8>, timeout: Duration, max_bytes: usize) -> anyhow::Result<(u16, String)> {
+        let req = axum::http::Request::post(format!("http://127.0.0.1:{}{}", cfg.dev_port, path))
+            .header("x-couchfusion-control-token", token)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .body(Body::from(body))?;
+        let res = tokio::time::timeout(timeout, self.client.request(req)).await??;
+        let status = res.status().as_u16();
+        let limited = http_body_util::Limited::new(res.into_body(), max_bytes);
+        let bytes = tokio::time::timeout(timeout, limited.collect()).await?.map_err(|e| anyhow::anyhow!("reading the response: {e}"))?.to_bytes();
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// GET with a response cap (see [`Self::control_post`]).
+    pub async fn control_get_limited(&self, cfg: &SiteConfig, path_and_query: &str, token: &str, timeout: Duration, max_bytes: usize) -> anyhow::Result<(u16, String)> {
+        let req = axum::http::Request::get(format!("http://127.0.0.1:{}{}", cfg.dev_port, path_and_query))
+            .header("x-couchfusion-control-token", token)
+            .header("accept", "application/json")
+            .body(Body::empty())?;
+        let res = tokio::time::timeout(timeout, self.client.request(req)).await??;
+        let status = res.status().as_u16();
+        let limited = http_body_util::Limited::new(res.into_body(), max_bytes);
+        let bytes = tokio::time::timeout(timeout, limited.collect()).await?.map_err(|e| anyhow::anyhow!("reading the response: {e}"))?.to_bytes();
         Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
     }
 

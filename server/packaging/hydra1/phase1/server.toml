@@ -47,3 +47,7 @@ build_unit = "cf-build@radustanciu.service"
 port = 4501
 www_dir = "/var/www/radustanciu"
 build_dir = "/var/cache/cf-build/radustanciu"
+
+# Codex model for every LLM run (generate and request), shown in the dev bar (phase3/10-agent-model.sh).
+[agent]
+model = "gpt-5.6-sol"

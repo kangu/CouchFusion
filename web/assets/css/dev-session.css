@@ -115,3 +115,24 @@
 .dev-git__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px; border: 1px dashed currentColor; }
 .dev-git__confirm label { flex-basis: 100%; }
 .dev-git__confirm input { font: 13px/1.4 var(--font-mono, ui-monospace, monospace); padding: 4px 8px; min-width: 12ch; }
+
+/* LLM request drawer */
+.dev-drawer__form select { width: 100%; padding: .5rem; border: 1px solid #77807c; border-radius: 0; background: var(--paper-bright); color: var(--ink); font: .75rem/1.4 var(--mono); }
+.dev-drawer__hint { margin: 0; font: .68rem/1.5 var(--mono); color: #4c5651; }
+.dev-request__summary { margin: 0; padding: .7rem; border-left: 3px solid var(--cyan); background: var(--paper-bright); font: .8rem/1.55 var(--body, inherit); white-space: pre-wrap; }
+.dev-request__ops { display: grid; gap: .6rem; margin: 0; padding-left: 1.2rem; font: .74rem/1.5 var(--mono); }
+.dev-request__ops dl { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .6rem; margin: .3rem 0 0; }
+.dev-request__ops dt { color: #46504b; text-transform: uppercase; font-size: .62rem; letter-spacing: .04em; }
+.dev-request__ops dd { margin: 0; overflow-wrap: anywhere; }
+.dev-request__before { color: #7a4b42; }
+.dev-request__after { color: #1f6b52; }
+.dev-request__problems { margin: 0; padding: .6rem .6rem .6rem 1.4rem; background: #fbe9e5; color: #7a2b1d; font: .72rem/1.5 var(--mono); }
+.dev-bar__model { padding: .1rem .45rem; border: 1px solid #3c4a45; color: #b9c6c0; font: .62rem/1.4 var(--mono); white-space: nowrap; }
+
+/* Dev start progress */
+.dev-progress { width: min(28rem, 90%); height: 4px; margin: .4rem auto 0; background: #26302d; }
+.dev-progress span { display: block; height: 100%; background: var(--cyan); transition: width .9s linear; }
+.dev-start-log { width: min(40rem, 92%); max-height: 9rem; margin: .8rem auto 0; padding: .6rem .8rem; overflow: hidden; background: #0b0f0e; color: #cfd7d2; font: .66rem/1.55 var(--mono); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dev-start-hint { margin: .5rem 0 0; color: #8b9792; font: .7rem/1.5 var(--mono); }
+.dev-start-stalled { margin-top: .9rem; padding: .7rem .9rem; border: 1px solid #e7c37a; color: #e7c37a; font: .74rem/1.5 var(--mono); }
+.dev-start-stalled p { margin: 0 0 .5rem; }

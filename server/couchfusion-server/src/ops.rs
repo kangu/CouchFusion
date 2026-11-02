@@ -120,7 +120,7 @@ pub async fn usage(app: &App, site: &SiteConfig, component_id: &str) -> Result<C
 
 /// Waits until the manifest is valid and `pred(ids)` holds; falls back to running the layer
 /// generator once. Returns the final id list.
-async fn wait_registry(app: &App, ctx: &JobCtx, site: &str, pred: impl Fn(&[String]) -> bool) -> Result<Vec<String>, ApiError> {
+pub(crate) async fn wait_registry(app: &App, ctx: &JobCtx, site: &str, pred: impl Fn(&[String]) -> bool) -> Result<Vec<String>, ApiError> {
     let app_dir = app.config.app_dir(site);
     let timeout = Duration::from_secs(app.config.server.registry_timeout_secs);
     ctx.info("registry.wait", "Waiting for the component registry to update…");
@@ -320,7 +320,7 @@ pub async fn generate_component(app: Arc<App>, site: SiteConfig, prompt: String,
     Ok(snapshot)
 }
 
-fn write_private(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -333,10 +333,10 @@ fn write_private(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
 /// Marker file that exists while a component job (generate, delete, restore, rebuild) runs;
 /// removed on drop, i.e. on every outcome. The dev server's gated Vite plugin suppresses its own
 /// full reloads while it exists, so the builder only gets the bridge's single reload afterwards.
-struct AgentMarker(PathBuf);
+pub(crate) struct AgentMarker(PathBuf);
 
 impl AgentMarker {
-    fn create(path: PathBuf) -> std::io::Result<Self> {
+    pub(crate) fn create(path: PathBuf) -> std::io::Result<Self> {
         write_private(&path, b"", 0o640)?;
         Ok(Self(path))
     }
@@ -370,7 +370,14 @@ async fn run_generate(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, 
     };
     ctx.info("codex.baseline", format!("Recorded a baseline of {} files.", before.len()));
 
-    let spec = RunSpec { job_id: ctx.id.clone(), prompt: prompt.to_string(), thread_id: None };
+    let spec = RunSpec {
+        job_id: ctx.id.clone(),
+        prompt: prompt.to_string(),
+        thread_id: None,
+        kind: crate::agent::RunKind::Component,
+        model: app.config.agent.model.clone(),
+        reasoning_effort: app.config.agent.reasoning_effort.clone(),
+    };
     write_private(&app.config.agent_spec(&site.id), &serde_json::to_vec(&spec).unwrap_or_default(), 0o644)
         .map_err(|e| ApiError::filesystem(format!("Writing the agent run spec: {e}")))?;
     let out_path = app.config.agent_out(&site.id);
@@ -444,16 +451,18 @@ async fn run_generate(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, 
 }
 
 #[derive(Default)]
-struct AgentOutcome {
-    thread_id: Option<String>,
-    usage: Option<Usage>,
-    completed: bool,
-    failure: Option<String>,
-    sandbox_failure: Option<String>,
+pub(crate) struct AgentOutcome {
+    pub thread_id: Option<String>,
+    pub usage: Option<Usage>,
+    pub completed: bool,
+    pub failure: Option<String>,
+    pub sandbox_failure: Option<String>,
+    /// Text of Codex's last agent message (its own summary of the run).
+    pub last_message: Option<String>,
 }
 
 /// Tails the agent's JSONL by byte offset until the unit stops.
-async fn tail_agent(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &PathBuf, app_dir: &Path) -> AgentOutcome {
+pub(crate) async fn tail_agent(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &PathBuf, app_dir: &Path) -> AgentOutcome {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let mut outcome = AgentOutcome::default();
     let mut offset: u64 = 0;
@@ -476,7 +485,12 @@ async fn tail_agent(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &PathBuf, 
             let line: String = partial.drain(..=pos).collect();
             match map_event(line.trim(), app_dir) {
                 Some(AgentEvent::Thread(t)) => outcome.thread_id = Some(t),
-                Some(AgentEvent::Event { level, code, text }) => ctx.event(level, code, text),
+                Some(AgentEvent::Event { level, code, text }) => {
+                    if code == "codex.message" && !text.trim().is_empty() {
+                        outcome.last_message = Some(text.clone());
+                    }
+                    ctx.event(level, code, text)
+                }
                 Some(AgentEvent::Files(files)) => ctx.info("codex.files", format!("Changed: {}", files.join(", "))),
                 Some(AgentEvent::TurnCompleted { text, usage }) => {
                     outcome.completed = true;

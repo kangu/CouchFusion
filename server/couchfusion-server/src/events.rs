@@ -16,22 +16,39 @@ struct SiteChannel {
     tx: broadcast::Sender<SiteEvent>,
 }
 
-#[derive(Default)]
 pub struct SiteHub {
     sites: Mutex<HashMap<String, SiteChannel>>,
+    /// First sequence number of this process: boot time in ms × 1000. Sequences therefore keep
+    /// growing across control-plane restarts, so a browser resuming with an old cursor never
+    /// skips the new process's events (they used to restart at 1 and were all filtered out).
+    /// Stays below 2^53 (JS safe integers) until the year 2255.
+    base: u64,
+}
+
+impl Default for SiteHub {
+    fn default() -> Self {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        Self::with_base(ms.saturating_mul(1000))
+    }
 }
 
 /// What a new subscriber receives: buffered events after its cursor, then live ones.
 pub struct Subscription {
     pub replay: Vec<SiteEvent>,
     pub rx: broadcast::Receiver<SiteEvent>,
+    pub cursor: u64,
 }
 
 impl SiteHub {
+    pub fn with_base(base: u64) -> Self {
+        Self { sites: Mutex::new(HashMap::new()), base }
+    }
+
     fn with_channel<T>(&self, site: &str, f: impl FnOnce(&mut SiteChannel) -> T) -> T {
         let mut sites = self.sites.lock().expect("site hub lock");
+        let base = self.base;
         let channel = sites.entry(site.to_string()).or_insert_with(|| SiteChannel {
-            seq: 0,
+            seq: base,
             history: VecDeque::with_capacity(HISTORY),
             tx: broadcast::channel(256).0,
         });
@@ -64,10 +81,13 @@ impl SiteHub {
         self.publish(site, "job", |e| e.job = Some(job));
     }
 
+    /// Events after `after`, then live ones. A cursor this process never issued (from before a
+    /// restart, or ahead of it) gets the whole buffered history; `cursor` is what to filter
+    /// live events against.
     pub fn subscribe(&self, site: &str, after: u64) -> Subscription {
-        self.with_channel(site, |ch| Subscription {
-            replay: ch.history.iter().filter(|e| e.seq > after).cloned().collect(),
-            rx: ch.tx.subscribe(),
+        self.with_channel(site, |ch| {
+            let cursor = if after > ch.seq || after < self.base { 0 } else { after };
+            Subscription { replay: ch.history.iter().filter(|e| e.seq > cursor).cloned().collect(), rx: ch.tx.subscribe(), cursor }
         })
     }
 }
@@ -106,11 +126,27 @@ mod tests {
 
     #[tokio::test]
     async fn replay_after_cursor() {
-        let hub = SiteHub::default();
+        let hub = SiteHub::with_base(1000);
         for i in 0..3 {
             hub.registry("s", RegistryChange { added: vec![format!("c{i}")], removed: vec![] });
         }
-        let sub = hub.subscribe("s", 1);
-        assert_eq!(sub.replay.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![2, 3]);
+        let sub = hub.subscribe("s", 1001);
+        assert_eq!(sub.replay.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1002, 1003]);
+        assert_eq!(sub.cursor, 1001);
+    }
+
+    #[tokio::test]
+    async fn cursor_from_another_process_gets_everything() {
+        // Before a restart the browser saw seq 57 of the old process; the new one starts at its base.
+        let hub = SiteHub::with_base(5000);
+        hub.registry("s", RegistryChange { added: vec!["a".into()], removed: vec![] });
+        let old = hub.subscribe("s", 57);
+        assert_eq!(old.cursor, 0);
+        assert_eq!(old.replay.len(), 1);
+        let ahead = hub.subscribe("s", 9_999_999);
+        assert_eq!(ahead.cursor, 0);
+        assert_eq!(ahead.replay.len(), 1);
+        // A newer process always numbers above an older one.
+        assert!(SiteHub::default().base > 5000);
     }
 }

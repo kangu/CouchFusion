@@ -368,6 +368,8 @@ export type BootstrapCapability =
   | 'git-remote'
   // Phase 3: production releases (deploy, rollback)
   | 'prod-releases'
+  // LLM Request (docs/superpowers/specs/2026-11-02-llm-request-contract.md)
+  | 'llm-request'
 
 export interface Bootstrap {
   version: string
@@ -376,6 +378,13 @@ export interface Bootstrap {
   devOrigins?: string[]
   workspaceId?: string
   siteId?: string
+  /** Model used for LLM runs (generate and request); null = Codex's account default. */
+  agent?: AgentInfo
+}
+
+export interface AgentInfo {
+  model: string | null
+  reasoningEffort: string | null
 }
 
 export type DevStatus = 'stopped' | 'starting' | 'ready' | 'stopping' | 'failed'
@@ -389,6 +398,8 @@ export interface DevSessionView {
   memoryBytes?: number
   needsRestart?: { reason: string }
   problem?: string
+  /** Seconds a start may take before the server marks it failed. */
+  readyTimeoutSecs?: number
 }
 
 export type ComponentGitState = 'tracked_clean' | 'tracked_modified' | 'untracked' | 'unknown'
@@ -487,6 +498,74 @@ export interface ComponentGenerateResult {
   needsRestart?: { reason: string }
   /** Phase 2: Codex `turn.completed.usage`. */
   usage?: CodexUsage
+}
+
+/** `GET …/pages`: the site's pages (from the dev server). */
+export interface SitePageSummary {
+  path: string
+  title?: string | null
+  publicationState?: string
+  locales?: string[]
+  redirect?: { to: string; status?: number } | null
+  updatedAt?: string | null
+}
+
+export interface SitePageList {
+  defaultLocale?: string
+  locales?: string[]
+  pages: SitePageSummary[]
+}
+
+export type PageOperationKind = 'page.create' | 'page.update' | 'page.move' | 'page.copyContent' | 'page.publication'
+
+export interface PageOperationSummary {
+  op: PageOperationKind
+  path: string
+  text: string
+}
+
+export interface PageCheckProblem {
+  index: number | null
+  message: string
+}
+
+export interface PageChangePreview {
+  index: number
+  op: PageOperationKind
+  path: string
+  locales?: string[]
+  changes: Array<{ field: string; before?: string | null; after?: string | null }>
+}
+
+export interface PageCheck {
+  ok: boolean
+  problems: PageCheckProblem[]
+  preview: PageChangePreview[]
+}
+
+/** Result of an `llm.request` job. */
+export interface LlmRequestResult {
+  summary?: string | null
+  changedFiles: string[]
+  addedComponents?: string[]
+  lint?: string[]
+  needsRestart?: { reason: string } | null
+  operations: PageOperationSummary[]
+  check?: PageCheck
+  /** `pending` when checked page changes wait for Apply. */
+  applyState?: 'pending'
+  currentPath?: string | null
+  model?: string | null
+  usage?: CodexUsage
+  threadId?: string
+}
+
+/** Result of an `llm.request.apply` job. */
+export interface LlmApplyResult {
+  requestJobId: string
+  applied: Array<{ index: number; path: string; documents?: Array<{ id: string; rev: string }> }>
+  problems?: PageCheckProblem[]
+  failed?: { index: number; message: string } | null
 }
 
 export interface ComponentDeleteResult {
