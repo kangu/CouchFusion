@@ -40,11 +40,32 @@ describe('agent health card', () => {
       ready: ref(true), activeWorkspaceId: ref('w1'), validate: vi.fn(),
     }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn() }))
+    vi.stubGlobal('useBootstrap', () => ({ isRust: ref(false) }))
 
     const wrapper = mount(SystemPage)
     await flushPromises()
 
     expect(wrapper.findAll('.health-card')).toHaveLength(5)
     expect(wrapper.get('.agent-health-card').text()).toContain('Codex generation')
+  })
+
+  it('offers no repairs on the Rust control plane', async () => {
+    const down = { available: false, problem: 'not installed' }
+    vi.stubGlobal('useApi', () => ({
+      get: vi.fn().mockResolvedValue({
+        git: { available: true, version: 'git version 2.47' }, bun: down, node: down, couchdb: down,
+        agent: { status: 'ready', available: true, version: 'codex-cli 0.144.4', accountType: 'model gpt-5.6-sol' },
+      }),
+      post: vi.fn(),
+    }))
+    vi.stubGlobal('useWorkspace', () => ({ ready: ref(true), activeWorkspaceId: ref('hydra1'), validate: vi.fn() }))
+    vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn() }))
+    vi.stubGlobal('useBootstrap', () => ({ isRust: ref(true) }))
+
+    const wrapper = mount(SystemPage)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('not installed')
+    expect(wrapper.text()).not.toContain('Prepare repair')
   })
 })

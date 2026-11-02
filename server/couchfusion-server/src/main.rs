@@ -18,6 +18,7 @@ mod http;
 mod jobs;
 mod ops;
 mod proxy;
+mod health;
 mod release;
 mod request;
 mod services;

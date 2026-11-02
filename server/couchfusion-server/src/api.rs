@@ -26,6 +26,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/onboarding", get(onboarding))
         .route("/api/v1/workspaces", get(workspaces))
         .route("/api/v1/workspaces/{ws}", get(workspace))
+        .route("/api/v1/workspaces/{ws}/health", get(workspace_health))
+        .route(site, get(site_detail))
         .route(&format!("{site}/components"), get(components))
         .route(&format!("{site}/components/generate"), post(generate))
         .route(&format!("{site}/components/trash"), get(trash_list))
@@ -97,6 +99,7 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
                 "git-remote",
                 "prod-releases",
                 "llm-request",
+                "system-health",
             ],
             dev_origins: app.config.sites.iter().map(|s| origin.origin_for_port(s.slot_port)).collect(),
             workspace_id: app.config.workspace.id.clone(),
@@ -165,6 +168,16 @@ fn inspect_site(app: &App, cfg: &SiteConfig) -> Site {
         lockfiles,
         warnings,
     }
+}
+
+async fn workspace_health(State(app): S, Path(ws): Path<String>) -> ApiResult {
+    check_ws(&app, &ws)?;
+    Ok(data(StatusCode::OK, crate::health::health(&app).await))
+}
+
+async fn site_detail(State(app): S, Path((ws, site)): Path<(String, String)>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    Ok(data(StatusCode::OK, inspect_site(&app, &cfg)))
 }
 
 async fn workspace(State(app): S, Path(ws): Path<String>) -> ApiResult {

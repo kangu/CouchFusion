@@ -5,6 +5,8 @@ import ComponentGenerator from '../../../../components/sites/ComponentGenerator.
 import ComponentRegistryPanel from '../../../../components/sites/ComponentRegistryPanel.vue'
 import ComponentPreviewOverlay from '../../../../components/sites/ComponentPreviewOverlay.vue'
 import TaskList from '../../../../components/sites/TaskList.vue'
+import ProductionPanel from '../../../../components/prod/ProductionPanel.vue'
+import { modelLabel } from '../../../../composables/useLlmRequest'
 import { useAgentConversation } from '../../../../composables/useAgentConversation'
 import type {
   ActivityEvent,
@@ -13,6 +15,7 @@ import type {
   ComponentRegistryResponse,
   ComponentPreviewHost,
   ContentComponent,
+  DevSessionView,
   JobSnapshot,
   ProcessSnapshot,
   Site,
@@ -24,6 +27,10 @@ definePageMeta({ middleware: 'workspace' })
 
 const route = useRoute()
 const api = useApi()
+const bootstrap = useBootstrap()
+/** The Rust control plane (VPS) has no curated tasks, preview host or Go agent conversations. */
+const isRust = computed(() => bootstrap.isRust.value)
+const devView = ref<DevSessionView>()
 const hub = useActivity()
 const activity = useActivityStore()
 const agent = useAgentConversation()
@@ -63,6 +70,7 @@ const agentConversationView = computed<AgentConversation | undefined>(() => agen
 
 onMounted(load)
 onBeforeUnmount(() => {
+  if (isRust.value) return
   unsubscribe?.()
   if (previewPoll) clearTimeout(previewPoll)
   if (highlightTimer) clearTimeout(highlightTimer)
@@ -82,6 +90,20 @@ watch(() => ({
 async function load() {
   error.value = ''
   registryError.value = ''
+  await bootstrap.load()
+  if (isRust.value) {
+    const [siteResult, registryResult, devResult] = await Promise.allSettled([
+      api.get<Site>(base.value),
+      api.get<ComponentRegistryResponse>(`${base.value}/components`),
+      api.get<DevSessionView>(`${base.value}/dev`),
+    ])
+    if (siteResult.status === 'fulfilled') site.value = siteResult.value
+    else error.value = message(siteResult.reason, 'Could not inspect site.')
+    if (registryResult.status === 'fulfilled') registry.value = registryResult.value
+    else registryError.value = message(registryResult.reason, 'Could not inspect local content components.')
+    if (devResult.status === 'fulfilled') devView.value = devResult.value
+    return
+  }
   const [siteResult, taskResult, registryResult, previewResult] = await Promise.allSettled([
     api.get<Site>(base.value),
     api.get<Task[]>(`${base.value}/tasks`),
@@ -317,7 +339,44 @@ function message(cause: unknown, fallback: string) {
         <span class="status-lozenge">{{ site.dependenciesInstalled ? 'Ready' : 'Install required' }}</span>
       </header>
 
-      <div class="site-detail-grid">
+      <div v-if="isRust" class="site-detail-grid" data-testid="site-rust">
+        <aside class="site-detail-rail">
+          <section class="panel">
+            <p class="eyebrow">Dev session</p>
+            <h2>{{ devView?.status ?? 'unknown' }}</h2>
+            <p class="site-rust__meta">LLM · {{ modelLabel(bootstrap.state.value?.agent) }}</p>
+            <div class="button-row"><NuxtLink class="compact-button compact-button--primary" :to="`/workspaces/${workspaceId}/dev/${siteId}`">Open dev page</NuxtLink></div>
+            <p class="site-rust__meta">Builder, New component, LLM request, components, git and the dev log live on the dev page.</p>
+          </section>
+          <section class="panel fingerprint-panel">
+            <p class="eyebrow">Project fingerprint</p>
+            <dl class="review-list">
+              <div><dt>Package</dt><dd>{{ site.packageName || '—' }}</dd></div>
+              <div><dt>Manager</dt><dd>{{ site.packageManager || '—' }}</dd></div>
+              <div><dt>Lockfiles</dt><dd>{{ site.lockfiles.join(', ') || 'None' }}</dd></div>
+              <div><dt>Dependencies</dt><dd>{{ Object.keys(site.dependencies).length + Object.keys(site.devDependencies).length }}</dd></div>
+            </dl>
+            <div class="chip-row"><span v-for="module in site.modules" :key="module">{{ module }}</span></div>
+          </section>
+        </aside>
+        <div class="site-rust__main">
+          <ProductionPanel v-if="bootstrap.has('prod-releases')" :workspace-id="workspaceId" :site-id="siteId" />
+          <section class="panel">
+            <p class="eyebrow">Content components · {{ registry.status }}</p>
+            <h2>{{ registry.components.length }} components</h2>
+            <p v-if="registryError" class="notice notice--error">{{ registryError }}</p>
+            <p v-else-if="registry.problem" class="notice">{{ registry.problem }}</p>
+            <table class="services-table">
+              <thead><tr><th>Component</th><th>Source</th><th>Props</th></tr></thead>
+              <tbody>
+                <tr v-for="component in registry.components" :key="component.id"><td><strong>{{ component.label || component.id }}</strong><br><code>{{ component.id }}</code></td><td><code>{{ component.source }}</code></td><td>{{ component.propCount }}</td></tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+      </div>
+
+      <div v-else class="site-detail-grid">
         <aside class="site-detail-rail">
           <section class="panel task-panel" aria-label="Curated tasks">
             <p class="eyebrow">Curated tasks</p>
@@ -411,6 +470,8 @@ function message(cause: unknown, fallback: string) {
 </template>
 
 <style scoped>
+.site-rust__main { display: grid; gap: 1rem; min-width: 0; }
+.site-rust__meta { margin: .4rem 0; font: .72rem/1.5 var(--mono); color: #4c5651; }
 .site-detail-grid {
   display: grid;
   grid-template-columns: minmax(15rem, .62fr) minmax(0, 1.38fr);

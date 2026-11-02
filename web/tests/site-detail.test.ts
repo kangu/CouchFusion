@@ -6,6 +6,8 @@ import TaskList from '../components/sites/TaskList.vue'
 import SiteDetailPage from '../pages/workspaces/[workspaceId]/sites/[siteId].vue'
 import type { AgentConversationEvent } from '../types/api'
 
+const goBootstrap = { load: async () => undefined, isRust: { value: false }, has: () => false, state: { value: undefined } }
+
 const readyRegistry = {
   status: 'ready' as const,
   canRebuild: true,
@@ -302,6 +304,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({
       subscribe: (_kind: string, _id: string, listener: (event: unknown) => void) => {
         jobListener = listener
@@ -354,6 +357,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post: vi.fn() }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -398,6 +402,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -443,6 +448,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -487,6 +493,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post: vi.fn() }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -525,6 +532,7 @@ describe('site detail', () => {
     vi.stubGlobal('definePageMeta', vi.fn())
     vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'w1', siteId: 'shop' } }))
     vi.stubGlobal('useApi', () => ({ get, post }))
+    vi.stubGlobal('useBootstrap', () => goBootstrap)
     vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn(() => unsubscribe) }))
     vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
 
@@ -537,5 +545,35 @@ describe('site detail', () => {
 
     expect(AgentEventSource.sources.at(-1)?.closed).toBe(true)
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+})
+
+describe('site detail on the Rust control plane', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('shows the dev session, production and components, and skips Go-only routes', async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.endsWith('/components')) return { status: 'ready', canRebuild: true, components: [{ id: 'network-hero', label: 'Network hero', description: '', source: 'app/components/content/NetworkHero.vue', propCount: 4, allowChildren: false }] }
+      if (path.endsWith('/dev')) return { siteId: 'radustanciu', unit: 'cf-dev@radustanciu.service', status: 'ready', url: '' }
+      if (path.endsWith('/prod')) return undefined
+      return { id: 'radustanciu', name: 'radustanciu', root: '/srv/couchfusion/workspace/apps/radustanciu', packageManager: 'bun', modules: [], scripts: {}, dependencies: {}, devDependencies: {}, dependenciesInstalled: true, lockfiles: ['bun.lock'], warnings: [] }
+    })
+    vi.stubGlobal('definePageMeta', vi.fn())
+    vi.stubGlobal('useRoute', () => ({ params: { workspaceId: 'hydra1', siteId: 'radustanciu' } }))
+    vi.stubGlobal('useApi', () => ({ get, post: vi.fn() }))
+    vi.stubGlobal('useBootstrap', () => ({ load: async () => undefined, isRust: { value: true }, has: () => false, state: { value: { agent: { model: 'gpt-5.6-sol', reasoningEffort: null } } } }))
+    vi.stubGlobal('useActivity', () => ({ subscribe: vi.fn() }))
+    vi.stubGlobal('useActivityStore', () => ({ trackJob: vi.fn(), trackProcess: vi.fn() }))
+
+    const wrapper = mount(SiteDetailPage, { global: { stubs: { Teleport: true, NuxtLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+    const paths = get.mock.calls.map(([path]) => path)
+    expect(paths.some((path) => path.endsWith('/tasks') || path.includes('preview-host'))).toBe(false)
+    const view = wrapper.get('[data-testid="site-rust"]')
+    expect(view.text()).toContain('Open dev page')
+    expect(view.text()).toContain('gpt-5.6-sol')
+    expect(view.text()).toContain('network-hero')
+    expect(wrapper.text()).not.toContain('Could not')
+    wrapper.unmount()
   })
 })
