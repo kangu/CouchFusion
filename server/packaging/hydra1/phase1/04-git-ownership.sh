@@ -15,6 +15,8 @@ for repo in "${CF_REPOS[@]}"; do
   setfacl -R -m u:radu:rwX -m d:u:radu:rwX "$g"
   sudo -u radu git config --global --get-all safe.directory 2>/dev/null | grep -qx "$CF_WORKSPACE/$repo" \
     || sudo -u radu git config --global --add safe.directory "$CF_WORKSPACE/$repo"
-  log "$repo: .git owned by cfcp, radu via ACL"
+  # A seed from macOS carries core.ignorecase=true; this disk is case-sensitive.
+  sudo -u cfcp git -C "$CF_WORKSPACE/$repo" -c safe.directory="$CF_WORKSPACE/$repo" config core.ignorecase false
+  log "$repo: .git owned by cfcp, radu via ACL, core.ignorecase=false"
 done
 sudo -u cfcp git -C $CF_WORKSPACE/apps/radustanciu -c safe.directory=$CF_WORKSPACE/apps/radustanciu status --short | head -5 || warn "cfcp git status failed"

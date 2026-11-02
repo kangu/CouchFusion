@@ -89,6 +89,12 @@ impl Git {
             .arg(repo)
             .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", &safe])
             .args(["-c", "core.pager=cat", "-c", "color.ui=false"]);
+        // Repos seeded from a Mac carry `core.ignorecase=true`; on Linux's case-sensitive disks
+        // that makes git treat `AGENTS.md` and `agents.md` as one file and refuse a case-only
+        // rename on commit ("will not add file alias"). The VPS workspace is always case-sensitive.
+        if cfg!(target_os = "linux") {
+            cmd.args(["-c", "core.ignorecase=false"]);
+        }
         if let Some(auth) = auth {
             cmd.args(credential_args(auth));
         }
@@ -229,10 +235,27 @@ impl Git {
     }
 
     /// Stages exactly `paths` and commits only them.
+    ///
+    /// A deletion that is already staged (e.g. the old name of a staged rename such as
+    /// `agents.md` → `AGENTS.md`) is neither in the index nor in the working tree, and
+    /// `git add -- <it>` fails with "pathspec did not match any files". Such paths are left out
+    /// of `add`; `commit --only` still records them because it matches paths against HEAD too.
     pub async fn commit(&self, repo: &Path, message: &str, paths: &[String]) -> Result<String, ApiError> {
-        let mut add: Vec<&str> = vec!["add", "--"];
-        add.extend(paths.iter().map(String::as_str));
-        self.ok(repo, &add).await?;
+        let mut ls: Vec<&str> = vec!["ls-files", "-z", "--cached", "--"];
+        ls.extend(paths.iter().map(String::as_str));
+        let listed = self.ok(repo, &ls).await?;
+        let in_index: std::collections::HashSet<String> =
+            listed.split(|b| *b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect();
+        let to_add: Vec<&str> = paths
+            .iter()
+            .filter(|p| in_index.contains(p.as_str()) || std::fs::symlink_metadata(repo.join(p.as_str())).is_ok())
+            .map(String::as_str)
+            .collect();
+        if !to_add.is_empty() {
+            let mut add: Vec<&str> = vec!["add", "--"];
+            add.extend(to_add);
+            self.ok(repo, &add).await?;
+        }
         let full = format!("{}\n\nCommitted-Via: couchfusion-cp\n", message.trim_end());
         let author = format!("{AUTHOR_NAME} <{AUTHOR_EMAIL}>");
         let name = format!("user.name={AUTHOR_NAME}");
@@ -357,6 +380,31 @@ mod tests {
         let d = git.diff(repo, "b.txt", true).await.unwrap();
         assert!(d.diff.contains("+b"));
         assert!(!git.has_remote(repo).await);
+        // Already-staged deletions (a case-only rename and a removed file) commit too.
+        git.commit(repo, "add b", &["b.txt".into()]).await.unwrap();
+        std::fs::write(repo.join("agents.md"), "x").unwrap();
+        std::fs::write(repo.join("gone.json"), "{}").unwrap();
+        git.commit(repo, "add agents", &["agents.md".into(), "gone.json".into()]).await.unwrap();
+        // hydra1 (Linux) had a case-only rename; case-insensitive filesystems (macOS) can't hold
+        // both names, so they test a plain rename, which fails the same way without the fix.
+        let new_name = if cfg!(target_os = "linux") { "AGENTS.md" } else { "agent-notes.md" };
+        if cfg!(target_os = "linux") {
+            // As in repos seeded from a Mac.
+            git.run(repo, &["config", "core.ignorecase", "true"]).await.unwrap();
+        }
+        git.run(repo, &["mv", "agents.md", "tmp.md"]).await.unwrap();
+        git.run(repo, &["mv", "tmp.md", new_name]).await.unwrap();
+        git.run(repo, &["rm", "-q", "gone.json"]).await.unwrap();
+        std::fs::write(repo.join("c.txt"), "c").unwrap();
+        let paths: Vec<String> = [new_name, "agents.md", "gone.json", "c.txt"].iter().map(|s| s.to_string()).collect();
+        git.commit(repo, "rename agents", &paths).await.unwrap();
+        let (_, files) = git.status(repo).await.unwrap();
+        assert!(files.is_empty(), "everything committed: {files:?}");
+        let shown = git.run(repo, &["show", "--name-status", "--format=", "HEAD"]).await.unwrap();
+        let text = String::from_utf8_lossy(&shown.stdout);
+        assert!(text.contains("gone.json") && text.contains(new_name) && text.contains("c.txt"), "{text}");
+        // A path git has never seen is still refused.
+        assert!(git.commit(repo, "bogus", &["nope.txt".into()]).await.is_err());
         // risky config is refused
         git.run(repo, &["config", "core.sshCommand", "evil"]).await.unwrap();
         assert!(git.check_config(repo).await.is_err());
