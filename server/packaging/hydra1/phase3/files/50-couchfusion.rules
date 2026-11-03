@@ -1,0 +1,21 @@
+// /etc/polkit-1/rules.d/50-couchfusion.rules
+// The control-plane user may start/stop/restart only CouchFusion units:
+// dev, agent and registry (Phases 1–2), build and the radustanciu production site (Phase 3).
+// No unit-file management, no daemon-reload, no transient units, and nothing for any other user.
+polkit.addRule(function (action, subject) {
+  if (subject.user !== "cfcp" || action.id !== "org.freedesktop.systemd1.manage-units") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  var unit = action.lookup("unit") || "";
+  var verb = action.lookup("verb") || "";
+  if (["start", "stop", "restart"].indexOf(verb) < 0) {
+    return polkit.Result.NOT_HANDLED;
+  }
+  if (/^cf-(dev|agent|registry|build)@[a-z][a-z0-9-]{0,39}\.service$/.test(unit)) {
+    return polkit.Result.YES;
+  }
+  if (/^cf-site@(radustanciu)\.service$/.test(unit)) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});

@@ -1,0 +1,46 @@
+# /etc/systemd/system/cf-site@.service — CouchFusion production site (Phase 3).
+# Serves the release that /var/www/<app>/current points to. Releases are built by cf-build@
+# from a snapshot, copied in by the control plane (cfcp) and are read-only here.
+[Unit]
+Description=CouchFusion production site %i
+After=network-online.target couchdb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cf-site-%i
+Group=cf-site-%i
+EnvironmentFile=/etc/couchfusion/env/%i.prod.env
+Environment=NODE_ENV=production
+Environment=HOME=/nonexistent
+WorkingDirectory=/var/www/%i/current
+ExecStart=/opt/couchfusion/toolchain/bin/node /var/www/%i/current/server/index.mjs
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+KillMode=control-group
+# Pressure reclaims from dev and builds (couchfusion.slice) before production.
+MemoryLow=150M
+MemoryHigh=700M
+MemoryMax=900M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/var/www/%i
+InaccessiblePaths=-/srv/couchfusion -/etc/couchfusion/credentials -/var/lib/couchfusion -/var/lib/cfdev -/var/lib/cfagent -/var/cache/cf-build -/etc/caddy
+
+[Install]
+WantedBy=multi-user.target

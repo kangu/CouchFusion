@@ -1,0 +1,21 @@
+# /etc/systemd/system/couchdb-backup.service — nightly CouchDB dump (see couchdb-backup.sh).
+[Unit]
+Description=CouchDB backup (all databases + config) to /var/backups/couchdb
+After=couchdb.service
+Requires=couchdb.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/couchfusion/env/radustanciu.prod.env
+Environment=KEEP_DAYS=14
+ExecStart=/usr/local/libexec/couchfusion/couchdb-backup.sh
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/backups/couchdb
+IPAddressAllow=localhost
+IPAddressDeny=any

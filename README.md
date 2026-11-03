@@ -22,6 +22,47 @@ Deliver a batteries-included platform where any contributor can clone the repo, 
 
 `couchfusion` is the Go CLI that provisions the workspace, scaffolds Nuxt apps and layers, and performs post-clone setup (environment docs, CouchDB admin seeding, etc.).
 
+### Web UI quick start
+
+Start the local workbench with:
+
+```bash
+couchfusion ui
+```
+
+The command binds to a random `127.0.0.1` port and opens a one-time, tokenized URL in your browser. If the browser cannot be opened, copy the URL printed in the terminal. Useful options:
+
+```bash
+couchfusion ui --no-open
+couchfusion ui --port 4400
+couchfusion ui --config ~/.couchfusion/config.yaml
+```
+
+On first use, CouchFusion opens **Getting Started**, a six-milestone runway for preparing local tools, connecting a workspace, choosing a Content/Auth site, starting it, generating and previewing a component, and placing it in Content Builder. Choose **Initialize new** or **Register existing** with an exact absolute path. Registration remains entirely explicit: the UI never scans your disk, and forgetting a workspace only removes its registry entry.
+
+The runway is restart-safe. Provisioning jobs reconnect after a browser reload, while an active journey returns to **Run locally** after a CouchFusion server restart because managed dev processes stop with the server. **Pause** returns to the normal workbench without losing progress; use **Resume setup** in the sidebar to continue. A completed journey stays completed until **Start another journey** resets onboarding state.
+
+Onboarding sites require the Content and Auth modules plus `dev` and `registry:build` scripts. Component generation waits for the local Codex session and `couchfusion-control` database, but Codex does not block the earlier milestones. Preview startup is manual. Final placement is also manual: CouchFusion opens the site's `/builder/` route, and the developer explicitly confirms that the component was added, saved, and verified.
+
+The UI also provides workspace, site, layer, configuration, activity, and system-health views. When creating a site, enter exactly two lowercase letters for its database login prefix; the review shows the stored form with CouchFusion's trailing `-`. Site tasks run either as finite jobs or managed development processes. Closing a browser tab does not cancel a job, while stopping the UI server stops all UI-managed child processes.
+
+The server accepts only loopback hosts, exchanges the launch token for an HTTP-only same-site session cookie, and rejects foreign origins. It is a local control plane, not a remotely deployable admin panel.
+
+See the concise [UI server guide](./docs/ui-server.md) for the component preview workflow and troubleshooting.
+
+#### Develop the workbench UI with HMR
+
+From the CouchFusion source checkout:
+
+```bash
+cd web
+bun install
+cd ..
+go run . ui --dev
+```
+
+The browser still connects to the authenticated Go server. Go forwards page, asset, and HMR WebSocket traffic to a managed Nuxt development server, so edits under `web/` update without rebuilding `internal/web/dist`. This mode reloads only Nuxt and CSS, not Go code. Stop it with Ctrl-C to terminate both servers.
+
 ### Installation & Setup
 
 ### CouchDB
@@ -68,11 +109,12 @@ By default, commands run with a Bubble Tea + Lip Gloss terminal interface when e
 ### Build from Source
 
 #### Prerequisites
-- Go 1.21+
+- Go 1.24+
+- Bun (to generate the embedded Nuxt UI)
 
 ```bash
 # from repo root
-go build -o couchfusion ./cli-init
+go build -o couchfusion .
 ```
 
 Add the binary to your PATH or run it directly via `./couchfusion` from the build directory.
@@ -200,6 +242,7 @@ Scaffolds a new Nuxt app inside `/apps/<app-name>`, records module selections, a
 couchfusion new \
   --name feedback-tool \
   --modules analytics,auth,content \
+  --db-login-prefix ft \
   --branch preview \
   --force \
   --yes
@@ -208,16 +251,17 @@ couchfusion new \
 You can also pass the app name positionally:
 
 ```bash
-couchfusion new feedback-tool
+couchfusion new feedback-tool --db-login-prefix ft
 ```
 
-If `--name` or `--modules` are omitted, the CLI prompts for them. In an interactive terminal, the command uses a Bubble Tea + Lip Gloss TUI with arrow-key module selection and Space toggles. Set `COUCHFUSION_NO_TUI=1` to use plain prompts.
+The database login prefix is required and must contain exactly two lowercase letters. CouchFusion appends `-`, so `--db-login-prefix ft` writes `ft-` into the starter configuration. In an interactive terminal, a missing prefix is collected alongside the app name in the Bubble Tea + Lip Gloss TUI. Outside the TUI, pass `--db-login-prefix`; missing or invalid values fail before a provisioning job starts. Set `COUCHFUSION_NO_TUI=1` to use plain prompts for the app name and modules.
 
 The command performs the following post-clone setup:
 
 - Reinitializes the cloned app as a fresh git repository.
 - Adds selected layer package dependencies to `package.json` as `@my/<module>: "file:../../layers/<module>"`.
 - Rewrites the top-level `extends` array in `nuxt.config.ts` to include only the selected `../../layers/<module>` entries.
+- Replaces the starter's single quoted `runtimeConfig.dbLoginPrefix` value with the validated prefix plus `-`, preserving quote style and unrelated file content.
 - Runs selected layer parameter handlers. Today, the `auth` layer reuses `COUCHDB_ADMIN_AUTH` from the environment or `~/.couchfusion/couchdb.env` when available, otherwise asks for CouchDB admin credentials, writes `COUCHDB_ADMIN_AUTH` and `COUCHDB_COOKIE_SECRET` to `.env`, and ensures the matching CouchDB user document exists.
 - Writes app metadata and module setup documentation.
 
@@ -290,6 +334,12 @@ When using HTTPS repositories with `authPrompt: true`, the CLI prompts for usern
 | `managed Bun installation is supported on macOS and Linux only` | Install Bun manually for your OS and re-run the command. |
 | `couchdb install or acknowledgement requires interactive confirmation or --yes` | Re-run in an interactive terminal or pass `--yes` / `-y` for automation. |
 | `managed CouchDB installation is supported on macOS and Debian/Ubuntu only` | Install CouchDB manually for your OS and re-run the command. |
+| UI URL returns `Authentication is required` | Start a fresh `couchfusion ui` session and use the newly printed one-time URL. |
+| UI does not open automatically | Run `couchfusion ui --no-open` and open the printed URL manually. |
+| `Frontend dependencies are missing` | Run `cd web && bun install`, return to the repository root, and start `go run . ui --dev` again. |
+| Nuxt cannot bind its development port | Stop the process occupying the reported loopback port, then restart `go run . ui --dev`; CouchFusion selects a new private port on every run. |
+| Selected workspace is unavailable | Relink or re-register its exact current path; CouchFusion does not search the disk. |
+| A dev server remains active | Stop it from the site page, or stop the `couchfusion ui` process to clean up all managed children. |
 
 ---
 

@@ -32,6 +32,8 @@ type initResultMsg struct {
 	err error
 }
 
+type InitOperation func(context.Context, string, string, bool, *ui.LogBuffer) error
+
 type initModel struct {
 	ctx  context.Context
 	cfg  *config.Config
@@ -41,14 +43,27 @@ type initModel struct {
 	branchInput textinput.Model
 	force       bool
 
-	spinner spinner.Model
-	step    initStep
-	err     error
-	aborted bool
-	done    bool
+	spinner   spinner.Model
+	step      initStep
+	err       error
+	aborted   bool
+	done      bool
+	operation InitOperation
 }
 
 func newInitModel(ctx context.Context, cfg *config.Config, pathHint, branchHint string, force bool, logs *ui.LogBuffer) *initModel {
+	return newInitModelWithOperation(ctx, cfg, pathHint, branchHint, force, logs, nil)
+}
+
+func newInitModelWithOperation(ctx context.Context, cfg *config.Config, pathHint, branchHint string, force bool, logs *ui.LogBuffer, operation InitOperation) *initModel {
+	if operation == nil {
+		operation = func(ctx context.Context, path, branch string, force bool, logs *ui.LogBuffer) error {
+			logWriter := logs.Writer(ui.Info)
+			return RunInit(ctx, cfg, path, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
+				logs.Infof(format, args...)
+			}))
+		}
+	}
 	path := textinput.New()
 	path.Placeholder = "./"
 	path.CharLimit = 256
@@ -79,6 +94,7 @@ func newInitModel(ctx context.Context, cfg *config.Config, pathHint, branchHint 
 		force:       force,
 		spinner:     spin,
 		step:        initStepPath,
+		operation:   operation,
 	}
 }
 
@@ -195,7 +211,6 @@ func (m *initModel) runInitCmd() tea.Cmd {
 	}
 	branch := strings.TrimSpace(m.branchInput.Value())
 	force := m.force
-	cfg := m.cfg
 	ctx := m.ctx
 	logs := m.logs
 
@@ -208,10 +223,7 @@ func (m *initModel) runInitCmd() tea.Cmd {
 			logs.Warnf("Force flag enabled; existing directories may be reused if empty.")
 		}
 
-		logWriter := logs.Writer(ui.Info)
-		err := RunInit(ctx, cfg, path, branch, force, gitutil.WithOutput(logWriter), gitutil.WithLogger(func(format string, args ...any) {
-			logs.Infof(format, args...)
-		}))
+		err := m.operation(ctx, path, branch, force, logs)
 		if err != nil {
 			return initResultMsg{err: err}
 		}
@@ -312,8 +324,12 @@ func (m *initModel) Result() (string, error) {
 }
 
 func RunInitTUI(ctx context.Context, cfg *config.Config, pathHint, branchHint string, force bool) (string, error) {
+	return RunInitTUIWithOperation(ctx, cfg, pathHint, branchHint, force, nil)
+}
+
+func RunInitTUIWithOperation(ctx context.Context, cfg *config.Config, pathHint, branchHint string, force bool, operation InitOperation) (string, error) {
 	logs := ui.NewLogBuffer(128)
-	model := newInitModel(ctx, cfg, pathHint, branchHint, force, logs)
+	model := newInitModelWithOperation(ctx, cfg, pathHint, branchHint, force, logs, operation)
 	root := ui.NewRootModel("Initialize Workspace", "Prepare /apps and /layers with starter content.", model, logs, nil)
 	final, err := ui.Run(root, tea.WithAltScreen())
 	if err != nil {

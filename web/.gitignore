@@ -1,0 +1,6 @@
+.nuxt/
+.output/
+node_modules/
+output/
+playwright-report/
+test-results/

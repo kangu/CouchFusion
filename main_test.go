@@ -1,13 +1,78 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nuxt-apps/couchfusion/internal/couchdb"
+	"github.com/nuxt-apps/couchfusion/internal/registry"
 )
+
+func TestNewUIServiceMaterializesAgentSkillWithoutStartingCodex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service, err := newUIService("")
+	if err != nil {
+		t.Fatalf("newUIService() error = %v", err)
+	}
+	_ = service.Shutdown(context.Background())
+	matches, err := filepath.Glob(filepath.Join(home, ".couchfusion", "agent", "skills", "*", "couchfusion-component-builder", "SKILL.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("materialized skills = %#v, error = %v", matches, err)
+	}
+}
+
+func TestRegisteredCouchDBCredentialStoresOnlyUseExplicitWorkspaces(t *testing.T) {
+	registeredRoot := filepath.Join(t.TempDir(), "registered")
+	unregisteredRoot := filepath.Join(t.TempDir(), "unregistered")
+	for _, root := range []string{registeredRoot, unregisteredRoot} {
+		for _, directory := range []string{"apps/shop", "layers"} {
+			if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(root, "apps", "shop", ".env"), []byte("COUCHDB_ADMIN_AUTH=token\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registryService := &registry.Service{Store: registry.Store{Path: filepath.Join(t.TempDir(), "workspaces.json")}}
+	if _, err := registryService.Register(context.Background(), registeredRoot, "Registered"); err != nil {
+		t.Fatal(err)
+	}
+
+	stores, err := registeredCouchDBCredentialStores(context.Background(), registryService)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(registeredRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stores) != 1 || stores[0].Path != filepath.Join(canonicalRoot, "apps", "shop", ".env") {
+		t.Fatalf("credential stores = %#v", stores)
+	}
+}
+
+func TestWorkflowFlagErrorsReturnWithoutExiting(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "init", run: func() error { return runInit(context.Background(), nil, []string{"--unknown"}) }},
+		{name: "new", run: func() error { return runNew(context.Background(), nil, []string{"--unknown"}) }},
+		{name: "create layer", run: func() error { return runCreateLayer(context.Background(), nil, []string{"--unknown"}) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); err == nil {
+				t.Fatal("expected flag parsing error")
+			}
+		})
+	}
+}
 
 func TestAddYesFlagsAcceptsLongAndShortForms(t *testing.T) {
 	for _, args := range [][]string{{"--yes"}, {"-y"}} {

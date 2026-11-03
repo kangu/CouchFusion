@@ -1,0 +1,7 @@
+# /etc/caddy/Caddyfile (hydra1). One file per site in /etc/caddy/sites/.
+{
+	# Sites use `tls internal` behind Cloudflare; never install Caddy's root into the system trust store.
+	skip_install_trust
+}
+
+import /etc/caddy/sites/*.caddy

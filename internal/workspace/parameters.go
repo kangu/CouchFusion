@@ -19,8 +19,10 @@ import (
 	"golang.org/x/term"
 )
 
+var ErrCredentialsRequired = errors.New("couchdb admin credentials are required")
+
 // applyLayerParameters executes post-clone configuration for selected modules.
-func applyLayerParameters(ctx context.Context, targetDir string, modules []string) error {
+func applyLayerParameters(ctx context.Context, targetDir string, modules []string, allowPrompts bool) error {
 	seen := map[string]struct{}{}
 	for _, module := range modules {
 		if _, handled := seen[module]; handled {
@@ -30,7 +32,7 @@ func applyLayerParameters(ctx context.Context, targetDir string, modules []strin
 
 		switch module {
 		case "auth":
-			if err := configureAuthLayer(ctx, targetDir); err != nil {
+			if err := configureAuthLayer(ctx, targetDir, allowPrompts); err != nil {
 				return fmt.Errorf("auth layer configuration failed: %w", err)
 			}
 		}
@@ -38,7 +40,7 @@ func applyLayerParameters(ctx context.Context, targetDir string, modules []strin
 	return nil
 }
 
-func configureAuthLayer(ctx context.Context, targetDir string) error {
+func configureAuthLayer(ctx context.Context, targetDir string, allowPrompts bool) error {
 	username := ""
 	password := ""
 	if creds, ok := credentialsFromContext(ctx); ok {
@@ -55,6 +57,9 @@ func configureAuthLayer(ctx context.Context, targetDir string) error {
 
 	var err error
 	if username == "" {
+		if !allowPrompts {
+			return ErrCredentialsRequired
+		}
 		username, err = prompt("Enter CouchDB admin username: ")
 		if err != nil {
 			return err
@@ -66,6 +71,9 @@ func configureAuthLayer(ctx context.Context, targetDir string) error {
 	}
 
 	if password == "" {
+		if !allowPrompts {
+			return ErrCredentialsRequired
+		}
 		password, err = promptSecret("Enter CouchDB admin password: ")
 		if err != nil {
 			return err

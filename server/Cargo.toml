@@ -1,0 +1,12 @@
+[workspace]
+members = ["couchfusion-server"]
+resolver = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3
+
+[profile.release.build-override]
+strip = false

@@ -1,0 +1,589 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import '../../../../assets/css/dev-session.css'
+import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, ComponentRestoreResult, GitRemoteOp, JobSnapshot, SiteEvent, TrashEntry } from '../../../../types/api'
+import { createBuilderBridge, type BridgeTarget } from '../../../../composables/useBuilderBridge'
+import { createComponentDelete } from '../../../../composables/useComponentDelete'
+import { createComponentsPanel } from '../../../../composables/useComponentsPanel'
+import { createDevSession } from '../../../../composables/useDevSession'
+import { createGitRepos } from '../../../../composables/useGitRepos'
+import { createJobTracker, isTerminalJob } from '../../../../composables/useJobTracker'
+import { createLlmRequest, modelLabel, pathFromBuilderRoute } from '../../../../composables/useLlmRequest'
+import { formatSecs, startProgress } from '../../../../composables/useDevStartProgress'
+import { useSiteEvents } from '../../../../composables/useSiteEvents'
+
+/**
+ * Full-screen dev session: the site's builder in an iframe on its dev slot, with a thin
+ * control bar. Delete/create requests from the builder arrive over the postMessage bridge
+ * and are always confirmed here before any API call (contract §7).
+ */
+definePageMeta({ layout: false, middleware: 'workspace' })
+
+const route = useRoute()
+const api = useApi()
+const workspaceId = String(route.params.workspaceId)
+const siteId = String(route.params.siteId)
+const frameRoute = computed(() => {
+  const value = typeof route.query.route === 'string' ? route.query.route : '/builder/'
+  return value.startsWith('/') ? value : `/${value}`
+})
+
+const dev = createDevSession(api, workspaceId, siteId)
+const git = createGitRepos(api, workspaceId)
+const remove = createComponentDelete(api, workspaceId, siteId)
+const tracker = createJobTracker(api)
+const panel = createComponentsPanel(api, workspaceId, siteId)
+const bootstrap = useBootstrap()
+const canViewSource = computed(() => bootstrap.has('component-source'))
+const canUseTrash = computed(() => bootstrap.has('component-trash'))
+const canRebuild = computed(() => bootstrap.has('registry-rebuild'))
+const componentsTab = ref<'registry' | 'trash'>('registry')
+const canRequest = computed(() => bootstrap.has('llm-request'))
+const canUseLlm = computed(() => canRequest.value || bootstrap.has('component-generate'))
+const llmModel = computed(() => modelLabel(bootstrap.state.value?.agent))
+
+const LOG_LIMIT = 800
+const logs = ref<ActivityEvent[]>([])
+const drawer = ref<'agent' | 'request' | 'git' | 'logs' | 'components' | null>(null)
+const notice = ref('')
+
+// ---- iframe + bridge ----
+const iframe = ref<HTMLIFrameElement>()
+const frameKey = ref(0)
+const frameSrc = ref('')
+const openedWindow = ref<Window | null>(null)
+
+watch(() => [dev.ready.value, dev.view.value?.url] as const, ([ready, url]) => {
+  // Set the frame source once per ready transition; status refreshes must not reload it.
+  if (ready && url && !frameSrc.value) frameSrc.value = `${url}${frameRoute.value}`
+  if (!ready && dev.status.value === 'stopped') frameSrc.value = ''
+}, { immediate: true })
+
+function reassignFrame() {
+  frameKey.value += 1
+}
+
+const frameBridge = createBuilderBridge({
+  slotOrigin: () => dev.slotOrigin.value,
+  target: () => (iframe.value?.contentWindow ?? null) as BridgeTarget | null,
+  reassignFrame,
+  onDeleteRequest: (componentId, requestId) => { void openDelete(componentId, requestId, frameBridge) },
+  onCreateRequest: (hint, requestId) => openAgent(hint, requestId, frameBridge),
+  onReloadDeferred: () => { notice.value = 'The builder has unsaved changes. Save, then use Reload frame.' },
+})
+
+const tabBridge = createBuilderBridge({
+  slotOrigin: () => dev.slotOrigin.value,
+  target: () => (openedWindow.value && !openedWindow.value.closed ? openedWindow.value : null) as BridgeTarget | null,
+  onDeleteRequest: (componentId, requestId) => { void openDelete(componentId, requestId, tabBridge) },
+  onCreateRequest: (hint, requestId) => openAgent(hint, requestId, tabBridge),
+})
+
+type Bridge = typeof frameBridge
+const requestOrigin = ref<{ bridge: Bridge; requestId: string }>()
+
+function openInTab() {
+  if (!frameSrc.value) return
+  // No `noopener`: the opened builder talks back through window.opener (contract §7).
+  openedWindow.value = window.open(frameSrc.value, `cf-dev-${siteId}`)
+  tabBridge.reset()
+}
+
+function reloadEverywhere(reason: string, focusComponentId?: string) {
+  notice.value = ''
+  frameBridge.requestReload(reason, focusComponentId)
+  if (tabBridge.connected.value) tabBridge.requestReload(reason, focusComponentId)
+}
+
+// ---- site events ----
+const events = useSiteEvents({
+  workspaceId,
+  siteId,
+  onEvent: handleSiteEvent,
+  onReconnect: async () => { await dev.load() },
+})
+
+function handleSiteEvent(event: SiteEvent) {
+  if (event.type === 'dev.status' && event.dev) {
+    const wasReady = dev.ready.value
+    dev.apply(event.dev)
+    if (wasReady && !dev.ready.value) frameBridge.reset()
+  } else if (event.type === 'log' && event.log) {
+    const next = [...logs.value, event.log]
+    logs.value = next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
+  } else if (event.type === 'job' && event.job) {
+    tracker.update(event.job)
+  } else if (event.type === 'registry.changed') {
+    void git.load()
+    if (drawer.value === 'components') void refreshComponents()
+  }
+}
+
+// ---- components drawer (phase 2) ----
+async function openComponents(tab: 'registry' | 'trash' = componentsTab.value) {
+  componentsTab.value = tab
+  drawer.value = 'components'
+  await refreshComponents()
+}
+
+async function refreshComponents() {
+  await Promise.all([panel.loadRegistry(), canUseTrash.value ? panel.loadTrash() : Promise.resolve()])
+}
+
+async function restoreComponent(entry: TrashEntry) {
+  const job = await panel.restore(entry)
+  if (!job) return
+  const done = await tracker.track(job)
+  await panel.finish(done)
+  if (done.status === 'succeeded') {
+    const result = done.result as ComponentRestoreResult | undefined
+    reloadEverywhere('component.restored', result?.componentId ?? entry.componentId)
+    void git.load()
+  }
+}
+
+async function rebuildRegistry() {
+  const job = await panel.rebuild()
+  if (!job) return
+  const done = await tracker.track(job)
+  await panel.finish(done)
+  if (done.status === 'succeeded') reloadEverywhere('registry.rebuilt')
+}
+
+/** Delete started from the Components drawer (no builder request to answer). */
+async function openDeleteFromPanel(componentId: string) {
+  if (remove.componentId.value) return
+  requestOrigin.value = undefined
+  await remove.open(componentId)
+}
+
+// ---- delete ----
+async function openDelete(componentId: string, requestId: string, bridge: Bridge) {
+  if (remove.componentId.value) {
+    bridge.reply(requestId, 'cancelled', { message: 'Another delete is already open.' })
+    return
+  }
+  requestOrigin.value = { bridge, requestId }
+  await remove.open(componentId, requestId)
+}
+
+function cancelDelete() {
+  const origin = requestOrigin.value
+  if (origin) origin.bridge.reply(origin.requestId, 'cancelled')
+  requestOrigin.value = undefined
+  remove.close()
+}
+
+async function confirmDelete() {
+  const origin = requestOrigin.value
+  const componentId = remove.componentId.value
+  const job = await remove.confirm()
+  if (!job || !componentId) return
+  origin?.bridge.reply(origin.requestId, 'accepted', { componentId })
+  requestOrigin.value = undefined
+  remove.close()
+  // A delete requested by the builder follows in Activity; one from the Components drawer stays there.
+  if (origin || drawer.value !== 'components') drawer.value = 'logs'
+  const done = await tracker.track(job)
+  if (done.status === 'succeeded') {
+    const result = done.result as ComponentDeleteResult | undefined
+    origin?.bridge.reply(origin.requestId, 'done', { componentId: result?.componentId ?? componentId })
+    reloadEverywhere('component.deleted')
+    void git.load()
+    if (drawer.value === 'components') void refreshComponents()
+  } else {
+    const message = done.error?.message ?? `Delete ${done.status}.`
+    origin?.bridge.reply(origin.requestId, 'failed', { message })
+    notice.value = message
+  }
+}
+
+// ---- create (agent) ----
+const prompt = ref('')
+const idempotencyKey = ref<string>()
+const agentJobId = ref<string>()
+const agentBusy = ref(false)
+const agentError = ref('')
+const agentJob = computed(() => agentJobId.value ? tracker.jobs.value[agentJobId.value] : undefined)
+
+watch(prompt, () => { idempotencyKey.value = undefined })
+
+function openAgent(hint: string, requestId?: string, bridge?: Bridge) {
+  if (hint && !prompt.value.trim()) prompt.value = hint
+  if (requestId && bridge) {
+    requestOrigin.value = { bridge, requestId }
+    bridge.reply(requestId, 'accepted')
+  }
+  drawer.value = 'agent'
+}
+
+async function generate() {
+  agentBusy.value = true
+  agentError.value = ''
+  // Reuse the key on retry of the same prompt so the server de-duplicates.
+  idempotencyKey.value ??= crypto.randomUUID()
+  try {
+    const job = await api.post<JobSnapshot>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/sites/${encodeURIComponent(siteId)}/components/generate`,
+      { prompt: prompt.value.trim() },
+      { headers: { 'Idempotency-Key': idempotencyKey.value } },
+    )
+    agentJobId.value = job.id
+    const done = await tracker.track(job)
+    const result = done.result as ComponentGenerateResult | undefined
+    const origin = requestOrigin.value
+    requestOrigin.value = undefined
+    if (done.status === 'succeeded' && result?.componentId) {
+      origin?.bridge.reply(origin.requestId, 'done', { componentId: result.componentId })
+      idempotencyKey.value = undefined
+      reloadEverywhere('component.generated', result.componentId)
+      void git.load()
+    } else {
+      origin?.bridge.reply(origin.requestId, 'failed', { message: done.error?.message ?? `Generation ${done.status}.` })
+    }
+  } catch (cause) {
+    agentError.value = cause instanceof Error ? cause.message : 'Could not start Codex.'
+  } finally {
+    agentBusy.value = false
+  }
+}
+
+async function cancelAgent() {
+  if (!agentJobId.value) return
+  try {
+    tracker.update(await api.post<JobSnapshot>(`/jobs/${encodeURIComponent(agentJobId.value)}/cancel`, {}))
+  } catch (cause) {
+    agentError.value = cause instanceof Error ? cause.message : 'Cancel failed.'
+  }
+}
+
+// ---- LLM request (contract 2026-11-02) ----
+const request = createLlmRequest(api, workspaceId, siteId, tracker)
+
+function builderPath() {
+  return pathFromBuilderRoute(frameBridge.ready.value?.route) ?? ''
+}
+
+function openRequest() {
+  drawer.value = 'request'
+  if (!request.jobId.value && !request.currentPath.value) request.currentPath.value = builderPath()
+  void request.loadPages()
+  // A request still running on the server (e.g. after a page reload) is shown again.
+  void request.resume().then(afterRequest)
+}
+
+/** After a request ends: reload the builder when it changed files. */
+function afterRequest(done: JobSnapshot | undefined) {
+  const result = request.result.value
+  if (done?.status === 'succeeded' && done.id === request.jobId.value && result?.changedFiles.length) {
+    reloadEverywhere('request.files', result.addedComponents?.[0])
+    void git.load()
+  }
+}
+
+async function sendRequest() {
+  afterRequest(await request.submit())
+}
+
+async function openRequestTask(id: string) {
+  afterRequest(await request.open(id))
+}
+
+async function applyRequest() {
+  const done = await request.apply()
+  if (done?.status === 'succeeded') {
+    reloadEverywhere('request.applied')
+    void request.loadPages()
+  }
+}
+
+async function cancelRequest() {
+  const id = request.jobId.value
+  if (!id) return
+  try {
+    tracker.update(await api.post<JobSnapshot>(`/jobs/${encodeURIComponent(id)}/cancel`, {}))
+  } catch (cause) {
+    request.error.value = cause instanceof Error ? cause.message : 'Cancel failed.'
+  }
+}
+
+// ---- git ----
+const selectedRepo = ref<string>()
+const committing = ref(false)
+
+async function openGit() {
+  drawer.value = 'git'
+  await git.load()
+  const first = git.repos.value.find((repo) => repo.dirty > 0) ?? git.repos.value[0]
+  if (!selectedRepo.value && first) await selectRepo(first.id)
+  else if (selectedRepo.value) await git.loadStatus(selectedRepo.value)
+}
+
+async function selectRepo(repoId: string) {
+  selectedRepo.value = repoId
+  await git.loadStatus(repoId)
+}
+
+async function commit(request: { message: string; paths: string[]; expectedHead: string }) {
+  if (!selectedRepo.value) return
+  committing.value = true
+  try {
+    const done = await tracker.track(await git.commit(selectedRepo.value, request))
+    if (done.status !== 'succeeded') git.error.value = done.error?.message ?? `Commit ${done.status}.`
+    else git.error.value = ''
+  } catch (cause) {
+    git.error.value = cause instanceof Error ? cause.message : 'Commit failed.'
+  } finally {
+    committing.value = false
+    await git.load()
+    await git.loadStatus(selectedRepo.value)
+  }
+}
+
+const remoteBusy = ref<GitRemoteOp>()
+
+async function runRemote(op: GitRemoteOp, body: { branch?: string; confirm?: string }) {
+  if (!selectedRepo.value || remoteBusy.value) return
+  remoteBusy.value = op
+  try {
+    const done = await tracker.track(await git.remote(selectedRepo.value, op, body))
+    git.error.value = done.status === 'succeeded' ? '' : done.error?.message ?? `${op} ${done.status}.`
+  } catch (cause) {
+    git.error.value = cause instanceof Error ? cause.message : `${op} failed.`
+  } finally {
+    remoteBusy.value = undefined
+    await git.load()
+    await git.loadStatus(selectedRepo.value)
+  }
+}
+
+// ---- lifecycle ----
+const jobs = computed(() => Object.values(tracker.jobs.value))
+const runningJobs = computed(() => jobs.value.filter((job) => !isTerminalJob(job)).length)
+const memory = computed(() => {
+  const bytes = dev.view.value?.memoryBytes
+  return bytes ? `${Math.round(bytes / 1048576)} MiB` : ''
+})
+// ---- start progress ----
+// While dev is starting or stopping, re-read the status every 3 s: the site stream can miss a
+// transition (e.g. while the control plane restarts), and a stale "Starting" looks like a hang.
+const now = ref(Date.now())
+let transitionTimer: ReturnType<typeof setInterval> | undefined
+watch(() => dev.status.value, (status) => {
+  const transitional = status === 'starting' || status === 'stopping'
+  if (transitional && !transitionTimer) {
+    transitionTimer = setInterval(() => {
+      now.value = Date.now()
+      if (Math.floor(now.value / 1000) % 3 === 0) void dev.load()
+    }, 1000)
+  } else if (!transitional && transitionTimer) {
+    clearInterval(transitionTimer)
+    transitionTimer = undefined
+  }
+}, { immediate: true })
+onBeforeUnmount(() => { if (transitionTimer) clearInterval(transitionTimer) })
+const progress = computed(() => startProgress(dev.view.value, logs.value, now.value))
+
+const statusLabel = computed(() => ({
+  stopped: 'Stopped', starting: 'Starting', ready: 'Ready', stopping: 'Stopping', failed: 'Failed',
+}[dev.status.value]))
+
+onMounted(async () => {
+  frameBridge.attach()
+  tabBridge.attach()
+  await dev.load()
+  events.start()
+  void git.load()
+})
+
+onBeforeUnmount(() => {
+  events.stop()
+  frameBridge.detach()
+  tabBridge.detach()
+  tracker.stop()
+})
+</script>
+
+<template>
+  <div class="dev-session">
+    <header class="dev-bar">
+      <NuxtLink class="dev-bar__back" :to="`/workspaces/${encodeURIComponent(workspaceId)}/sites/${encodeURIComponent(siteId)}`" :aria-label="`Back to ${siteId}`" :title="`Back to ${siteId}`" data-testid="dev-back">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M19 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" /></svg>
+      </NuxtLink>
+      <strong class="dev-bar__site">{{ siteId }}</strong>
+      <span class="dev-pill" :data-status="dev.status.value" role="status">{{ statusLabel }}</span>
+      <small v-if="memory" class="dev-bar__meta">{{ memory }}</small>
+      <small v-if="frameBridge.connected.value" class="dev-bar__meta" title="Builder bridge connected">bridge ●</small>
+      <small v-if="canUseLlm" class="dev-bar__model" data-testid="llm-model" title="Model used for LLM work (New component and LLM request)">LLM · {{ llmModel }}</small>
+
+      <div class="dev-bar__group">
+        <button v-if="dev.status.value === 'stopped' || dev.status.value === 'failed'" class="dev-btn" type="button" :disabled="!!dev.busy.value" @click="dev.start()">Start</button>
+        <button v-else class="dev-btn" type="button" :disabled="!!dev.busy.value || dev.status.value === 'stopping'" @click="dev.stop()">Stop</button>
+        <button class="dev-btn" type="button" :disabled="!!dev.busy.value || dev.status.value === 'stopped'" @click="dev.restart()">Restart</button>
+        <button class="dev-btn" type="button" :disabled="!dev.ready.value" @click="reloadEverywhere('manual')">Reload frame</button>
+        <button class="dev-btn" type="button" :disabled="!frameSrc" @click="openInTab">Open in new tab</button>
+      </div>
+
+      <div class="dev-bar__group dev-bar__group--end">
+        <button class="dev-btn dev-btn--accent" type="button" :disabled="!dev.ready.value" @click="openAgent('')">New component</button>
+        <button v-if="canRequest" class="dev-btn dev-btn--accent" type="button" :disabled="!dev.ready.value" :aria-pressed="drawer === 'request'" @click="drawer === 'request' ? (drawer = null) : openRequest()">LLM request</button>
+        <button class="dev-btn" type="button" :aria-pressed="drawer === 'components'" @click="drawer === 'components' ? (drawer = null) : openComponents()">Components</button>
+        <button class="dev-btn" type="button" :aria-pressed="drawer === 'git'" @click="drawer === 'git' ? (drawer = null) : openGit()">
+          Git <span v-if="git.dirtyCount.value" class="dev-badge">{{ git.dirtyCount.value }}</span>
+        </button>
+        <button class="dev-btn" type="button" :aria-pressed="drawer === 'logs'" @click="drawer = drawer === 'logs' ? null : 'logs'">
+          Activity <span v-if="runningJobs" class="dev-badge">{{ runningJobs }}</span>
+        </button>
+      </div>
+    </header>
+
+    <p v-if="dev.view.value?.needsRestart" class="dev-banner" role="alert">
+      Needs a dev restart: {{ dev.view.value.needsRestart.reason }}
+      <button class="dev-btn" type="button" :disabled="!!dev.busy.value" @click="dev.restart()">Restart now</button>
+    </p>
+    <p v-if="notice" class="dev-banner dev-banner--info" role="status">{{ notice }} <button class="dev-btn" type="button" @click="notice = ''">Dismiss</button></p>
+    <p v-if="dev.error.value" class="dev-banner" role="alert">{{ dev.error.value }}</p>
+
+    <main class="dev-stage">
+      <iframe
+        v-if="dev.ready.value && frameSrc"
+        :key="frameKey"
+        ref="iframe"
+        class="dev-frame"
+        :src="frameSrc"
+        title="Site builder"
+        allow="clipboard-read; clipboard-write"
+      />
+      <section v-else class="dev-state" :data-status="dev.status.value">
+        <template v-if="dev.status.value === 'starting'">
+          <span class="dev-spinner" aria-hidden="true" />
+          <h1>Starting the dev server…</h1>
+          <p data-testid="dev-start-elapsed">{{ formatSecs(progress.elapsedSecs) }} so far · Nuxt compiles on start, usually 20–70 s · gives up after {{ formatSecs(progress.timeoutSecs) }}</p>
+          <div class="dev-progress" role="progressbar" :aria-valuenow="Math.round(progress.fraction * 100)" aria-valuemin="0" aria-valuemax="100" aria-label="Time used of the start timeout"><span :style="{ width: `${Math.round(progress.fraction * 100)}%` }" /></div>
+          <pre v-if="progress.lines.length" class="dev-start-log" aria-live="polite" data-testid="dev-start-log">{{ progress.lines.join('\n') }}</pre>
+          <p v-else class="dev-start-hint">No output from the dev server yet.</p>
+          <p v-if="!events.connected.value" class="dev-start-hint" role="status">Live updates are reconnecting; the status is re-checked every 3 s.</p>
+          <div v-if="progress.stalled" class="dev-start-stalled" role="alert">
+            <p>No new output for {{ formatSecs(progress.quietSecs) }}. It may be stuck.</p>
+            <div class="button-row"><button class="compact-button compact-button--primary" type="button" :disabled="!!dev.busy.value" @click="dev.restart()">Restart</button><button class="compact-button" type="button" @click="drawer = 'logs'">Show log</button></div>
+          </div>
+        </template>
+        <template v-else-if="dev.status.value === 'stopping'"><h1>Stopping…</h1></template>
+        <template v-else-if="dev.status.value === 'failed'">
+          <h1>The dev server failed.</h1>
+          <p v-if="dev.view.value?.problem"><code>{{ dev.view.value.problem }}</code></p>
+          <div class="button-row"><button class="compact-button compact-button--primary" type="button" @click="dev.restart()">Restart</button><button class="compact-button" type="button" @click="drawer = 'logs'">Show log</button></div>
+        </template>
+        <template v-else-if="dev.view.value">
+          <h1>The dev server is stopped.</h1>
+          <p>Start it to open the builder for <strong>{{ siteId }}</strong>.</p>
+          <button class="compact-button compact-button--primary" type="button" :disabled="!!dev.busy.value" @click="dev.start()">Start dev server</button>
+        </template>
+        <p v-else class="empty-state">Connecting to the control plane…</p>
+      </section>
+
+      <DevAgentDrawer
+        v-if="drawer === 'agent'"
+        v-model:prompt="prompt"
+        :job="agentJob"
+        :busy="agentBusy"
+        :error="agentError"
+        @submit="generate"
+        @cancel-job="cancelAgent"
+        @commit="openGit"
+        @close="drawer = null"
+      />
+      <DevRequestDrawer
+        v-else-if="drawer === 'request'"
+        v-model:prompt="request.prompt.value"
+        v-model:current-path="request.currentPath.value"
+        :pages="request.pages.value"
+        :pages-error="request.pagesError.value"
+        :model="llmModel"
+        v-model:view="request.view.value"
+        :job="request.job.value"
+        :apply-job="request.applyJob.value"
+        :result="request.result.value"
+        :apply-result="request.applyResult.value"
+        :submitted-prompt="request.submittedPrompt.value"
+        :proposal="request.proposal.value"
+        :history="request.history.value"
+        :history-error="request.historyError.value"
+        :can-submit="request.canSubmit.value && dev.ready.value"
+        :can-apply="request.canApply.value && dev.ready.value"
+        :can-start-new="request.canStartNew.value"
+        :running="request.running.value"
+        :busy="request.busy.value"
+        :error="request.error.value"
+        @submit="sendRequest"
+        @apply="applyRequest"
+        @new-task="(reuse: boolean) => request.newTask({ reuse, path: builderPath() })"
+        @open="openRequestTask"
+        @cancel-job="cancelRequest"
+        @commit="openGit"
+        @close="drawer = null"
+      />
+      <DevGitDrawer
+        v-else-if="drawer === 'git'"
+        :repos="git.repos.value"
+        :status="git.status.value"
+        :diff="git.diff.value"
+        :selected-repo="selectedRepo"
+        :error="git.error.value"
+        :committing="committing"
+        :remote-busy="remoteBusy"
+        @select-repo="selectRepo"
+        @view-diff="(path) => selectedRepo && git.loadDiff(selectedRepo, path)"
+        @commit="commit"
+        @remote="runRemote"
+        @refresh="openGit"
+        @close="drawer = null"
+      />
+      <DevLogsDrawer v-else-if="drawer === 'logs'" :logs="logs" :jobs="jobs" @close="drawer = null" />
+      <DevComponentsDrawer
+        v-else-if="drawer === 'components'"
+        v-model:tab="componentsTab"
+        :registry="panel.registry.value"
+        :components="panel.components.value"
+        :trash="panel.trash.value"
+        :loading-registry="panel.loadingRegistry.value"
+        :loading-trash="panel.loadingTrash.value"
+        :busy="panel.busy.value"
+        :error="panel.error.value"
+        :can-rebuild="canRebuild"
+        :can-delete="dev.ready.value"
+        :can-view-source="canViewSource"
+        :can-use-trash="canUseTrash"
+        @rebuild="rebuildRegistry"
+        @view-source="panel.openSource"
+        @delete="openDeleteFromPanel"
+        @restore="restoreComponent"
+        @refresh="refreshComponents"
+        @close="drawer = null"
+      />
+    </main>
+
+    <DevDeleteModal
+      v-if="remove.componentId.value"
+      v-model:acknowledged="remove.acknowledged.value"
+      :component-id="remove.componentId.value"
+      :usage="remove.usage.value"
+      :loading="remove.loading.value"
+      :submitting="remove.submitting.value"
+      :error="remove.error.value"
+      :can-view-source="canViewSource"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+      @view-source="panel.openSource"
+    />
+
+    <DevSourceViewer
+      v-if="panel.sourceId.value"
+      :component-id="panel.sourceId.value"
+      :source="panel.source.value"
+      :loading="panel.loadingSource.value"
+      :error="panel.sourceError.value"
+      @close="panel.closeSource()"
+    />
+  </div>
+</template>

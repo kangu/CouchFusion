@@ -1,0 +1,55 @@
+# /etc/systemd/system/cf-build@.service — CouchFusion production build (Phase 3).
+# Builds the snapshot that /var/cache/cf-build/<app>/next points to, as cfdev, with no
+# secrets: bun install (layers, app), then nuxt build. Started by the control plane (cfcp,
+# through polkit) or by phase3/04-release.sh. Repository code never runs as cfcp or root.
+[Unit]
+Description=CouchFusion production build for %i
+After=network-online.target couchfusion-nft.service
+Wants=network-online.target
+Requires=couchfusion-nft.service
+
+[Service]
+Type=oneshot
+User=cfdev
+Group=cfdev
+SupplementaryGroups=cfsrc
+Slice=couchfusion.slice
+UMask=0002
+EnvironmentFile=-/etc/couchfusion/env/%i.build.env
+Environment=HOME=/var/lib/cfdev
+Environment=PATH=/opt/couchfusion/toolchain/bin:/usr/bin:/bin
+Environment=NUXT_TELEMETRY_DISABLED=1
+Environment=CONTENT_REGISTRY_WATCH=0
+Environment=CF_APP=%i
+# Placeholder only: the auth layer refuses to load without it. The build never connects to
+# CouchDB; production reads the real value from its own env file at runtime.
+Environment=COUCHDB_ADMIN_AUTH=cHJlcGFyZS1vbmx5OnBsYWNlaG9sZGVy
+ExecStart=/usr/local/libexec/couchfusion/cf-build.sh /var/cache/cf-build/%i/next
+# Node derives its default heap limit from the cgroup (~800 MB here), too small for the
+# Nitro server bundle; give the heap 1.4 GB inside a 2.3 GiB unit cap.
+Environment=NODE_OPTIONS=--max-old-space-size=1400
+TimeoutStartSec=20min
+MemoryHigh=2G
+MemoryMax=2300M
+CPUQuota=180%
+Nice=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# bun install needs the npm registry; the nft guard still blocks protected loopback ports.
+IPAddressDeny=100.64.0.0/10
+ReadWritePaths=/var/cache/cf-build/%i /var/lib/cfdev
+InaccessiblePaths=-/srv/couchfusion -/etc/couchfusion/credentials -/var/lib/couchfusion -/var/lib/cfagent -/var/www -/etc/caddy

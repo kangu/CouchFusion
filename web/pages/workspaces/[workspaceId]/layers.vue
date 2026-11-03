@@ -1,0 +1,8 @@
+<script setup lang="ts">
+import type { JobSnapshot, WorkspaceDetail } from '../../../types/api'
+definePageMeta({ middleware: 'workspace' })
+const route = useRoute(); const api = useApi(); const activity = useActivityStore(); const workspace = ref<WorkspaceDetail>(); const wizard = ref(false); const busy = ref(false); const error = ref(''); const id = computed(() => String(route.params.workspaceId))
+onMounted(async () => { workspace.value = await api.get(`/workspaces/${encodeURIComponent(id.value)}`) })
+async function createLayer(value: { name: string; branch: string; force: boolean }) { busy.value = true; try { const job = await api.post<JobSnapshot>(`/workspaces/${encodeURIComponent(id.value)}/layers`, value); activity.trackJob(job); wizard.value = false; await navigateTo('/activity') } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not create layer.' } finally { busy.value = false } }
+</script>
+<template><section class="page-sheet"><header class="page-header"><div><p class="eyebrow">Reusable foundations</p><h1>Layers</h1></div><button class="compact-button compact-button--primary" @click="wizard = true">Create layer</button></header><p v-if="error" class="notice notice--error">{{ error }}</p><div class="card-grid"><article v-for="layer in workspace?.layers || []" :key="layer.id" class="site-card"><p class="eyebrow">Nuxt layer</p><h2>{{ layer.name }}</h2><code>{{ layer.root }}</code></article></div><div v-if="workspace && !workspace.layers.length" class="empty-state"><h2>No shared layers.</h2><p>Add one through an explicit provisioning job.</p></div></section><LayerWizard :open="wizard" :busy="busy" @close="wizard = false" @submit="createLayer" /></template>

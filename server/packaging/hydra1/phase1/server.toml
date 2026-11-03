@@ -1,0 +1,55 @@
+# /etc/couchfusion/server.toml — CouchFusion control plane on hydra1 (Phase 1).
+# Owner root:cfcp 0640. No secrets live here.
+
+[server]
+state_dir = "/var/lib/couchfusion"
+run_dir = "/run/couchfusion"
+spa_dir = "/opt/couchfusion/current/web"
+public_host = "hydra1.tailb7471b.ts.net"
+control_port = 9180
+runner = "systemd"
+unix_listeners = true   # tailscale serve --https=P unix:/run/couchfusion/ts-P.sock
+tcp_listeners = true    # 127.0.0.1:P for the SSH tunnel (cookie via `couchfusion-server login-url`)
+dev_ready_timeout_secs = 180
+registry_timeout_secs = 15
+
+[auth]
+allowed_logins = ["r67rggkzzb@privaterelay.appleid.com"]
+
+[workspace]
+id = "hydra1"
+name = "hydra1"
+root = "/srv/couchfusion/workspace"
+repos = ["apps/radustanciu", "layers", "cli-content"]
+
+[toolchain]
+bun = "/opt/couchfusion/toolchain/bin/bun"
+git = "/usr/bin/git"
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+codex = "/opt/couchfusion/toolchain/bin/codex"
+
+# Phase 2: read-only status/logs in the control UI (no start/stop). Missing section = this list.
+[services]
+units = ["caddy.service", "couchdb.service", "webmin.service", "tailscaled.service", "cf-dev@radustanciu.service", "cf-site@radustanciu.service", "cf-build@radustanciu.service", "couchfusion.service"]
+
+[[sites]]
+id = "radustanciu"
+slot_port = 9181
+dev_port = 4401
+dev_unit = "cf-dev@radustanciu.service"
+agent_unit = "cf-agent@radustanciu.service"
+
+# Phase 3 (added by phase3/09-control-plane.sh): production releases, deploy/rollback from the UI.
+[sites.prod]
+unit = "cf-site@radustanciu.service"
+build_unit = "cf-build@radustanciu.service"
+port = 4501
+www_dir = "/var/www/radustanciu"
+build_dir = "/var/cache/cf-build/radustanciu"
+preview_port = 9189
+public_url = "https://radustanciu.ro"
+
+# Codex model for every LLM run (generate and request), shown in the dev bar (phase3/10-agent-model.sh).
+[agent]
+model = "gpt-5.6-sol"

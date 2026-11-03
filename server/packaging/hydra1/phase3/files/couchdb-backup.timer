@@ -1,0 +1,11 @@
+# /etc/systemd/system/couchdb-backup.timer — every night at 03:30 (server time), catches up after downtime.
+[Unit]
+Description=Nightly CouchDB backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
