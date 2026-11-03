@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { JobSnapshot, ProdView } from '../types/api'
+import type { JobSnapshot, ProdView, DevDrift } from '../types/api'
 import { createJobTracker, isTerminalJob } from './useJobTracker'
 
 interface ProductionApi {
@@ -10,6 +10,25 @@ interface ProductionApi {
 /** Short git sha for display (`abcdef123456`). */
 export function shortSha(sha: string | undefined) {
   return sha ? sha.slice(0, 12) : ''
+}
+
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** `App`, `Layers`, or the repo path. */
+export function driftLabel(repo: string) {
+  if (repo.startsWith('apps/')) return 'App'
+  return repo === 'layers' ? 'Layers' : repo
+}
+
+/** What dev has that the live release does not, in a few words per repo. */
+export function driftParts(drift: DevDrift): string[] {
+  const parts: string[] = []
+  if (drift.ahead) parts.push(`${count(drift.ahead, 'new commit', 'new commits')}`)
+  if (drift.behind) parts.push(`live has ${count(drift.behind, 'commit', 'commits')} dev doesn't`)
+  if (drift.ahead === undefined && drift.liveHead !== drift.devHead) parts.push(`on ${shortSha(drift.devHead) || '?'}, live is ${shortSha(drift.liveHead) || 'unknown'}`)
+  if (drift.changedFileCount) parts.push(`${count(drift.changedFileCount, 'uncommitted file', 'uncommitted files')}${drift.liveDirty ? ' edited since the build' : ''}`)
+  if (drift.liveDirty && !drift.uncommitted && drift.liveHead === drift.devHead) parts.push('live was built with uncommitted changes dev no longer has')
+  return parts
 }
 
 /**

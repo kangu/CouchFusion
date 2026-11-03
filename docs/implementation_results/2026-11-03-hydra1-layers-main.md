@@ -34,3 +34,11 @@
 - hydra1: `CF_GIT_REPO=layers` → `[[git.remotes]] repo = "layers"`, `url = "https://git2.kangu.ro/radu/nuxt-apps-layers.git"`, `credential = "git-layers"`, `branches = ["main"]`. The user created a separate git2 token (repository read/write) and filled `/etc/couchfusion/credentials/git-layers` with sudoedit; control plane restarted.
 - Fetch from the API succeeded (`main` = `origin/main`, 0/0); repo status shows `hasRemote`, upstream `origin/main`, push branch `main`. Push not tested (nothing to push).
 - `doctor` had failed on "component registry invalid (0 components)": the app merge commit `1d15a02` combined both sides of `component-definitions.ts` while the `.json` kept one side's `typescriptSha256`. A registry rebuild (API `components/registry/rebuild`) fixed it (14 components, doctor ok); the regenerated files are uncommitted in the VPS app repo, and the laptop copy has the same mismatch until it pulls that commit.
+
+## Deploy failed on a stale layers lockfile (2026-11-03, 11:00)
+
+- **Symptom:** workbench Deploy failed in `cf-build@radustanciu` at `bun install --frozen-lockfile` in layers: "lockfile had changes, but lockfile is frozen". Production stayed unchanged.
+- **Cause:** the lightning work (`f0af2fe`, `1340ef7`) added `@getalby/sdk` and `light-bolt11-decoder` to `layers/package.json` without updating `bun.lock`. Dev never noticed because `nuxt dev` does not run a frozen install.
+- **Fix:** regenerated `layers/bun.lock` with bun 1.4.2 (the hydra1 toolchain version; the Mac has 1.1.38) and committed it as layers `b724421` (no push). Moved it to hydra1 with a git bundle and `merge --ff-only` as cfcp. The hydra1 layers checkout is now one commit ahead of git2 until `b724421` is pushed.
+- **Deploy:** release `20261103T100314Z-e141468588a4` (app `e141468`), build 108 s, health 3 × 200, previous `20261103T071314Z-7cb90e4b52e4` kept for rollback. Checked `/` 200, `/admin` 404 signed out, `/api/content/pages` 200.
+- **Next time:** after changing any `package.json` in layers or an app, run `bun install` and commit `bun.lock` with it; check with `bun install --frozen-lockfile` before deploying.

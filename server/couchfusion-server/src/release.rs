@@ -14,7 +14,7 @@ use axum::body::Body;
 use serde_json::{Map, Value, json};
 
 use crate::config::{ProdConfig, SiteConfig};
-use crate::dto::{Admission, JobSnapshot, ProdView, ReleaseInfo};
+use crate::dto::{Admission, DevDrift, JobSnapshot, ProdView, ReleaseInfo};
 use crate::error::ApiError;
 use crate::http::App;
 use crate::jobs::JobCtx;
@@ -135,6 +135,7 @@ pub async fn view(app: &App, site: &SiteConfig) -> Result<ProdView, ApiError> {
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     };
+    let dev = dev_drift(app, site, releases.iter().find(|r| r.current)).await;
     Ok(ProdView {
         site_id: site.id.clone(),
         unit: prod.unit.clone(),
@@ -147,7 +148,64 @@ pub async fn view(app: &App, site: &SiteConfig) -> Result<ProdView, ApiError> {
         // The preview is a `tailscale serve` port, so it is always the tailnet host.
         preview_url: prod.preview_port.map(|p| format!("https://{}:{p}/", app.config.server.public_host)),
         public_url: prod.public_url.clone(),
+        dev,
     })
+}
+
+/// Shown files per repo; the count covers all of them.
+const DRIFT_FILES: usize = 20;
+
+/// Whether `path` was modified after `built` (unix seconds); a missing file was not.
+fn modified_after(path: &Path, built: Option<i64>) -> bool {
+    let Some(built) = built else { return true };
+    fs::symlink_metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .is_some_and(|d| d.as_secs() as i64 > built)
+}
+
+/// Compares one repo: different heads, files not in the live build, or a dirty live build whose
+/// changes dev no longer has (same head, nothing uncommitted).
+fn drift(repo: String, live_head: Option<String>, live_dirty: bool, dev_head: Option<String>, counts: (Option<u32>, Option<u32>), uncommitted: usize, changed: Vec<String>) -> DevDrift {
+    let heads_differ = live_head.is_none() || live_head != dev_head;
+    let changed_flag = heads_differ || !changed.is_empty() || (live_dirty && uncommitted == 0);
+    DevDrift {
+        repo,
+        live_head,
+        dev_head,
+        ahead: counts.0,
+        behind: counts.1,
+        live_dirty,
+        uncommitted,
+        changed_file_count: changed.len(),
+        changed_files: changed.into_iter().take(DRIFT_FILES).collect(),
+        changed: changed_flag,
+    }
+}
+
+async fn dev_drift(app: &App, site: &SiteConfig, live: Option<&ReleaseInfo>) -> Vec<DevDrift> {
+    let Some(live) = live else { return vec![] };
+    let built = live.created_at.as_deref().and_then(|t| time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339).ok()).map(|t| t.unix_timestamp());
+    let root = &app.config.workspace.root;
+    let mut out = vec![];
+    for (repo, live_head, live_dirty) in [(format!("apps/{}", site.id), &live.app_head, live.app_dirty), ("layers".to_string(), &live.layers_head, live.layers_dirty)] {
+        let path = root.join(&repo);
+        if !path.is_dir() || !app.config.workspace.repos.contains(&repo) {
+            continue;
+        }
+        let live_head = live_head.clone().filter(|h| h != "unknown");
+        let dev_head = app.git.head(&path).await.map(|h| h.sha);
+        let files = app.git.status(&path).await.map(|(_, f)| f).unwrap_or_default();
+        let counts = match (&live_head, &dev_head) {
+            (Some(l), Some(d)) if l == d => (Some(0), Some(0)),
+            (Some(l), Some(_)) => (app.git.rev_count(&path, l, "HEAD").await, app.git.rev_count(&path, "HEAD", l).await),
+            _ => (None, None),
+        };
+        let changed: Vec<String> = files.iter().map(|f| f.path.clone()).filter(|p| !live_dirty || modified_after(&path.join(p), built)).collect();
+        out.push(drift(repo, live_head, live_dirty, dev_head, counts, files.len(), changed));
+    }
+    out
 }
 
 // ---------------------------------------------------------------- file operations
@@ -569,6 +627,37 @@ mod tests {
         assert!(!is_snapshot_name("next"));
         assert_eq!(created_at("20261031T132216Z-abc").as_deref(), Some("2026-10-31T13:22:16Z"));
         assert_eq!(snapshot_name(time::macros::datetime!(2026-10-31 13:22:16 UTC)), "20261031T132216Z");
+    }
+
+    #[test]
+    fn drift_flags_what_deploy_would_change() {
+        let h = |s: &str| Some(s.to_string());
+        let same = drift("apps/x".into(), h("aaa"), false, h("aaa"), (Some(0), Some(0)), 0, vec![]);
+        assert!(!same.changed);
+        let commits = drift("apps/x".into(), h("aaa"), false, h("bbb"), (Some(2), Some(0)), 0, vec![]);
+        assert!(commits.changed && commits.ahead == Some(2));
+        let files = drift("layers".into(), h("aaa"), false, h("aaa"), (Some(0), Some(0)), 2, vec!["a.vue".into(), "b.vue".into()]);
+        assert!(files.changed && files.changed_file_count == 2);
+        // Built dirty, nothing edited since: same as live.
+        let dirty_same = drift("apps/x".into(), h("aaa"), true, h("aaa"), (Some(0), Some(0)), 3, vec![]);
+        assert!(!dirty_same.changed);
+        // Built dirty, dev clean on the same head: the live changes are gone from dev.
+        assert!(drift("apps/x".into(), h("aaa"), true, h("aaa"), (Some(0), Some(0)), 0, vec![]).changed);
+        // Unknown live head: assume different.
+        assert!(drift("apps/x".into(), None, false, h("aaa"), (None, None), 0, vec![]).changed);
+        let many = drift("apps/x".into(), h("a"), false, h("a"), (Some(0), Some(0)), 30, (0..30).map(|i| format!("f{i}")).collect());
+        assert_eq!((many.changed_files.len(), many.changed_file_count), (DRIFT_FILES, 30));
+    }
+
+    #[test]
+    fn modified_after_build_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "x").unwrap();
+        assert!(modified_after(&f, Some(0)));
+        assert!(!modified_after(&f, Some(i64::MAX / 2)));
+        assert!(modified_after(&f, None));
+        assert!(!modified_after(&tmp.path().join("missing"), Some(0)));
     }
 
     #[test]

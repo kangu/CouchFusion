@@ -461,6 +461,19 @@ export interface RepoStatus {
   behind?: number
   pushBranches: string[]
   files: RepoStatusFile[]
+  /** Finished workbench tasks whose files are still uncommitted (app repos), oldest first. */
+  workbenchNotes?: WorkbenchNote[]
+}
+
+/** One finished workbench task, for the default commit message. */
+export interface WorkbenchNote {
+  jobId: string
+  type: string
+  completedAt: string
+  /** Commit-subject sized. */
+  title: string
+  text?: string
+  files: string[]
 }
 
 export type GitRemoteOp = 'fetch' | 'pull' | 'push'
@@ -545,6 +558,8 @@ export interface PageCheck {
 
 /** Result of an `llm.request` job. */
 export interface LlmRequestResult {
+  /** The prompt as sent (requests made before 2026-11-03 do not have it). */
+  prompt?: string
   summary?: string | null
   changedFiles: string[]
   addedComponents?: string[]
@@ -558,6 +573,29 @@ export interface LlmRequestResult {
   model?: string | null
   usage?: CodexUsage
   threadId?: string
+}
+
+/** Where a request's page changes stand on the server. */
+export type LlmProposalState = 'pending' | 'applied' | 'partial' | 'none'
+
+/** One row of `GET …/requests`: a past or running request, without its events. */
+export interface LlmRequestSummary {
+  id: string
+  status: ActivityStatus
+  createdAt: string
+  completedAt?: string | null
+  prompt?: string | null
+  currentPath?: string | null
+  summary?: string | null
+  changedFiles: number
+  operations: number
+  error?: string | null
+  proposal: LlmProposalState
+  applyJob?: { id: string; status: ActivityStatus } | null
+}
+
+export interface LlmRequestHistory {
+  requests: LlmRequestSummary[]
 }
 
 /** Result of an `llm.request.apply` job. */
@@ -656,4 +694,23 @@ export interface ProdView {
   previewUrl?: string
   /** Public address of the site. */
   publicUrl?: string
+  /** How the dev checkouts (app, layers) differ from the live release. */
+  dev?: DevDrift[]
+}
+
+/** One dev repo compared with what the live release was built from. */
+export interface DevDrift {
+  repo: string
+  liveHead?: string
+  devHead?: string
+  /** Commits in dev the live release does not have (absent when unknown). */
+  ahead?: number
+  /** Commits in the live release that dev does not have. */
+  behind?: number
+  liveDirty: boolean
+  uncommitted: number
+  /** Uncommitted files not in the live release (first 20). */
+  changedFiles: string[]
+  changedFileCount: number
+  changed: boolean
 }

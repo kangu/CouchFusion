@@ -98,3 +98,20 @@ describe('production', () => {
     expect(other.prod.busy.value).toBe(true)
   })
 })
+
+describe('dev vs live', () => {
+  const base = { repo: 'apps/radustanciu', liveHead: 'aaa', devHead: 'aaa', ahead: 0, behind: 0, liveDirty: false, uncommitted: 0, changedFiles: [], changedFileCount: 0, changed: false }
+
+  it('says in a few words what dev has that live does not', async () => {
+    const { driftParts, driftLabel } = await import('../composables/useProduction')
+    expect(driftLabel('apps/radustanciu')).toBe('App')
+    expect(driftLabel('layers')).toBe('Layers')
+    expect(driftParts(base)).toEqual([])
+    expect(driftParts({ ...base, devHead: 'bbb', ahead: 2, changedFileCount: 1, changedFiles: ['a.vue'], uncommitted: 1, changed: true })).toEqual(['2 new commits', '1 uncommitted file'])
+    expect(driftParts({ ...base, liveDirty: true, uncommitted: 3, changedFileCount: 2, changed: true })).toEqual(['2 uncommitted files edited since the build'])
+    expect(driftParts({ ...base, liveDirty: true, changed: true })).toEqual(['live was built with uncommitted changes dev no longer has'])
+    const { ahead: _a, behind: _b, ...unknownCounts } = base
+    expect(driftParts({ ...unknownCounts, devHead: 'ccc', changed: true })).toEqual(['on ccc, live is aaa'])
+    expect(driftParts({ ...base, devHead: 'ccc', ahead: 0, behind: 1, changed: true })).toEqual(["live has 1 commit dev doesn't"])
+  })
+})

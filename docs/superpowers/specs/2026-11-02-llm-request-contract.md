@@ -112,6 +112,7 @@ Capability `llm-request`.
 - `GET {site}/pages` → proxies `GET /__couchfusion/control/pages` (409 when dev is not ready).
 - `POST {site}/requests` `{ prompt, currentPath? }`, header `Idempotency-Key` → job `llm.request`. Needs dev ready (409). Holds the site lease and the agent marker. Steps: fetch `pages` + `page-documents?all=1` → write the request folder → run Codex (`cf-agent@`, same sandbox, request prompt) → file changes, dependency policy, restart reasons, registry settle when components changed → read `operations.json` (optional) → `check` → result.
 - `POST {site}/requests/{jobId}/apply` → job `llm.request.apply` (site lease; at most one apply per request: idempotency key `apply:<jobId>`). Calls `apply` with the stored operations and base revs, then asks the builder to reload.
+- `GET {site}/requests?limit=30` (added 2026-11-03) → `{ requests: [...] }`, newest first (limit 1–100, default 30). Each row: `id`, `status`, `createdAt`, `completedAt`, `prompt` (stored in the request result since 2026-11-03; `null` for older requests), `currentPath`, `summary`, `changedFiles` and `operations` (counts), `error` (message), `proposal` (`pending` = stored and waiting for Apply, `applied`, `partial`, `none`) and `applyJob` (`{id, status}` of the latest apply, or `null`). No events or page bodies; open a request with `GET /jobs/{id}`. The request job sets its result (prompt, page, model) when it starts, so a running request shows its prompt too.
 
 Request job result:
 

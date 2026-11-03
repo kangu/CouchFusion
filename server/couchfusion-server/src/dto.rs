@@ -245,6 +245,25 @@ pub struct RepoStatus {
     #[serde(flatten)]
     pub remote: RemoteState,
     pub files: Vec<RepoFile>,
+    /// Finished workbench tasks whose files are still uncommitted (app repos only), oldest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workbench_notes: Vec<WorkbenchNote>,
+}
+
+/// One finished workbench task, for the default commit message.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbenchNote {
+    pub job_id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub completed_at: String,
+    /// Commit-subject sized.
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The task's files that are still uncommitted.
+    pub files: Vec<String>,
 }
 
 /// Remote tracking state of a repo (from local refs; refreshed by a fetch job).
@@ -487,6 +506,35 @@ pub struct ProdView {
     /// Public address (`[sites.prod] public_url`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// How the dev checkouts (app, layers) differ from the live release.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dev: Vec<DevDrift>,
+}
+
+/// One repo of the dev workspace compared with what the live release was built from.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DevDrift {
+    pub repo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dev_head: Option<String>,
+    /// Commits in dev that the live release does not have (None when unknown).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<u32>,
+    /// Commits in the live release that dev does not have.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u32>,
+    /// The live release was built with uncommitted changes in this repo.
+    pub live_dirty: bool,
+    /// Uncommitted files in dev now.
+    pub uncommitted: usize,
+    /// Uncommitted files not in the live release (when it was built dirty: edited after the build).
+    pub changed_files: Vec<String>,
+    pub changed_file_count: usize,
+    /// Dev would deploy something different from what is live.
+    pub changed: bool,
 }
 
 #[derive(Debug, Deserialize)]

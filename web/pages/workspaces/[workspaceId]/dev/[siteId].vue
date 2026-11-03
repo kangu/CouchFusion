@@ -260,21 +260,33 @@ async function cancelAgent() {
 // ---- LLM request (contract 2026-11-02) ----
 const request = createLlmRequest(api, workspaceId, siteId, tracker)
 
-function openRequest() {
-  drawer.value = 'request'
-  if (!request.currentPath.value && !request.running.value) {
-    request.currentPath.value = pathFromBuilderRoute(frameBridge.ready.value?.route) ?? ''
-  }
-  void request.loadPages()
+function builderPath() {
+  return pathFromBuilderRoute(frameBridge.ready.value?.route) ?? ''
 }
 
-async function sendRequest() {
-  const done = await request.submit()
+function openRequest() {
+  drawer.value = 'request'
+  if (!request.jobId.value && !request.currentPath.value) request.currentPath.value = builderPath()
+  void request.loadPages()
+  // A request still running on the server (e.g. after a page reload) is shown again.
+  void request.resume().then(afterRequest)
+}
+
+/** After a request ends: reload the builder when it changed files. */
+function afterRequest(done: JobSnapshot | undefined) {
   const result = request.result.value
-  if (done?.status === 'succeeded' && result?.changedFiles.length) {
+  if (done?.status === 'succeeded' && done.id === request.jobId.value && result?.changedFiles.length) {
     reloadEverywhere('request.files', result.addedComponents?.[0])
     void git.load()
   }
+}
+
+async function sendRequest() {
+  afterRequest(await request.submit())
+}
+
+async function openRequestTask(id: string) {
+  afterRequest(await request.open(id))
 }
 
 async function applyRequest() {
@@ -395,7 +407,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="dev-session">
     <header class="dev-bar">
-      <NuxtLink class="dev-bar__back" :to="`/workspaces/${workspaceId}`" aria-label="Back to workspace">←</NuxtLink>
+      <NuxtLink class="dev-bar__back" :to="`/workspaces/${encodeURIComponent(workspaceId)}/sites/${encodeURIComponent(siteId)}`" :aria-label="`Back to ${siteId}`" :title="`Back to ${siteId}`" data-testid="dev-back">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M19 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square" /></svg>
+      </NuxtLink>
       <strong class="dev-bar__site">{{ siteId }}</strong>
       <span class="dev-pill" :data-status="dev.status.value" role="status">{{ statusLabel }}</span>
       <small v-if="memory" class="dev-bar__meta">{{ memory }}</small>
@@ -486,18 +500,25 @@ onBeforeUnmount(() => {
         :pages="request.pages.value"
         :pages-error="request.pagesError.value"
         :model="llmModel"
+        v-model:view="request.view.value"
         :job="request.job.value"
         :apply-job="request.applyJob.value"
         :result="request.result.value"
         :apply-result="request.applyResult.value"
+        :submitted-prompt="request.submittedPrompt.value"
+        :proposal="request.proposal.value"
+        :history="request.history.value"
+        :history-error="request.historyError.value"
         :can-submit="request.canSubmit.value && dev.ready.value"
         :can-apply="request.canApply.value && dev.ready.value"
+        :can-start-new="request.canStartNew.value"
         :running="request.running.value"
         :busy="request.busy.value"
         :error="request.error.value"
         @submit="sendRequest"
         @apply="applyRequest"
-        @discard="request.discard()"
+        @new-task="(reuse: boolean) => request.newTask({ reuse, path: builderPath() })"
+        @open="openRequestTask"
         @cancel-job="cancelRequest"
         @commit="openGit"
         @close="drawer = null"

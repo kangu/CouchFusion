@@ -52,7 +52,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos/{repo}/pull", post(repo_pull))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/push", post(repo_push))
         .route(&format!("{site}/pages"), get(site_pages))
-        .route(&format!("{site}/requests"), post(request_create))
+        .route(&format!("{site}/requests"), post(request_create).get(request_history))
         .route(&format!("{site}/requests/{{jid}}/apply"), post(request_apply))
         .route(&format!("{site}/prod"), get(prod_view))
         .route(&format!("{site}/prod/deploy"), post(prod_deploy))
@@ -331,6 +331,20 @@ async fn request_create(State(app): S, Path((ws, site)): Path<(String, String)>,
     Ok(data(StatusCode::ACCEPTED, job))
 }
 
+#[derive(Deserialize)]
+struct HistoryQuery {
+    limit: Option<String>,
+}
+
+async fn request_history(State(app): S, Path((ws, site)): Path<(String, String)>, Query(q): Query<HistoryQuery>) -> ApiResult {
+    let cfg = site_cfg(&app, &ws, &site)?;
+    let limit = match q.limit.as_deref() {
+        None | Some("") => crate::request::HISTORY_LIMIT,
+        Some(v) => v.parse::<usize>().ok().filter(|n| (1..=100).contains(n)).ok_or_else(|| ApiError::validation("limit must be 1–100."))?,
+    };
+    Ok(data(StatusCode::OK, crate::request::history(&app, &cfg, limit)?))
+}
+
 async fn request_apply(State(app): S, Path((ws, site, jid)): Path<(String, String, String)>, JsonBody(_): JsonBody<Empty>) -> ApiResult {
     let cfg = site_cfg(&app, &ws, &site)?;
     Ok(data(StatusCode::ACCEPTED, crate::request::apply(app, cfg, jid).await?))
@@ -481,7 +495,8 @@ async fn repo_status(State(app): S, Path((ws, repo)): Path<(String, String)>) ->
     app.git.check_config(&path).await?;
     let (branch, files) = app.git.status(&path).await?;
     let remote = remote_state(&app, &repo, &path).await;
-    Ok(data(StatusCode::OK, RepoStatus { id: repo.clone(), branch, head: app.git.head(&path).await, has_remote: app.git.has_remote(&path).await, remote, files }))
+    let workbench_notes = crate::notes::for_repo(&app, &repo, &path, &files).await;
+    Ok(data(StatusCode::OK, RepoStatus { id: repo.clone(), branch, head: app.git.head(&path).await, has_remote: app.git.has_remote(&path).await, remote, files, workbench_notes }))
 }
 
 #[derive(Deserialize)]

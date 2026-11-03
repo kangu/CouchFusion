@@ -273,6 +273,61 @@ fn proposal_path(app: &App, job_id: &str) -> PathBuf {
     app.config.server.state_dir.join("requests").join(format!("{job_id}.json"))
 }
 
+// ---------------------------------------------------------------- history
+
+/// Requests listed by `GET …/requests` when no limit is given.
+pub const HISTORY_LIMIT: usize = 30;
+
+/// Where a request's page changes stand: waiting for Apply, applied, partly applied, or none.
+fn proposal_state(app: &App, job_id: &str) -> &'static str {
+    let pending = proposal_path(app, job_id);
+    if pending.is_file() {
+        "pending"
+    } else if pending.with_extension("applied.json").is_file() {
+        "applied"
+    } else if pending.with_extension("partial.json").is_file() {
+        "partial"
+    } else {
+        "none"
+    }
+}
+
+/// One history row: what was asked and what came of it (no events, no page bodies).
+fn summarize(job: &JobSnapshot, apply: Option<&JobSnapshot>, proposal: &str) -> Value {
+    let field = |key: &str| job.result.as_ref().and_then(|r| r.get(key));
+    let text = |key: &str| field(key).and_then(Value::as_str).map(str::to_string);
+    let count = |key: &str| field(key).and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+    json!({
+        "id": job.id,
+        "status": job.status,
+        "createdAt": job.created_at,
+        "completedAt": job.completed_at,
+        "prompt": text("prompt"),
+        "currentPath": text("currentPath"),
+        "summary": text("summary"),
+        "changedFiles": count("changedFiles"),
+        "operations": count("operations"),
+        "error": job.error.as_ref().map(|e| e.message.clone()),
+        "proposal": proposal,
+        "applyJob": apply.map(|a| json!({ "id": a.id, "status": a.status })),
+    })
+}
+
+/// The site's recent requests, newest first, each with its latest apply job.
+pub fn history(app: &App, site: &SiteConfig, limit: usize) -> Result<Value, ApiError> {
+    let read = |kind: &str, n: usize| app.store.recent_jobs(&site.id, kind, n).map_err(|e| ApiError::internal(format!("Reading the request history: {e}")));
+    let requests = read(JOB_REQUEST, limit)?;
+    let applies = read(JOB_APPLY, limit.saturating_mul(4))?;
+    let mut latest: std::collections::HashMap<&str, &JobSnapshot> = std::collections::HashMap::new();
+    for apply in &applies {
+        if let Some(id) = apply.result.as_ref().and_then(|r| r.get("requestJobId")).and_then(Value::as_str) {
+            latest.entry(id).or_insert(apply);
+        }
+    }
+    let items: Vec<Value> = requests.iter().map(|job| summarize(job, latest.get(job.id.as_str()).copied(), proposal_state(app, &job.id))).collect();
+    Ok(json!({ "requests": items }))
+}
+
 // ---------------------------------------------------------------- request job
 
 pub async fn start(app: Arc<App>, site: SiteConfig, prompt: String, current_path: Option<String>, idempotency_key: String) -> Result<JobSnapshot, ApiError> {
@@ -311,8 +366,10 @@ pub async fn start(app: Arc<App>, site: SiteConfig, prompt: String, current_path
 
 async fn run(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, current_path: Option<&str>, result: &mut Map<String, Value>) -> Result<(), ApiError> {
     ctx.start();
+    result.insert("prompt".into(), json!(prompt));
     result.insert("currentPath".into(), json!(current_path));
     result.insert("model".into(), json!(app.config.agent.model));
+    ctx.set_result(result.clone());
     let _marker = AgentMarker::create(app.config.agent_marker(&site.id)).map_err(|e| ApiError::filesystem(format!("Creating the agent marker: {e}")))?;
     let app_dir = app.config.app_dir(&site.id);
 
@@ -535,6 +592,32 @@ async fn run_apply(app: &App, ctx: &JobCtx, site: &SiteConfig, path: &Path, resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_rows_summarize_without_events() {
+        let mut result = Map::new();
+        result.insert("prompt".into(), json!("Shorten the hero"));
+        result.insert("currentPath".into(), json!("/about"));
+        result.insert("summary".into(), json!("Done."));
+        result.insert("changedFiles".into(), json!(["app/a.vue", "app/b.vue"]));
+        result.insert("operations".into(), json!([{ "op": "page.update", "text": "Update /about" }]));
+        let job = JobSnapshot {
+            id: "r1".into(), kind: JOB_REQUEST.into(), workspace_id: None, site_id: Some("s".into()), status: crate::dto::JobStatus::Succeeded,
+            created_at: "2026-11-03T10:00:00Z".into(), started_at: None, completed_at: Some("2026-11-03T10:02:00Z".into()),
+            events: vec![], error: None, result: Some(result),
+        };
+        let apply = JobSnapshot { id: "a1".into(), kind: JOB_APPLY.into(), result: None, ..job.clone() };
+        let row = summarize(&job, Some(&apply), "applied");
+        assert_eq!(row["prompt"], "Shorten the hero");
+        assert_eq!(row["changedFiles"], 2);
+        assert_eq!(row["operations"], 1);
+        assert_eq!(row["proposal"], "applied");
+        assert_eq!(row["applyJob"], json!({ "id": "a1", "status": "succeeded" }));
+        assert!(row.get("events").is_none());
+        let bare = summarize(&JobSnapshot { result: None, ..job }, None, "none");
+        assert_eq!(bare["prompt"], Value::Null);
+        assert_eq!(bare["applyJob"], Value::Null);
+    }
 
     #[test]
     fn proposal_shapes() {

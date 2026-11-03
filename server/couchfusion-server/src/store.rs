@@ -187,6 +187,16 @@ impl Store {
         Ok(rows.iter().filter_map(|t| serde_json::from_str(t).ok()).collect())
     }
 
+    /// Newest first: up to `limit` jobs of one kind for a site (rowid follows creation order).
+    pub fn recent_jobs(&self, site: &str, kind: &str, limit: usize) -> anyhow::Result<Vec<JobSnapshot>> {
+        let rows: Vec<String> = self.with(|c| {
+            let mut stmt = c.prepare("SELECT snapshot FROM jobs WHERE site = ?1 AND kind = ?2 ORDER BY rowid DESC LIMIT ?3")?;
+            let rows = stmt.query_map(params![site, kind, limit as i64], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
+        Ok(rows.iter().filter_map(|t| serde_json::from_str(t).ok()).collect())
+    }
+
     // ---- idempotency ----
 
     pub fn idempotent_job(&self, key: &str) -> anyhow::Result<Option<String>> {
@@ -314,6 +324,24 @@ mod tests {
         store.mark_trash_restored("j1").unwrap();
         assert!(store.trash_entry("j1").unwrap().unwrap().restored.is_some());
         assert!(store.trash_entry("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn recent_jobs_newest_first_by_site_and_kind() {
+        let store = Store::memory();
+        let job = |id: &str, site: &str, kind: &str| JobSnapshot {
+            id: id.into(), kind: kind.into(), workspace_id: None, site_id: Some(site.into()), status: crate::dto::JobStatus::Succeeded,
+            created_at: String::new(), started_at: None, completed_at: None, events: vec![], error: None, result: None,
+        };
+        for (id, site, kind) in [("a", "s", "llm.request"), ("b", "s", "llm.request.apply"), ("c", "other", "llm.request"), ("d", "s", "llm.request"), ("e", "s", "llm.request")] {
+            store.save_job(&job(id, site, kind)).unwrap();
+        }
+        // An update keeps the job's place.
+        store.save_job(&job("a", "s", "llm.request")).unwrap();
+        let ids = |v: Vec<JobSnapshot>| v.into_iter().map(|j| j.id).collect::<Vec<_>>();
+        assert_eq!(ids(store.recent_jobs("s", "llm.request", 10).unwrap()), vec!["e", "d", "a"]);
+        assert_eq!(ids(store.recent_jobs("s", "llm.request", 2).unwrap()), vec!["e", "d"]);
+        assert_eq!(ids(store.recent_jobs("s", "llm.request.apply", 10).unwrap()), vec!["b"]);
     }
 
     #[test]

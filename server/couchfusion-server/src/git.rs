@@ -1,6 +1,7 @@
 //! Git per repository, hardened (spec §8): no system/global config, hooks off, fsmonitor off,
 //! refuse repos whose local config sets risky keys, explicit path lists only, never a shell.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -205,6 +206,26 @@ impl Git {
         self.run(repo, &["remote"]).await.is_ok_and(|o| o.code == 0 && !o.stdout.trim_ascii().is_empty())
     }
 
+    /// `git rev-list --count <from>..<to>`; None when a ref is unknown or not a commit id / HEAD.
+    pub async fn rev_count(&self, repo: &Path, from: &str, to: &str) -> Option<u32> {
+        let ok = |r: &str| r == "HEAD" || (r.len() >= 7 && r.len() <= 64 && r.chars().all(|c| c.is_ascii_hexdigit()));
+        if !ok(from) || !ok(to) {
+            return None;
+        }
+        let range = format!("{from}..{to}");
+        let out = self.run(repo, &["rev-list", "--count", &range]).await.ok().filter(|o| o.code == 0)?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+
+    /// When each path was last committed (unix seconds), from the newest `depth` commits.
+    pub async fn last_commit_times(&self, repo: &Path, depth: usize) -> HashMap<String, i64> {
+        let depth = depth.to_string();
+        match self.run(repo, &["-c", "core.quotePath=false", "log", "-n", &depth, "--format=%x01%ct", "--name-only", "--no-renames"]).await {
+            Ok(out) if out.code == 0 => parse_commit_times(&String::from_utf8_lossy(&out.stdout)),
+            _ => HashMap::new(),
+        }
+    }
+
     /// Branch and changed files from `git status --porcelain=v2 -z --branch`.
     pub async fn status(&self, repo: &Path) -> Result<(String, Vec<RepoFile>), ApiError> {
         let out = self.ok(repo, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"]).await?;
@@ -306,8 +327,30 @@ pub fn parse_status(out: &[u8]) -> (String, Vec<RepoFile>) {
     (branch, files)
 }
 
+/// Parses `git log --format=%x01%ct --name-only` (newest first): first time seen per path wins.
+fn parse_commit_times(text: &str) -> HashMap<String, i64> {
+    let mut times = HashMap::new();
+    let mut current = 0;
+    for line in text.lines() {
+        if let Some(stamp) = line.strip_prefix('\u{1}') {
+            current = stamp.trim().parse().unwrap_or(0);
+        } else if !line.is_empty() {
+            times.entry(line.to_string()).or_insert(current);
+        }
+    }
+    times
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn commit_times_keep_the_newest() {
+        let times = parse_commit_times("\u{1}200\n\napp/a.vue\napp/b vue.vue\n\u{1}100\n\napp/a.vue\napp/c.vue\n");
+        assert_eq!(times["app/a.vue"], 200);
+        assert_eq!(times["app/b vue.vue"], 200);
+        assert_eq!(times["app/c.vue"], 100);
+    }
     use super::*;
 
     #[test]

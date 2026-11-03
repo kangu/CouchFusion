@@ -313,6 +313,7 @@ pub async fn generate_component(app: Arc<App>, site: SiteConfig, prompt: String,
     let prompt = trimmed.to_string();
     tokio::spawn(async move {
         let mut result = Map::new();
+        result.insert("prompt".into(), Value::String(prompt.clone()));
         if let Err(err) = run_generate(&app, &ctx, &site, &prompt, &mut result).await {
             ctx.fail(&err, (!result.is_empty()).then_some(result));
         }

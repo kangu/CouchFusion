@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { GitRemoteOp, JobSnapshot, RepoDiff, RepoStatus, RepoSummary } from '../types/api'
+import type { GitRemoteOp, JobSnapshot, RepoDiff, RepoStatus, RepoSummary, WorkbenchNote } from '../types/api'
 
 interface GitApi {
   get<T>(path: string): Promise<T>
@@ -20,6 +20,31 @@ export function repoSegment(id: string) {
   let raw = id
   try { raw = decodeURIComponent(id) } catch { /* keep as is */ }
   return encodeURIComponent(raw)
+}
+
+/** `2026-11-03 12:16` in the viewer's time zone. */
+export function noteStamp(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`
+}
+
+const SUBJECT_MAX = 72
+
+/**
+ * Default commit message from the workbench tasks since the files were last committed: one task
+ * gives its title and summary; several give the first title (+ how many more) and one
+ * timestamped note per task.
+ */
+export function commitDraft(notes: WorkbenchNote[] | undefined, stamp: (iso: string) => string = noteStamp): string {
+  if (!notes?.length) return ''
+  const [first] = notes as [WorkbenchNote, ...WorkbenchNote[]]
+  if (notes.length === 1) return first.text ? `${first.title}\n\n${first.text}` : first.title
+  const more = ` (+${notes.length - 1} more)`
+  const title = first.title.length + more.length > SUBJECT_MAX ? `${first.title.slice(0, SUBJECT_MAX - more.length - 1).trimEnd()}…` : first.title
+  const lines = notes.map((note) => `- [${stamp(note.completedAt)}] ${note.title}${note.text ? `\n  ${note.text}` : ''}`)
+  return `${title}${more}\n\n${lines.join('\n')}`
 }
 
 export interface RemoteActions {

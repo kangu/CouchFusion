@@ -16,6 +16,7 @@ mod events;
 mod git;
 mod http;
 mod jobs;
+mod notes;
 mod ops;
 mod proxy;
 mod health;

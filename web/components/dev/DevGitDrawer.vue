@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { GitRemoteOp, RepoDiff, RepoStatus, RepoSummary } from '../../types/api'
-import { remoteActions } from '../../composables/useGitRepos'
+import { commitDraft, remoteActions } from '../../composables/useGitRepos'
 
 const props = defineProps<{
   repos: RepoSummary[]
@@ -69,8 +69,24 @@ function submit() {
   emit('commit', { message: message.value.trim(), paths: [...selected.value], expectedHead: props.status.head?.sha ?? '' })
 }
 
+/** Built from the workbench tasks whose files are still uncommitted; follows new tasks. */
+const suggested = computed(() => commitDraft(props.status?.workbenchNotes))
+const noteCount = computed(() => props.status?.workbenchNotes?.length ?? 0)
+let lastSuggested = ''
+watch(suggested, (next) => {
+  // Replace the message only while it is empty or still the previous suggestion (never an edit).
+  if (!message.value.trim() || message.value === lastSuggested) message.value = next
+  lastSuggested = next
+}, { immediate: true })
+const edited = computed(() => !!suggested.value && message.value !== suggested.value)
+const messageRows = computed(() => Math.min(12, Math.max(3, message.value.split('\n').length + 1)))
+
+function useSuggested() {
+  message.value = suggested.value
+}
+
 watch(() => props.committing, (now, before) => {
-  if (before && !now && !props.error) message.value = ''
+  if (before && !now && !props.error) message.value = suggested.value
 })
 </script>
 
@@ -137,7 +153,13 @@ watch(() => props.committing, (now, before) => {
 
       <form v-if="status.files.length" class="dev-drawer__form" @submit.prevent="submit">
         <label for="dev-git-message">Commit message</label>
-        <textarea id="dev-git-message" v-model="message" rows="3" maxlength="4000" />
+        <textarea id="dev-git-message" v-model="message" :rows="messageRows" maxlength="4000" data-testid="commit-message" />
+        <p v-if="suggested" class="dev-drawer__hint dev-git__suggested" data-testid="commit-suggested">
+          <template v-if="edited">Your edit is kept as new tasks finish.
+            <button type="button" class="dev-git__link" @click="useSuggested">Use the suggested message</button>
+          </template>
+          <template v-else>Pre-filled from {{ noteCount === 1 ? 'the workbench task' : `${noteCount} workbench tasks` }} since these files were last committed. New tasks are added as timestamped notes.</template>
+        </p>
         <button class="compact-button compact-button--primary" type="submit" :disabled="!canCommit">
           {{ committing ? 'Committing…' : `Commit ${selected.size} file${selected.size === 1 ? '' : 's'}` }}
         </button>

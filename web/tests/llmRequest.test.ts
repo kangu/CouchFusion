@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createJobTracker } from '../composables/useJobTracker'
-import { createLlmRequest, modelLabel, pathFromBuilderRoute } from '../composables/useLlmRequest'
-import type { JobSnapshot } from '../types/api'
+import { mount } from '@vue/test-utils'
+import { createLlmRequest, formatWhen, historyOutcome, historyStatus, modelLabel, pathFromBuilderRoute } from '../composables/useLlmRequest'
+import DevRequestDrawer from '../components/dev/DevRequestDrawer.vue'
+import type { JobSnapshot, LlmRequestSummary } from '../types/api'
 
 const base = '/workspaces/hydra1/sites/radustanciu'
 
@@ -104,5 +106,111 @@ describe('LLM request', () => {
     expect(request.error.value).toContain('dev server')
     await request.loadPages()
     expect(request.pages.value?.pages[0]?.path).toBe('/about')
+  })
+})
+
+function row(overrides: Partial<LlmRequestSummary> = {}): LlmRequestSummary {
+  return { id: 'r1', status: 'succeeded', createdAt: '2026-11-03T10:00:00Z', prompt: 'Swap services', currentPath: '/services', changedFiles: 0, operations: 1, proposal: 'pending', applyJob: null, ...overrides }
+}
+
+describe('request history', () => {
+  it('describes outcomes in a few words', () => {
+    expect(historyOutcome(row())).toBe('1 page change to review')
+    expect(historyOutcome(row({ changedFiles: 2, operations: 3, proposal: 'applied' }))).toBe('2 files changed · 3 page changes applied')
+    expect(historyOutcome(row({ operations: 0 }))).toBe('Nothing changed')
+    expect(historyOutcome(row({ status: 'failed', operations: 0, error: 'Codex exited' }))).toBe('Codex exited')
+    expect(historyStatus('running')).toBe('Running')
+    expect(historyStatus('succeeded')).toBe('Done')
+    expect(formatWhen('nope')).toBe('')
+    expect(formatWhen('2026-11-03T10:00:00Z')).not.toBe('')
+  })
+
+  it('lists the history after a request finishes and starts a new task', async () => {
+    let history = [row({ status: 'running', proposal: 'none' })]
+    const { api, tracker, request } = setup({ post: () => job(), get: (path) => (path === `${base}/requests` ? { requests: history } : undefined) })
+    request.prompt.value = 'Swap services'
+    request.currentPath.value = '/services'
+    const sent = request.submit()
+    await vi.waitFor(() => expect(request.jobId.value).toBe('r1'))
+    expect(request.submittedPrompt.value).toBe('Swap services')
+    history = [row()]
+    tracker.update(job({ status: 'succeeded', result: { ...pendingResult, currentPath: '/services' } }))
+    await sent
+    await vi.waitFor(() => expect(request.history.value?.[0]?.status).toBe('succeeded'))
+    expect(api.get).toHaveBeenCalledWith(`${base}/requests`)
+    expect(request.finished.value).toBe(true)
+    expect(request.canApply.value).toBe(true)
+
+    request.newTask({ reuse: true })
+    expect(request.jobId.value).toBeUndefined()
+    expect(request.prompt.value).toBe('Swap services')
+    expect(request.currentPath.value).toBe('/services')
+
+    await request.open('r1')
+    request.newTask({ path: '/about' })
+    expect(request.prompt.value).toBe('')
+    expect(request.currentPath.value).toBe('/about')
+  })
+
+  it('opens a finished request with its apply job and trusts the server about the proposal', async () => {
+    const { request } = setup({
+      get: (path) => {
+        if (path === `${base}/requests`) return { requests: [row({ proposal: 'applied', applyJob: { id: 'a1', status: 'succeeded' } }), row({ id: 'r0', proposal: 'pending' })] }
+        if (path === '/jobs/r1') return job({ status: 'succeeded', result: { ...pendingResult, prompt: 'Swap services' } })
+        if (path === '/jobs/a1') return job({ id: 'a1', type: 'llm.request.apply', status: 'succeeded', result: { requestJobId: 'r1', applied: [] } })
+        return undefined
+      },
+    })
+    await request.loadHistory()
+    expect(await request.open('r1')).toBeUndefined()
+    expect(request.jobId.value).toBe('r1')
+    expect(request.applyJob.value?.id).toBe('a1')
+    expect(request.submittedPrompt.value).toBe('Swap services')
+    expect(request.proposal.value).toBe('applied')
+    expect(request.canApply.value).toBe(false)
+    expect(request.view.value).toBe('task')
+  })
+
+  it('resumes a request that is still running on the server', async () => {
+    const { tracker, request } = setup({
+      get: (path) => {
+        if (path === `${base}/requests`) return { requests: [row({ status: 'running', proposal: 'none', operations: 0 })] }
+        if (path === '/jobs/r1') return job({ status: 'running', result: { prompt: 'Swap services' } })
+        return undefined
+      },
+    })
+    const resumed = request.resume()
+    await vi.waitFor(() => expect(request.jobId.value).toBe('r1'))
+    expect(request.running.value).toBe(true)
+    request.newTask()
+    expect(request.jobId.value).toBe('r1')
+    tracker.update(job({ status: 'succeeded', result: { ...pendingResult, changedFiles: ['app/a.vue'] } }))
+    expect((await resumed)?.status).toBe('succeeded')
+    expect(request.finished.value).toBe(true)
+  })
+})
+
+describe('request drawer', () => {
+  const props = { prompt: '', currentPath: '', pagesError: '', model: 'gpt', view: 'task' as const, submittedPrompt: '', proposal: 'none' as const, historyError: '', canSubmit: false, canApply: false, canStartNew: true, running: false, busy: false, error: '' }
+
+  it('shows the sent prompt and a new-task button once a task is finished', async () => {
+    const wrapper = mount(DevRequestDrawer, { props: { ...props, submittedPrompt: 'Swap services', job: job({ status: 'succeeded', events: [] }), result: { ...pendingResult, applyState: 'pending' } as never, proposal: 'pending' } })
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="request-asked"]').text()).toContain('Swap services')
+    await wrapper.get('[data-testid="request-new-task"]').trigger('click')
+    await wrapper.get('[data-testid="request-reuse"]').trigger('click')
+    expect(wrapper.emitted('newTask')).toEqual([[false], [true]])
+  })
+
+  it('lists history rows and opens one', async () => {
+    const wrapper = mount(DevRequestDrawer, { props: { ...props, view: 'history', history: [row(), row({ id: 'r2', prompt: null, status: 'failed', error: 'Boom', operations: 0 })] } })
+    const items = wrapper.findAll('[data-testid="request-history"] button')
+    expect(items).toHaveLength(2)
+    expect(items[0]!.text()).toContain('Swap services')
+    expect(items[0]!.text()).toContain('1 page change to review')
+    expect(items[1]!.text()).toContain('Prompt not recorded')
+    await items[1]!.trigger('click')
+    expect(wrapper.emitted('open')).toEqual([['r2']])
+    expect(wrapper.get('[data-testid="request-tab-history"]').text()).toBe('History (2)')
   })
 })

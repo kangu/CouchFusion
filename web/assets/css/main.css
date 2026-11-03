@@ -225,6 +225,7 @@ a { color: inherit; }
 .compact-button { min-height: 2.75rem; padding: .72rem 1rem; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; font: 700 .64rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .compact-button:hover { background: rgba(16,21,20,.07); }
 .compact-button--primary { background: var(--ink); color: var(--paper); }
+.compact-button--primary:hover { background: #2c3431; }
 .compact-button--danger { border-color: var(--danger); color: var(--danger); }
 .compact-button:disabled, .action-button:disabled { cursor: not-allowed; opacity: .45; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createProduction, shortSha } from '../../composables/useProduction'
+import { createProduction, driftLabel, driftParts, shortSha } from '../../composables/useProduction'
 import { formatBytes, serviceTone } from '../../composables/useServices'
 
 /** Production of one site: live release, deploy, rollback (Phase 3, spec §7.2). */
@@ -14,6 +14,8 @@ const logPre = ref<HTMLElement>()
 const view = computed(() => prod.view.value)
 const job = computed(() => prod.job.value)
 const ready = computed(() => confirmText.value === props.siteId && !prod.busy.value)
+const drift = computed(() => view.value?.dev ?? [])
+const devChanged = computed(() => drift.value.filter((d) => d.changed))
 const jobTitle = computed(() => job.value?.type === 'release.rollback' ? 'Rollback' : 'Deploy')
 const jobResult = computed(() => (job.value?.result ?? {}) as { release?: string, rolledBackTo?: string, buildSeconds?: number })
 
@@ -72,9 +74,30 @@ onBeforeUnmount(() => {
           <template v-if="view.previewUrl"> · <a :href="view.previewUrl" target="_blank" rel="noreferrer" data-testid="prod-preview-link">Preview ↗</a></template>
         </p>
       </div>
-      <div class="prod-panel__actions">
-        <button class="compact-button" type="button" :disabled="prod.loading.value" @click="prod.load()">Refresh</button>
-        <button class="compact-button compact-button--primary" type="button" :disabled="!view || prod.busy.value || !view.admission.ok" data-testid="deploy" @click="ask('deploy')">Deploy…</button>
+      <div class="prod-panel__deploy">
+        <div class="prod-panel__actions">
+          <button class="compact-button" type="button" :disabled="prod.loading.value" @click="prod.load()">Refresh</button>
+          <button class="compact-button compact-button--primary" type="button" :disabled="!view || prod.busy.value || !view.admission.ok" data-testid="deploy" @click="ask('deploy')">Deploy…</button>
+        </div>
+        <div v-if="drift.length" class="prod-drift" :data-changed="devChanged.length > 0" data-testid="prod-drift" role="status">
+          <template v-if="devChanged.length">
+            <strong>Dev has changes that are not live</strong>
+            <ul>
+              <li v-for="d in devChanged" :key="d.repo">
+                <span>{{ driftLabel(d.repo) }}: {{ driftParts(d).join(' · ') || 'differs from the live build' }}</span>
+                <details v-if="d.changedFiles.length">
+                  <summary>Files</summary>
+                  <code v-for="file in d.changedFiles" :key="file">{{ file }}</code>
+                  <small v-if="d.changedFileCount > d.changedFiles.length">and {{ d.changedFileCount - d.changedFiles.length }} more</small>
+                </details>
+              </li>
+            </ul>
+          </template>
+          <template v-else>
+            <strong>Dev matches the live release</strong>
+            <span>Deploying now would build the same app and layers.</span>
+          </template>
+        </div>
       </div>
     </header>
 

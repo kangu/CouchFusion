@@ -198,6 +198,11 @@ impl JobCtx {
         self.cancel.clone()
     }
 
+    /// Sets the result while the job runs (e.g. the request's prompt, so a history shows it).
+    pub fn set_result(&self, result: Map<String, Value>) {
+        self.jobs.update(&self.id, |e| e.snapshot.result = Some(result));
+    }
+
     pub fn succeed(&self, result: Map<String, Value>) {
         self.finish(JobStatus::Succeeded, None, Some(result));
     }

@@ -58,3 +58,28 @@ Not tested on hydra1: Apply against the live pages (only in the layer's CouchDB 
 - New operation `page.create` (`path`, `title`, `body` required; `seo`, `layout` optional; `publicationState` defaults to `draft`). The layer creates it with `saveLocalizedPageDocument(…, { isCreate: true })` (same shape and history as a builder-created page); later operations in the same proposal may translate or publish it. Every non-HTML tag in a new body must be a known component. Previews have `before: null` for every field of a new page.
 - Prompt: Codex may create pages, keeps them draft unless the request asks for a public page, and bases them on an existing page of the same kind.
 - hydra1 (release `0.1.0-4d00a77-dirty202611021003`, layer file synced): proposal-only request "create a draft page /llm-request-test …" → one `page.create` (hero + contact from the network components), check ok, no files changed; the test proposal was retired (`.discarded.json`), nothing applied.
+
+## Run log: typing effect and follow-scroll (2026-11-03)
+
+- `components/dev/DevEventLog.vue` + `composables/useTypedLog.ts` (`useTypedLog`, `useStickToBottom`, `charsPerFrame`); the LLM request drawer uses it (the New component drawer and logs drawer still use the plain list).
+- New rows are typed in one after another (label at once, text at ≥6 characters per frame, ~360/s, faster when a backlog builds so it clears in ~45 frames), with a blinking caret on the row being typed. Rows already there when the log first appears show at once; reduced motion shows everything at once. Row keys are `<jobId>:<eventId>` so a new run types again.
+- The log follows the newest row while you are at the bottom. Scrolling up stops following (a "↓ Latest" button appears); scrolling back to the bottom or clicking the button follows again. Growth of the content never counts as scrolling up. Wheel turns over the floating button scroll the log.
+- Tests: `tests/eventLog.test.ts` (11: typing order and speed, new run, reduced motion, unmount, follow/stop/resume, growth, jump); web 163 pass, typecheck clean.
+- hydra1: release `0.1.0-1e923e1-dirty202611030836` (SPA only changed). Checked in Canary with two read-only requests: rows type in with the caret, the log stays at the newest row (also with the log forced to 110px so it overflows), scrolling up holds the position and shows "↓ Latest", scrolling down over the button reaches the bottom and hides it. The Rust test `real_radustanciu_manifest_if_present` was skipped for this build: it reads the laptop's apps/radustanciu registry, which has the merge-commit checksum mismatch until the VPS registry commit is pulled.
+
+## Task history and New task (2026-11-03)
+
+- **Server:** the request job now stores its prompt (with page and model) in its result as soon as it starts, so a running request shows it too. New `GET {site}/requests?limit=30` lists the site's requests newest first. Each row has the prompt, page, summary, file and page-change counts, error, `proposal` (`pending`/`applied`/`partial`/`none`, from the stored proposal file) and the latest apply job. Rows carry no events or page bodies. Contract updated.
+- **Drawer:** a Task / History switch.
+  - While a request runs or once it finishes, the form gives way to the prompt that was sent, the log and the result.
+  - **+ New task** (top) and **Start a new task** (bottom) clear it for the next prompt, on the page open in the builder. **Reuse this prompt** puts the prompt and its page back into the form.
+  - History lists each request with status, time, page, prompt (two lines) and outcome ("1 file changed · 2 page changes to review"). Clicking a row opens it read-only, with its apply job.
+  - Page changes still `pending` can be applied later from History; the server re-checks them against the current pages. Applied or partly applied ones show that instead of an Apply button.
+  - A request still running on the server (for example after a page reload) is shown again when the drawer opens, and the builder reloads when it ends with file changes.
+  - The old Discard button is gone: an unapplied proposal stays in History instead of being hidden.
+- **Requests made before this change** show "Prompt not recorded" (their prompt was never stored).
+- **Also fixed:** hovering a primary (dark) button made its background near-transparent while the text stayed light, so it looked blank. This affected every primary button. Primary buttons now stay dark on hover; light ones on the dev status panel stay light.
+- **Tests:**
+  - Rust 75/75, including the registry test that was skipped this morning and now passes again.
+  - Web 169/169 (new: outcome text, history after a request, New task and Reuse, opening an applied request, resuming a running one, drawer rendering). Typecheck clean.
+- **Deployed:** release `0.1.0-1e923e1-dirty202611031015` on hydra1, checked in Canary with one read-only request. Covered: the finished view, the History row with its prompt, Reuse, New task, and opening an applied request from 2 Nov.
