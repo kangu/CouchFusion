@@ -222,8 +222,24 @@ async fn dev_view(State(app): S, Extension(caller): Extension<Caller>, Path((ws,
     Ok(data(StatusCode::OK, app.dev.view(&cfg.id, &caller.origin())))
 }
 
+/// Site jobs that talk to the dev server; stopping or restarting it would break them.
+const DEV_JOBS: [&str; 5] = [crate::request::JOB_REQUEST, crate::request::JOB_APPLY, "component.generate", "component.delete", "component.restore"];
+
+/// The running job that needs the dev server, if any (e.g. Codex mid-run).
+fn job_needing_dev(app: &App, site: &str) -> Option<JobSnapshot> {
+    let job = app.jobs.snapshot(&app.jobs.active(site)?)?;
+    (DEV_JOBS.contains(&job.kind.as_str()) && !job.status.terminal()).then_some(job)
+}
+
 async fn dev_action(app: Arc<App>, caller: Caller, ws: String, site: String, action: &'static str) -> ApiResult {
     let cfg = site_cfg(&app, &ws, &site)?;
+    if action != "start"
+        && let Some(job) = job_needing_dev(&app, &cfg.id)
+    {
+        let mut fields = serde_json::Map::new();
+        fields.insert("activeJobId".into(), Value::String(job.id.clone()));
+        return Err(ApiError::conflict(format!("A {} job is using the dev server; wait for it to finish or cancel it first.", job.kind)).with_fields(fields));
+    }
     let result = match action {
         "start" => app.dev.start(&cfg.id).await,
         "stop" => app.dev.stop(&cfg.id).await,

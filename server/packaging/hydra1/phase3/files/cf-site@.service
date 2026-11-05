@@ -5,6 +5,8 @@
 Description=CouchFusion production site %i
 After=network-online.target couchdb.service
 Wants=network-online.target
+# Enabled at boot for every site (03-units.sh); a site with no release yet is skipped, not looped.
+ConditionPathExists=/var/www/%i/current/server/index.mjs
 
 [Service]
 Type=simple

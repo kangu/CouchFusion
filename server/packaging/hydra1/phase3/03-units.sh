@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Step 03 — units, build script, polkit rule, tmpfiles, slice size, nft guard for prod ports.
 # Nothing is started; existing units are not restarted (the nft table is reloaded in place).
+# cf-site@<app> is enabled at boot; cf-dev@<app> stays disabled (started from the control UI).
 # Undo: rm /etc/systemd/system/{cf-site@.service,cf-build@.service} \
 #          /etc/systemd/system/couchfusion.slice.d/20-hydra1.conf /usr/local/libexec/couchfusion/cf-build.sh; \
 #       restore phase2/files/{50-couchfusion.rules,couchfusion.tmpfiles.conf}; drop 4501-4509 from
@@ -18,6 +19,10 @@ install_file "$F/50-couchfusion.rules" /etc/polkit-1/rules.d/50-couchfusion.rule
 install_file "$F/couchfusion.tmpfiles.conf" /etc/tmpfiles.d/couchfusion.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/couchfusion.conf
 systemctl daemon-reload
+# Production always starts at boot (dev, cf-dev@, never does: it is started from the control UI).
+# Until the first release exists, the unit's ConditionPathExists skips it.
+systemctl enable "cf-site@$CF_APP.service" >/dev/null 2>&1 && log "cf-site@$CF_APP enabled at boot" || warn "could not enable cf-site@$CF_APP"
+systemctl is-enabled --quiet "cf-dev@$CF_APP.service" 2>/dev/null && warn "cf-dev@$CF_APP is enabled at boot; disable it: systemctl disable cf-dev@$CF_APP"
 
 # Sandboxed users (cfdev, cfagent) must not reach production ports.
 NFT=$CF_ETC/nft/couchfusion.nft

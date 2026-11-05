@@ -14,7 +14,7 @@ use crate::dto::{ActivityEvent, ServiceSnapshot};
 use crate::units::parse_journal_line;
 use crate::util::Redactor;
 
-const SHOW_PROPS: &str = "Id,Description,ActiveState,SubState,MainPID,MemoryCurrent,ActiveEnterTimestamp,User";
+const SHOW_PROPS: &str = "Id,Description,ActiveState,SubState,MainPID,MemoryCurrent,ActiveEnterTimestamp,User,UnitFileState";
 const SYSTEM_UNITS: &[&str] = &["caddy.service", "couchdb.service", "couchfusion.service", "tailscaled.service", "polkit.service", "ssh.service"];
 
 pub struct Services {
@@ -114,6 +114,7 @@ pub fn parse_service(unit: &str, text: &str) -> ServiceSnapshot {
         memory_current_bytes: None,
         since: None,
         user: None,
+        starts_at_boot: None,
     };
     for line in text.lines() {
         let Some((k, v)) = line.split_once('=') else { continue };
@@ -123,6 +124,8 @@ pub fn parse_service(unit: &str, text: &str) -> ServiceSnapshot {
             "SubState" if !v.is_empty() => s.sub_state = v.to_string(),
             "MainPID" => s.main_pid = v.parse().ok().filter(|p| *p > 0),
             "MemoryCurrent" => s.memory_current_bytes = v.parse().ok(),
+            // enabled / enabled-runtime start at boot; disabled, static, indirect, masked do not.
+            "UnitFileState" if !v.is_empty() => s.starts_at_boot = Some(v.starts_with("enabled")),
             "ActiveEnterTimestamp" => {
                 s.since = v
                     .strip_prefix('@')
@@ -155,6 +158,9 @@ mod tests {
         assert_eq!(s.memory_current_bytes, Some(104857600));
         assert_eq!(s.since.as_deref(), Some("2026-10-29T18:53:20Z"));
         assert_eq!(s.user.as_deref(), Some("radu"));
+        assert_eq!(s.starts_at_boot, None);
+        assert_eq!(parse_service("cf-site@x.service", "UnitFileState=enabled\n").starts_at_boot, Some(true));
+        assert_eq!(parse_service("cf-dev@x.service", "UnitFileState=disabled\n").starts_at_boot, Some(false));
     }
 
     #[test]

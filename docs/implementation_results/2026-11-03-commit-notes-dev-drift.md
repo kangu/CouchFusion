@@ -36,3 +36,16 @@
 - Rust 80/80 (new: notes selection and subjects, `git log` time parsing, drift rules, modified-after-build). Clippy clean.
 - Web 175/175 (new: commit draft and drawer pre-fill, drift text). Typecheck clean.
 - hydra1 runs release `0.1.0-1e923e1-dirty202611031033`. The control plane was restarted with no jobs running; the dev server stayed up.
+
+## cli-content removed from hydra1 (2026-11-03, afternoon)
+
+- **What it was:** the workspace's third repo, on branch `codex/canonical-registry-generator`, with no remote and one untracked note. Since `df357dd` it only forwards to `layers/content/scripts/`. Its one live use was the app's `registry:build` / `registry:watch` scripts, which Codex runs. `cf-registry@`, the dev watcher and production builds never used it.
+- **Tidy-up first:** committed the note (`3a2a704`) on the Mac, fast-forwarded `main`, and brought hydra1 to the same `main` with a bundle.
+- **Mix-up with `cf-cli.git`:** a git2 remote was briefly set up for cli-content against `https://git2.kangu.ro/radu/cf-cli.git`. That repo holds **cli-init** (pushed from the Mac's remote `git2`), so the workbench Push was correctly refused as non-fast-forward. Undone on hydra1: `origin`, the stray `origin/main` (cli-init objects pruned), the `[[git.remotes]]` block (`server.toml` is identical to before) and the drop-in. `/etc/couchfusion/credentials/git-cli-content` is kept but unused.
+- **App (`apps/radustanciu` `8b59846`, pushed to git2, pulled on hydra1 via the control plane):** `registry:build` → `../../layers/content/scripts/generate-component-registry.mjs`, `registry:watch` → `…/watch-component-registry.mjs`. Both paths give identical output. A Mac run only changes `lastUpdatedAt` milliseconds (file mtime precision), so those were not committed.
+- **hydra1:** `workspace.repos = ["apps/radustanciu", "layers"]` (backup `server.toml.bak-before-cli-content-retire`). The folder moved to `/srv/couchfusion/retired/cli-content-2026-11-03` (root 0700), not deleted. The control plane was restarted with no jobs running.
+- **Checks:**
+  - `bun run registry:build` as cfdev produced 14 definitions with no diff.
+  - The repo list shows 2 repos, both clean. The dev server is ready (dev site 200) and the registry is ready (14 components).
+  - Production shows the app ahead by the `package.json` commit only, which production does not use.
+- **Still mentioning cli-content (harmless):** the `cf-build.sh` comment and the `InaccessiblePaths=-…/cli-content/.git` entries (the `-` makes a missing path fine). The Mac's cli-content stays for other apps.

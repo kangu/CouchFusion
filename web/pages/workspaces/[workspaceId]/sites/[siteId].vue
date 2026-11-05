@@ -6,6 +6,7 @@ import ComponentRegistryPanel from '../../../../components/sites/ComponentRegist
 import ComponentPreviewOverlay from '../../../../components/sites/ComponentPreviewOverlay.vue'
 import TaskList from '../../../../components/sites/TaskList.vue'
 import ProductionPanel from '../../../../components/prod/ProductionPanel.vue'
+import DevSessionCard from '../../../../components/sites/DevSessionCard.vue'
 import { modelLabel } from '../../../../composables/useLlmRequest'
 import { useAgentConversation } from '../../../../composables/useAgentConversation'
 import type {
@@ -347,18 +348,16 @@ function message(cause: unknown, fallback: string) {
 
       <div v-if="isRust" class="site-detail-grid" data-testid="site-rust">
         <aside class="site-detail-rail">
-          <section class="panel">
-            <p class="eyebrow">Dev session</p>
-            <h2>{{ devView?.status ?? 'unknown' }}</h2>
-            <p class="site-rust__meta">LLM · {{ modelLabel(bootstrap.state.value?.agent) }}</p>
-            <div class="button-row"><NuxtLink class="compact-button compact-button--primary" :to="`/workspaces/${workspaceId}/dev/${siteId}`">Open dev page</NuxtLink></div>
-            <p class="site-rust__meta">Builder, New component, LLM request, components, git and the dev log live on the dev page.</p>
-          </section>
+          <DevSessionCard :workspace-id="workspaceId" :site-id="siteId" @update="devView = $event">
+            <div class="button-row"><NuxtLink class="compact-button" :to="`/workspaces/${workspaceId}/dev/${siteId}`">Open dev page</NuxtLink></div>
+            <p class="site-rust__meta">LLM · {{ modelLabel(bootstrap.state.value?.agent) }}. Builder, New component, LLM request, components, git and the dev log live on the dev page.</p>
+          </DevSessionCard>
           <section class="panel" data-testid="site-links">
             <p class="eyebrow">Open the site</p>
             <ul class="site-rust__links">
-              <li v-if="devSiteUrl"><a :href="`${devSiteUrl}/`" target="_blank" rel="noreferrer">Dev site ↗</a><small>nuxt dev, live code</small></li>
-              <li v-if="devSiteUrl"><a :href="`${devSiteUrl}/builder/`" target="_blank" rel="noreferrer">Dev builder ↗</a><small>editor on the dev server</small></li>
+              <li v-if="devSiteUrl && devView?.status === 'ready'"><a :href="`${devSiteUrl}/`" target="_blank" rel="noreferrer">Dev site ↗</a><small>nuxt dev, live code</small></li>
+              <li v-if="devSiteUrl && devView?.status === 'ready'"><a :href="`${devSiteUrl}/builder/`" target="_blank" rel="noreferrer">Dev builder ↗</a><small>editor on the dev server</small></li>
+              <li v-else-if="devSiteUrl"><span>Dev site</span><small>offline while the dev server is stopped</small></li>
               <li v-if="prodView?.previewUrl"><a :href="prodView.previewUrl" target="_blank" rel="noreferrer">Production preview ↗</a><small>live release, tailnet only</small></li>
               <li v-if="prodView?.publicUrl"><a :href="prodView.publicUrl" target="_blank" rel="noreferrer">Public site ↗</a><small>{{ prodView.publicUrl.replace(/^https?:\/\//, '') }}</small></li>
             </ul>

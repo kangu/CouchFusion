@@ -71,6 +71,7 @@ onBeforeUnmount(() => {
         <p v-if="view">
           <span class="services-state" :data-tone="serviceTone(view.service)">{{ view.service.activeState }}<template v-if="view.service.subState"> · {{ view.service.subState }}</template></span>
           <code>{{ view.unit }}</code> on 127.0.0.1:{{ view.port }}<template v-if="view.service.memoryCurrentBytes"> · {{ formatBytes(view.service.memoryCurrentBytes) }}</template>
+          <template v-if="view.service.startsAtBoot"> · starts at boot</template>
           <template v-if="view.previewUrl"> · <a :href="view.previewUrl" target="_blank" rel="noreferrer" data-testid="prod-preview-link">Preview ↗</a></template>
         </p>
       </div>
@@ -102,6 +103,7 @@ onBeforeUnmount(() => {
     </header>
 
     <p v-if="prod.error.value" class="notice notice--error" role="alert">{{ prod.error.value }}</p>
+    <p v-if="view && view.service.startsAtBoot === false" class="notice notice--error" role="alert" data-testid="prod-not-at-boot">Production does not start at boot. On the server run <code>systemctl enable {{ view.unit }}</code> (phase3/03-units.sh does this).</p>
     <p v-if="view && !view.admission.ok" class="notice notice--error" role="alert">Can't build now: {{ view.admission.problem }}.</p>
     <p v-if="prod.blockedByOther.value" class="notice" role="status">Another job is running for this site; deploy and rollback wait until it ends.</p>
 

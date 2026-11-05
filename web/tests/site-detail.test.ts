@@ -576,8 +576,9 @@ describe('site detail on the Rust control plane', () => {
     expect(wrapper.text()).not.toContain('Could not')
     const links = wrapper.get('[data-testid="site-links"]').findAll('a').map((a) => [a.text(), a.attributes('href')])
     expect(links).toEqual([
-      ['Dev site ↗', 'https://hydra1.example.ts.net:9181/'],
-      ['Dev builder ↗', 'https://hydra1.example.ts.net:9181/builder/'],
+      // The dev card aligns the slot to the page's own origin (here the test page, localhost).
+      ['Dev site ↗', `${window.location.protocol}//${window.location.hostname}:9181/`],
+      ['Dev builder ↗', `${window.location.protocol}//${window.location.hostname}:9181/builder/`],
       ['Production preview ↗', 'https://hydra1.example.ts.net:9189/'],
       ['Public site ↗', 'https://radustanciu.ro'],
     ])

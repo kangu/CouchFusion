@@ -658,6 +658,8 @@ export interface ServiceSnapshot {
   memoryCurrentBytes?: number
   since?: string
   user?: string
+  /** systemd starts the unit at boot (UnitFileState enabled). */
+  startsAtBoot?: boolean
 }
 
 /** One production release (`GET …/sites/{site}/prod`, Phase 3). */

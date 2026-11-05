@@ -416,6 +416,9 @@ pub struct ServiceSnapshot {
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// Whether systemd starts the unit at boot (UnitFileState enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starts_at_boot: Option<bool>,
 }
 
 // ---- request bodies ----
