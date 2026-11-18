@@ -48,6 +48,8 @@ pub enum RunKind {
 #[serde(rename_all = "camelCase")]
 pub struct RunSpec {
     pub job_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub screenshot: bool,
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
@@ -76,7 +78,7 @@ pub const REQUEST_PAGES: &str = "Pages are stored in a database you cannot acces
 
 pub fn build_request_prompt(user_prompt: &str) -> String {
     format!(
-        "{REQUEST_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n{VALIDATION_LINE}\n\n{REQUEST_PAGES}\n\nFor content components follow this first-party skill:\n\n{SKILL}\n\n---\n\nRequest:\n\n{}\n",
+        "{REQUEST_INSTRUCTIONS}\n{VPS_LINE}\n{UNATTENDED_LINE}\n{VALIDATION_LINE}\n\n{REQUEST_PAGES}\nIf .couchfusion/request/conversation.json exists, read it for the preceding requests and outcomes before handling this follow-up.\n\nFor content components follow this first-party skill:\n\n{SKILL}\n\n---\n\nRequest:\n\n{}\n",
         user_prompt.trim()
     )
 }
@@ -102,6 +104,9 @@ pub fn run_agent(args: &RunnerArgs) -> anyhow::Result<i32> {
         bail!("prompt must be 1–16384 bytes");
     }
     let app_dir = args.workspace.join("apps").join(&args.app);
+    if spec.screenshot {
+        return crate::screenshot::run(args, &spec, &app_dir);
+    }
     let mut cmd = Command::new(&args.codex);
     cmd.arg("exec");
     cmd.args(["--json", "--skip-git-repo-check", "-C"]).arg(&app_dir);
@@ -296,6 +301,7 @@ mod tests {
             job_id: "j".into(),
             prompt: "replace /a with /b".into(),
             thread_id: None,
+            screenshot: false,
             kind: RunKind::Request,
             model: Some("gpt-5.6-sol".into()),
             reasoning_effort: Some("high".into()),
@@ -325,7 +331,7 @@ mod tests {
         let d = tmp.path();
         std::fs::create_dir_all(d.join("apps/demo")).unwrap();
         std::fs::create_dir_all(d.join("spec")).unwrap();
-        let spec = RunSpec { job_id: "j".into(), prompt: "make a hero".into(), thread_id: None, kind: RunKind::Component, model: None, reasoning_effort: None };
+        let spec = RunSpec { job_id: "j".into(), prompt: "make a hero".into(), thread_id: None, screenshot: false, kind: RunKind::Component, model: None, reasoning_effort: None };
         std::fs::write(d.join("spec/demo.json"), serde_json::to_string(&spec).unwrap()).unwrap();
         // fake codex: records args and stdin, exits 0 only after stdin EOF
         let fake = d.join("codex");

@@ -121,6 +121,10 @@ export function createGitRepos(api: GitApi, workspaceId: string) {
     }
   }
 
+  function discard(repoId: string, paths: string[], expectedHead: string) {
+    return api.post<JobSnapshot>(`${base}/${repoSegment(repoId)}/discard`, { paths, expectedHead })
+  }
+
   function commit(repoId: string, request: CommitRequest) {
     return api.post<JobSnapshot>(`${base}/${repoSegment(repoId)}/commit`, request)
   }
@@ -130,5 +134,5 @@ export function createGitRepos(api: GitApi, workspaceId: string) {
     return api.post<JobSnapshot>(`${base}/${repoSegment(repoId)}/${op}`, body)
   }
 
-  return { repos, status, diff, error, loading, dirtyCount, load, loadStatus, loadDiff, commit, remote }
+  return { repos, status, diff, error, loading, dirtyCount, load, loadStatus, loadDiff, discard, commit, remote }
 }

@@ -365,6 +365,7 @@ export type BootstrapCapability =
   | 'component-source'
   | 'registry-rebuild'
   | 'services'
+  | 'git-discard'
   | 'git-remote'
   // Phase 3: production releases (deploy, rollback)
   | 'prod-releases'

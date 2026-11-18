@@ -47,12 +47,13 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/v1/workspaces/{ws}/repos", get(repos))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/status", get(repo_status))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/diff", get(repo_diff))
+        .route("/api/v1/workspaces/{ws}/repos/{repo}/discard", post(repo_discard))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/commit", post(repo_commit))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/fetch", post(repo_fetch))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/pull", post(repo_pull))
         .route("/api/v1/workspaces/{ws}/repos/{repo}/push", post(repo_push))
         .route(&format!("{site}/pages"), get(site_pages))
-        .route(&format!("{site}/requests"), post(request_create).get(request_history))
+        .route(&format!("{site}/requests"), post(request_create).layer(axum::extract::DefaultBodyLimit::max(15 * 1024 * 1024)).get(request_history))
         .route(&format!("{site}/requests/{{jid}}/apply"), post(request_apply))
         .route(&format!("{site}/prod"), get(prod_view))
         .route(&format!("{site}/prod/deploy"), post(prod_deploy))
@@ -97,6 +98,7 @@ async fn bootstrap(State(app): S, Extension(caller): Extension<Caller>) -> Respo
                 "registry-rebuild",
                 "services",
                 "git-remote",
+                "git-discard",
                 "prod-releases",
                 "llm-request",
                 "system-health",
@@ -343,7 +345,7 @@ async fn site_pages(State(app): S, Path((ws, site)): Path<(String, String)>) -> 
 async fn request_create(State(app): S, Path((ws, site)): Path<(String, String)>, headers: HeaderMap, JsonBody(req): JsonBody<LlmRequest>) -> ApiResult {
     let cfg = site_cfg(&app, &ws, &site)?;
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-    let job = crate::request::start(app, cfg, req.prompt, req.current_path, key).await?;
+    let job = crate::request::start(app, cfg, req, key).await?;
     Ok(data(StatusCode::ACCEPTED, job))
 }
 
@@ -526,6 +528,30 @@ async fn repo_diff(State(app): S, Path((ws, repo)): Path<(String, String)>, Quer
     let (_, files) = app.git.status(&path).await?;
     let file = files.iter().find(|f| f.path == q.path).ok_or_else(|| ApiError::not_found("No changes for that path."))?;
     Ok(data(StatusCode::OK, app.git.diff(&path, &file.path, file.untracked).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscardRequest {
+    paths: Vec<String>,
+    expected_head: String,
+}
+
+async fn repo_discard(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(req): JsonBody<DiscardRequest>) -> ApiResult {
+    let path = repo_path(&app, &ws, &repo)?;
+    let lease = repo.strip_prefix("apps/").map(str::to_string).unwrap_or_else(|| format!("repo:{repo}"));
+    let ctx = app.jobs.create("git.discard", &ws, &lease)?;
+    ctx.start();
+    match app.git.discard(&path, &req.paths, &req.expected_head).await {
+        Ok(()) => {
+            ctx.succeed(Default::default());
+            Ok(data(StatusCode::OK, ctx.snapshot()))
+        }
+        Err(err) => {
+            ctx.fail(&err, None);
+            Err(err)
+        }
+    }
 }
 
 async fn repo_commit(State(app): S, Path((ws, repo)): Path<(String, String)>, JsonBody(req): JsonBody<CommitRequest>) -> ApiResult {

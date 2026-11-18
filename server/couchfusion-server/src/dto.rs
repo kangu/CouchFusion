@@ -444,6 +444,8 @@ pub struct GenerateRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LlmRequest {
+    pub screenshot: Option<String>,
+    pub parent_request_id: Option<String>,
     pub prompt: String,
     #[serde(default)]
     pub current_path: Option<String>,

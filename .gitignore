@@ -22,3 +22,5 @@ logs/
 
 # Superpowers visual brainstorming companion
 .superpowers/
+
+.dashboard/

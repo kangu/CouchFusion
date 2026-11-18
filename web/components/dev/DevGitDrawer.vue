@@ -9,6 +9,8 @@ const props = defineProps<{
   diff?: RepoDiff | undefined
   selectedRepo?: string | undefined
   error: string
+  allowDiscard?: boolean
+  discarding?: boolean
   committing: boolean
   /** Remote job in progress, if any. */
   remoteBusy?: GitRemoteOp | undefined
@@ -19,6 +21,7 @@ const emit = defineEmits<{
   viewDiff: [path: string]
   commit: [request: { message: string; paths: string[]; expectedHead: string }]
   remote: [op: GitRemoteOp, body: { branch?: string; confirm?: string }]
+  discard: [paths: string[], expectedHead: string]
   refresh: []
   close: []
 }>()
@@ -48,6 +51,19 @@ watch(() => props.status, (status) => {
 
 const canCommit = computed(() =>
   !!props.status && selected.value.size > 0 && message.value.trim().length > 0 && !props.committing)
+
+const canDiscard = computed(() => !!props.status?.head && selected.value.size > 0 &&
+  !props.committing && !props.discarding && !props.remoteBusy && props.status.files
+    .filter(file => selected.value.has(file.path))
+    .every(file => file.index === '.' && ['M', 'D'].includes(file.worktree)))
+
+function discard() {
+  if (!canDiscard.value || !props.status?.head) return
+  const paths = [...selected.value]
+  if (window.confirm(`Discard unstaged edits in ${props.status.id}? This cannot be undone.\n\n${paths.join('\n')}`)) {
+    emit('discard', paths, props.status.head.sha)
+  }
+}
 
 function toggle(path: string, checked: boolean) {
   const next = new Set(selected.value)
@@ -91,10 +107,13 @@ watch(() => props.committing, (now, before) => {
 </script>
 
 <template>
-  <aside class="dev-drawer dev-drawer--wide" aria-labelledby="dev-git-title">
+  <aside class="dev-drawer dev-drawer--wide dev-git" aria-labelledby="dev-git-title">
     <header class="dev-drawer__header">
-      <div><p class="eyebrow">Commit · fetch · pull · push</p><h2 id="dev-git-title">Changes</h2></div>
-      <button class="dialog__close" type="button" aria-label="Close git drawer" @click="emit('close')">×</button>
+      <div><p class="eyebrow">Git</p><h2 id="dev-git-title">Changes</h2></div>
+      <div class="dev-git__tools">
+        <button class="compact-button" type="button" @click="emit('refresh')">Refresh</button>
+        <button class="dialog__close" type="button" aria-label="Close git drawer" @click="emit('close')">×</button>
+      </div>
     </header>
 
     <nav class="dev-git__repos" aria-label="Repositories">
@@ -104,18 +123,19 @@ watch(() => props.committing, (now, before) => {
         type="button"
         class="dev-git__repo"
         :class="{ 'dev-git__repo--active': repo.id === selectedRepo }"
+        :aria-pressed="repo.id === selectedRepo"
+        :title="repo.path"
         @click="emit('selectRepo', repo.id)"
       >
-        <strong>{{ repo.path }}</strong>
+        <strong>{{ repo.path.split('/').filter(Boolean).slice(-2).join('/') || repo.path }}</strong>
         <small>{{ repo.branch }} · {{ repo.dirty }} changed{{ repo.hasRemote ? '' : ' · no remote' }}</small>
       </button>
-      <button class="compact-button" type="button" @click="emit('refresh')">Refresh</button>
     </nav>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
 
     <section v-if="status" class="dev-git__status">
-      <p class="eyebrow">{{ status.branch }}<template v-if="status.head"> · {{ status.head.sha.slice(0, 8) }} {{ status.head.subject }}</template></p>
+      <p v-if="status.head" class="dev-git__head"><code>{{ status.head.sha.slice(0, 8) }}</code> {{ status.head.subject }}</p>
       <div v-if="status.hasRemote" class="dev-git__remote">
         <span class="dev-git__tracking">{{ actions.summary }}</span>
         <button class="compact-button" type="button" :disabled="!actions.canFetch || !!remoteBusy" @click="emit('remote', 'fetch', {})">
@@ -135,16 +155,22 @@ watch(() => props.committing, (now, before) => {
         <button class="compact-button compact-button--primary" type="submit" :disabled="!pushReady">Push {{ status.branch }}</button>
         <button class="compact-button" type="button" @click="confirmingPush = false">Cancel</button>
       </form>
+      <h3 class="dev-git__heading">Changed files <small>{{ status.files.length }}</small></h3>
       <p v-if="!status.files.length" class="empty-state">Working tree clean.</p>
       <ul v-else class="dev-git__files">
         <li v-for="file in status.files" :key="file.path">
           <label>
-            <input type="checkbox" :checked="selected.has(file.path)" @change="toggle(file.path, ($event.target as HTMLInputElement).checked)">
+            <input type="checkbox" :aria-label="`Include ${file.path} in commit`" :checked="selected.has(file.path)" @change="toggle(file.path, ($event.target as HTMLInputElement).checked)">
             <span class="dev-git__state" :data-state="fileState(file)">{{ fileState(file) }}</span>
           </label>
           <button type="button" class="dev-git__path" @click="emit('viewDiff', file.path)">{{ file.path }}</button>
         </li>
       </ul>
+
+      <button v-if="allowDiscard && status.files.length" class="compact-button" type="button"
+        :disabled="!canDiscard" title="Restore selected tracked files with unstaged changes" @click="discard">
+        {{ discarding ? 'Discarding…' : 'Discard selected…' }}
+      </button>
 
       <section v-if="diff" class="log-viewer dev-git__diff">
         <header><span>{{ diff.path }}</span><small>{{ diff.binary ? 'binary' : diff.truncated ? 'truncated at 256 KiB' : 'diff' }}</small></header>
@@ -164,6 +190,7 @@ watch(() => props.committing, (now, before) => {
           {{ committing ? 'Committing…' : `Commit ${selected.size} file${selected.size === 1 ? '' : 's'}` }}
         </button>
       </form>
+      <slot />
     </section>
     <p v-else-if="selectedRepo" class="empty-state">Reading status…</p>
   </aside>

@@ -255,6 +255,27 @@ impl Git {
         Ok(RepoDiff { path: path.to_string(), diff: text, truncated, binary })
     }
 
+    /// Restore only selected tracked files with unstaged modifications or deletions.
+    pub async fn discard(&self, repo: &Path, paths: &[String], expected_head: &str) -> Result<(), ApiError> {
+        if paths.is_empty() || paths.len() > 1000 {
+            return Err(ApiError::validation("Select 1–1000 tracked files."));
+        }
+        self.check_config(repo).await?;
+        if self.head(repo).await.as_ref().map(|h| h.sha.as_str()) != Some(expected_head) {
+            return Err(ApiError::conflict("The repository HEAD changed. Refresh before discarding."));
+        }
+        let (_, files) = self.status(repo).await?;
+        for p in paths {
+            if denied_path(p) || repo.join(p).is_dir() || !files.iter().any(|f| f.path == *p && f.index == "." && matches!(f.worktree.as_str(), "M" | "D")) {
+                return Err(ApiError::validation(format!("Cannot discard {p}. Refresh and select unstaged tracked changes.")));
+            }
+        }
+        let mut args = vec!["--literal-pathspecs", "restore", "--worktree", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        self.ok(repo, &args).await?;
+        Ok(())
+    }
+
     /// Stages exactly `paths` and commits only them.
     ///
     /// A deletion that is already staged (e.g. the old name of a staged rename such as
@@ -396,6 +417,29 @@ mod tests {
         assert!(files[1].untracked);
         assert_eq!(files[2].path, "new.vue");
         assert_eq!(files[2].index, "R");
+    }
+
+    #[tokio::test]
+    async fn discard_only_selected_unstaged_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        let git = Git { bin: "/usr/bin/git".into() };
+        assert_eq!(git.run(repo, &["init", "-q"]).await.unwrap().code, 0);
+        for name in ["a", "b"] {
+            std::fs::write(repo.join(name), "original").unwrap();
+        }
+        let sha = git.commit(repo, "initial", &["a".into(), "b".into()]).await.unwrap();
+        for name in ["a", "b", "new"] {
+            std::fs::write(repo.join(name), "edited").unwrap();
+        }
+        assert!(git.discard(repo, &["a".into()], "stale").await.is_err());
+        assert!(git.discard(repo, &["a".into(), "new".into()], &sha).await.is_err());
+        assert_eq!(std::fs::read_to_string(repo.join("a")).unwrap(), "edited");
+        git.discard(repo, &["a".into()], &sha).await.unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("a")).unwrap(), "original");
+        assert_eq!(std::fs::read_to_string(repo.join("b")).unwrap(), "edited");
+        assert_eq!(git.run(repo, &["add", "b"]).await.unwrap().code, 0);
+        assert!(git.discard(repo, &["b".into()], &sha).await.is_err());
     }
 
     #[tokio::test]

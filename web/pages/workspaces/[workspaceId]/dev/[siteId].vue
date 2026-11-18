@@ -1,4 +1,5 @@
-<script setup lang="ts">
+<script setup lang='ts'>
+import ProductionPanel from '../../../../components/prod/ProductionPanel.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '../../../../assets/css/dev-session.css'
 import type { ActivityEvent, ComponentDeleteResult, ComponentGenerateResult, ComponentRestoreResult, GitRemoteOp, JobSnapshot, SiteEvent, TrashEntry } from '../../../../types/api'
@@ -281,8 +282,8 @@ function afterRequest(done: JobSnapshot | undefined) {
   }
 }
 
-async function sendRequest() {
-  afterRequest(await request.submit())
+async function sendRequest(screenshot?: { data: string; key: string }) {
+  afterRequest(await request.submit(screenshot))
 }
 
 async function openRequestTask(id: string) {
@@ -340,13 +341,32 @@ async function commit(request: { message: string; paths: string[]; expectedHead:
   }
 }
 
+const discarding = ref(false)
+async function discard(paths: string[], expectedHead: string) {
+  const repo = selectedRepo.value
+  if (!repo || discarding.value || git.status.value?.id !== repo) return
+  discarding.value = true
+  try {
+    await git.discard(repo, paths, expectedHead)
+    await openGit()
+  } catch (cause) {
+    git.error.value = cause instanceof Error ? cause.message : 'Discard failed.'
+  } finally {
+    discarding.value = false
+  }
+}
+
 const remoteBusy = ref<GitRemoteOp>()
+const pulledRepo = ref<string>()
 
 async function runRemote(op: GitRemoteOp, body: { branch?: string; confirm?: string }) {
   if (!selectedRepo.value || remoteBusy.value) return
+  const repo = selectedRepo.value
+  if (op === 'pull') pulledRepo.value = undefined
   remoteBusy.value = op
   try {
-    const done = await tracker.track(await git.remote(selectedRepo.value, op, body))
+    const done = await tracker.track(await git.remote(repo, op, body))
+    if (op === 'pull' && done.status === 'succeeded') pulledRepo.value = repo
     git.error.value = done.status === 'succeeded' ? '' : done.error?.message ?? `${op} ${done.status}.`
   } catch (cause) {
     git.error.value = cause instanceof Error ? cause.message : `${op} failed.`
@@ -505,6 +525,8 @@ onBeforeUnmount(() => {
         :apply-job="request.applyJob.value"
         :result="request.result.value"
         :apply-result="request.applyResult.value"
+        :follow-up="!!request.parentRequestId.value"
+        @follow-up="request.newTask({ followUp: true })"
         :submitted-prompt="request.submittedPrompt.value"
         :proposal="request.proposal.value"
         :history="request.history.value"
@@ -532,13 +554,18 @@ onBeforeUnmount(() => {
         :error="git.error.value"
         :committing="committing"
         :remote-busy="remoteBusy"
+        :allow-discard="bootstrap.has('git-discard')"
+        :discarding="discarding"
+        @discard="discard"
         @select-repo="selectRepo"
         @view-diff="(path) => selectedRepo && git.loadDiff(selectedRepo, path)"
         @commit="commit"
         @remote="runRemote"
         @refresh="openGit"
         @close="drawer = null"
-      />
+      >
+        <ProductionPanel collapse-history v-if="pulledRepo && pulledRepo === selectedRepo && bootstrap.has('prod-releases')" :workspace-id="workspaceId" :site-id="siteId" />
+      </DevGitDrawer>
       <DevLogsDrawer v-else-if="drawer === 'logs'" :logs="logs" :jobs="jobs" @close="drawer = null" />
       <DevComponentsDrawer
         v-else-if="drawer === 'components'"

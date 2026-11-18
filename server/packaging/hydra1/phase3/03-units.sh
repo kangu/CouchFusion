@@ -14,6 +14,7 @@ id "$CF_SITE_USER" >/dev/null 2>&1 || die "run 01-site-user.sh first"
 install_file "$F/cf-site@.service" /etc/systemd/system/cf-site@.service
 install_file "$F/cf-build@.service" /etc/systemd/system/cf-build@.service
 install_file "$F/cf-build.sh" /usr/local/libexec/couchfusion/cf-build.sh 0755
+install_file "$F/paired-site.mjs" /usr/local/libexec/couchfusion/paired-site.mjs
 install_file "$F/couchfusion.slice.hydra1.conf" /etc/systemd/system/couchfusion.slice.d/20-hydra1.conf
 install_file "$F/50-couchfusion.rules" /etc/polkit-1/rules.d/50-couchfusion.rules
 install_file "$F/couchfusion.tmpfiles.conf" /etc/tmpfiles.d/couchfusion.conf

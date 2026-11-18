@@ -10,7 +10,7 @@
 .services-state[data-tone="down"] { color: var(--danger); }
 .services-logs header .compact-button { color: var(--paper); border-color: var(--line-dark); }
 .services-logs .dev-log--err, .services-logs code.dev-log--err { color: #f1a596; }
-@media (max-width: 720px) { .services-table th:nth-child(3), .services-table td:nth-child(3), .services-table th:nth-child(5), .services-table td:nth-child(5) { display: none; } }
+@media (max-width: 720px) { .services-table:not(.prod-panel__releases) th:nth-child(3), .services-table:not(.prod-panel__releases) td:nth-child(3), .services-table:not(.prod-panel__releases) th:nth-child(5), .services-table:not(.prod-panel__releases) td:nth-child(5) { display: none; } }
 /* Production panel (components/prod/ProductionPanel.vue). */
 .prod-panel { margin: 0 0 2rem; padding: 1rem 1.1rem; border: 1px solid var(--line-paper); border-radius: .5rem; }
 .prod-panel__header { display: flex; flex-wrap: wrap; gap: .8rem; align-items: flex-start; justify-content: space-between; }
@@ -35,4 +35,22 @@
 .prod-panel__job pre { max-height: 18rem; overflow: auto; }
 .prod-panel__releases { margin-top: .9rem; }
 .prod-panel__releases td:first-child code { white-space: nowrap; font-size: .64rem; }
-@media (max-width: 720px) { .prod-panel__releases th:nth-child(4), .prod-panel__releases td:nth-child(4) { display: none; } }
+
+.prod-panel { container-type: inline-size; min-width: 0; }
+.prod-history { margin-top: 1rem; border-top: 1px solid var(--line-paper); }
+.prod-history summary { padding: .85rem 0; cursor: pointer; font: 700 .8rem/1.4 var(--mono); }
+.prod-history summary small { color: #59625e; }
+.prod-panel__releases { margin-top: 0; }
+.prod-panel__releases td:first-child code { white-space: normal; overflow-wrap: anywhere; }
+@container (max-width: 40rem) {
+  .prod-panel__header { display: grid; }
+  .prod-panel__deploy { width: 100%; justify-items: start; margin: 0; }
+  .prod-panel__releases thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .prod-panel__releases, .prod-panel__releases tbody { display: block; }
+  .prod-panel__releases tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem .8rem; padding: .8rem .5rem; border-top: 1px solid var(--line-paper); }
+  .prod-panel__releases td { padding: 0; border: 0; overflow-wrap: anywhere; }
+  .prod-panel__releases td:first-child, .prod-panel__releases td:nth-child(2) { grid-column: 1 / -1; }
+  .prod-panel__releases td:nth-child(3)::before { content: "App "; }
+  .prod-panel__releases td:nth-child(4)::before { content: "Layers "; }
+  .prod-panel__releases td:last-child { grid-column: 1 / -1; }
+}

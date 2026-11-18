@@ -79,6 +79,7 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
   const historyError = ref('')
   const view = ref<'task' | 'history'>('task')
   let idempotencyKey: string | undefined
+  const parentRequestId = ref<string>()
   let keyFor = ''
 
   const job = computed<JobSnapshot | undefined>(() => (jobId.value ? tracker.jobs.value[jobId.value] : undefined))
@@ -129,6 +130,7 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
       const snapshot = await api.get<JobSnapshot>(`/jobs/${encodeURIComponent(id)}`)
       tracker.update(snapshot)
       if (item?.applyJob) tracker.update(await api.get<JobSnapshot>(`/jobs/${encodeURIComponent(item.applyJob.id)}`))
+      parentRequestId.value = undefined
       jobId.value = id
       applyJobId.value = item?.applyJob?.id
       submittedPrompt.value = item?.prompt ?? (typeof snapshot.result?.prompt === 'string' ? snapshot.result.prompt : '')
@@ -155,11 +157,12 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
    * Clears the finished task for a new one. `reuse` keeps its prompt and page in the form;
    * otherwise the form starts empty on `path` (the page open in the builder).
    */
-  function newTask(options: { reuse?: boolean; path?: string } = {}) {
+  function newTask(options: { reuse?: boolean; followUp?: boolean; path?: string } = {}) {
     if (!canStartNew.value) return
     const previousPath = result.value?.currentPath ?? summary.value?.currentPath ?? ''
+    parentRequestId.value = options.followUp ? jobId.value : undefined
     prompt.value = options.reuse ? submittedPrompt.value : ''
-    currentPath.value = options.reuse ? previousPath : (options.path ?? '')
+    currentPath.value = options.reuse || options.followUp ? previousPath : (options.path ?? '')
     jobId.value = undefined
     applyJobId.value = undefined
     submittedPrompt.value = ''
@@ -168,12 +171,12 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
   }
 
   /** Starts the request; resolves with the terminal job (or undefined if it could not start). */
-  async function submit(): Promise<JobSnapshot | undefined> {
+  async function submit(screenshot?: { data: string; key: string }): Promise<JobSnapshot | undefined> {
     if (!canSubmit.value) return undefined
     const text = prompt.value.trim()
     const path = currentPath.value.trim() || undefined
     // Reuse the key while the same request is retried, so the server de-duplicates.
-    const signature = `${text}\n${path ?? ''}`
+    const signature = JSON.stringify([text, path, parentRequestId.value, screenshot?.key])
     if (!idempotencyKey || keyFor !== signature) {
       idempotencyKey = crypto.randomUUID()
       keyFor = signature
@@ -182,7 +185,9 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
     error.value = ''
     applyJobId.value = undefined
     try {
-      const started = await api.post<JobSnapshot>(`${base}/requests`, { prompt: text, currentPath: path }, { headers: { 'Idempotency-Key': idempotencyKey } })
+      const started = await api.post<JobSnapshot>(`${base}/requests`, { prompt: text, currentPath: path, parentRequestId: parentRequestId.value, screenshot: screenshot?.data }, { headers: { 'Idempotency-Key': idempotencyKey } })
+      screenshot = undefined
+      parentRequestId.value = undefined
       jobId.value = started.id
       submittedPrompt.value = text
       busy.value = false
@@ -220,7 +225,7 @@ export function createLlmRequest(api: RequestApi, workspaceId: string, siteId: s
 
   return {
     prompt, currentPath, pages, pagesError, error, busy, jobId, job, applyJob, result, applyResult, running, applied, canApply, canSubmit,
-    submittedPrompt, history, historyError, view, proposal, finished, canStartNew,
+    parentRequestId, submittedPrompt, history, historyError, view, proposal, finished, canStartNew,
     loadPages, loadHistory, submit, apply, open, resume, newTask,
   }
 }

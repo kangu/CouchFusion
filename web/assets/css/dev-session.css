@@ -167,3 +167,30 @@
 .dev-start-stalled p { margin: 0 0 .5rem; }
 .dev-git__suggested { margin: 0; }
 .dev-git__link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+
+.dev-git { --cyan-deep: #116d69; container-type: inline-size; color-scheme: light; }
+.dev-git :focus-visible { outline: 2px solid var(--cyan-deep); outline-offset: 2px; }
+.dev-git .compact-button:disabled { opacity: 1; color: #5a615d; background: #e5e3da; border-color: #b7bab3; }
+.dev-git__tools { display: flex; align-items: center; gap: .6rem; }
+.dev-git__tools .dialog__close { width: 44px; height: 44px; }
+.dev-git__repos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr)); }
+.dev-git__repo { min-height: 44px; font-size: .78rem; overflow-wrap: anywhere; }
+.dev-git__repo--active { border-color: var(--cyan-deep); box-shadow: inset 3px 0 var(--cyan-deep); }
+.dev-git__status { grid-template-columns: minmax(0, 1fr); }
+.dev-git__head { display: flex; align-items: baseline; gap: .55rem; margin: 0; overflow-wrap: anywhere; font: .82rem/1.45 var(--mono); }
+.dev-git__head code { flex: none; color: var(--cyan-deep); font-size: .72rem; }
+.dev-git__remote { margin: 0; padding-bottom: .85rem; border-bottom: 1px solid var(--line-paper); }
+.dev-git__hint { color: #59625e; opacity: 1; font: .72rem/1.4 var(--mono); }
+.dev-git__heading { display: flex; align-items: baseline; gap: .5rem; margin: 0; font: 700 1.1rem/1.25 var(--display); }
+.dev-git__heading small { color: var(--cyan-deep); font: .75rem var(--mono); }
+.dev-git__files { gap: 0; border-top: 1px solid var(--line-paper); }
+.dev-git__files li { min-height: 44px; padding: 0 .5rem; border-bottom: 1px solid var(--line-paper); }
+.dev-git__files label, .dev-git__path { min-height: 44px; }
+.dev-git__path { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dev-git__path:hover { color: var(--cyan-deep); }
+.dev-git__status > .compact-button, .dev-git .dev-drawer__form > button { justify-self: start; }
+.dev-git .prod-panel { margin: .4rem 0 0; border-radius: 0; }
+@container (max-width: 28rem) {
+  .dev-git__tracking { flex-basis: 100%; }
+  .dev-git__remote .compact-button { flex: 1; }
+}

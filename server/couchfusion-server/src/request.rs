@@ -330,7 +330,11 @@ pub fn history(app: &App, site: &SiteConfig, limit: usize) -> Result<Value, ApiE
 
 // ---------------------------------------------------------------- request job
 
-pub async fn start(app: Arc<App>, site: SiteConfig, prompt: String, current_path: Option<String>, idempotency_key: String) -> Result<JobSnapshot, ApiError> {
+pub async fn start(app: Arc<App>, site: SiteConfig, req: crate::dto::LlmRequest, idempotency_key: String) -> Result<JobSnapshot, ApiError> {
+    let crate::dto::LlmRequest { prompt, current_path, parent_request_id, screenshot } = req;
+    if let Some(data) = &screenshot {
+        crate::screenshot::validate(data)?;
+    }
     let trimmed = prompt.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_PROMPT {
         return Err(ApiError::validation("The request must be 1–16384 bytes."));
@@ -350,6 +354,22 @@ pub async fn start(app: Arc<App>, site: SiteConfig, prompt: String, current_path
     {
         return Ok(job);
     }
+    let mut conversation = Vec::new();
+    let mut ancestor = parent_request_id.clone();
+    while let Some(id) = ancestor.take() {
+        let parent = app.jobs.snapshot(&id)
+            .filter(|j| j.kind == JOB_REQUEST && j.status.terminal()
+                && j.site_id.as_deref() == Some(site.id.as_str())
+                && j.workspace_id.as_deref() == Some(app.config.workspace.id.as_str()))
+            .ok_or_else(|| ApiError::validation("Choose a finished request from this site."))?;
+        let prior = parent.result.unwrap_or_default();
+        conversation.push(json!({"prompt":prior.get("prompt"), "summary":prior.get("summary"),
+            "changedFiles":prior.get("changedFiles"), "operations":prior.get("operations"), "status":parent.status,
+            "currentPath":prior.get("currentPath"), "proposalState":proposal_state(&app, &id), "error":parent.error}));
+        if conversation.len() >= 12 { break }
+        ancestor = prior.get("parentRequestId").and_then(Value::as_str).map(String::from);
+    }
+    conversation.reverse();
     dev_token(&app, &site)?;
     let ctx = app.jobs.create(JOB_REQUEST, &app.config.workspace.id, &site.id)?;
     let _ = app.store.remember_idempotency(&key, &ctx.id);
@@ -357,14 +377,17 @@ pub async fn start(app: Arc<App>, site: SiteConfig, prompt: String, current_path
     let prompt = trimmed.to_string();
     tokio::spawn(async move {
         let mut result = Map::new();
-        if let Err(err) = run(&app, &ctx, &site, &prompt, current_path.as_deref(), &mut result).await {
+        if let Some(id) = parent_request_id {
+            result.insert("parentRequestId".into(), json!(id));
+        }
+        if let Err(err) = run(&app, &ctx, &site, &prompt, current_path.as_deref(), screenshot, conversation, &mut result).await {
             ctx.fail(&err, (!result.is_empty()).then_some(result));
         }
     });
     Ok(snapshot)
 }
 
-async fn run(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, current_path: Option<&str>, result: &mut Map<String, Value>) -> Result<(), ApiError> {
+async fn run(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, current_path: Option<&str>, screenshot: Option<String>, conversation: Vec<Value>, result: &mut Map<String, Value>) -> Result<(), ApiError> {
     ctx.start();
     result.insert("prompt".into(), json!(prompt));
     result.insert("currentPath".into(), json!(current_path));
@@ -397,19 +420,33 @@ async fn run(app: &App, ctx: &JobCtx, site: &SiteConfig, prompt: &str, current_p
         let dir = app_dir.clone();
         tokio::task::spawn_blocking(move || snapshot_all(&dir)).await.map_err(|e| ApiError::internal(e.to_string()))?
     };
+    if !conversation.is_empty() {
+        folder.write("conversation.json", &serde_json::to_vec(&conversation).unwrap_or_default())
+            .map_err(|e| ApiError::filesystem(format!("Writing follow-up context: {e}")))?;
+    }
+    let spec_path = app.config.agent_spec(&site.id);
+    let handoff = screenshot.map(|data| crate::screenshot::Handoff::bind(&spec_path, &ctx.id, data, app.config.server.runner))
+        .transpose().map_err(|e| ApiError::filesystem(format!("Preparing screenshot: {e}")))?;
     let spec = RunSpec {
         job_id: ctx.id.clone(),
         prompt: prompt.to_string(),
         thread_id: None,
+        screenshot: handoff.is_some(),
         kind: RunKind::Request,
         model: app.config.agent.model.clone(),
         reasoning_effort: app.config.agent.reasoning_effort.clone(),
     };
-    write_private(&app.config.agent_spec(&site.id), &serde_json::to_vec(&spec).unwrap_or_default(), 0o644)
+    write_private(&spec_path, &serde_json::to_vec(&spec).unwrap_or_default(), 0o644)
         .map_err(|e| ApiError::filesystem(format!("Writing the agent run spec: {e}")))?;
     let out_path = app.config.agent_out(&site.id);
     write_private(&out_path, b"", 0o600).map_err(|e| ApiError::filesystem(format!("Preparing agent output: {e}")))?;
     app.units.start(&site.agent_unit).await.map_err(|e| ApiError::new("process", format!("Could not start {}: {e:#}", site.agent_unit)))?;
+    if let Some(handoff) = handoff {
+        if let Err(err) = handoff.send().await {
+            let _ = app.units.stop(&site.agent_unit).await;
+            return Err(ApiError::new("process", format!("Passing screenshot to the runner: {err}")));
+        }
+    }
     ctx.info("codex.start", "Codex is working on the request…");
 
     let outcome = tail_agent(app, ctx, site, &out_path, &app_dir).await;

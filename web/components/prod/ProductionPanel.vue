@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import '../../assets/css/services.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createProduction, driftLabel, driftParts, shortSha } from '../../composables/useProduction'
 import { formatBytes, serviceTone } from '../../composables/useServices'
 
 /** Production of one site: live release, deploy, rollback (Phase 3, spec §7.2). */
-const props = defineProps<{ workspaceId: string, siteId: string }>()
+const props = defineProps<{ workspaceId: string, siteId: string, collapseHistory?: boolean }>()
 
 const prod = createProduction(useApi(), props.workspaceId, props.siteId)
 const confirming = ref<{ kind: 'deploy' } | { kind: 'rollback', releaseId: string }>()
@@ -132,21 +133,24 @@ onBeforeUnmount(() => {
       <p v-else-if="job.status === 'succeeded' && jobResult.release" class="notice" role="status">{{ jobResult.release }} is live.</p>
     </section>
 
-    <table v-if="view" class="services-table prod-panel__releases" data-testid="releases">
-      <thead><tr><th>Release</th><th>Built</th><th>App</th><th>Layers</th><th /></tr></thead>
-      <tbody>
-        <tr v-for="release in view.releases" :key="release.id" :aria-selected="release.current">
-          <td><code>{{ release.id }}</code></td>
-          <td>{{ when(release.createdAt) }}</td>
-          <td><code>{{ shortSha(release.appHead) || '?' }}</code><small v-if="release.appDirty">uncommitted changes</small></td>
-          <td><code>{{ shortSha(release.layersHead) || '?' }}</code><small v-if="release.layersDirty">uncommitted changes</small></td>
-          <td>
-            <span v-if="release.current" class="services-state" data-tone="ok">live</span>
-            <button v-else class="compact-button" type="button" :disabled="prod.busy.value" @click="ask('rollback', release.id)">Roll back to this</button>
-          </td>
-        </tr>
-        <tr v-if="!view.releases.length"><td colspan="5" class="empty-state">No releases yet.</td></tr>
-      </tbody>
-    </table>
+    <details v-if="view" class="prod-history" :open="!collapseHistory">
+      <summary>Release history <small>{{ view.releases.length }}</small></summary>
+      <table class="services-table prod-panel__releases" data-testid="releases">
+        <thead><tr><th>Release</th><th>Built</th><th>App</th><th>Layers</th><th>State / action</th></tr></thead>
+        <tbody>
+          <tr v-for="release in view.releases" :key="release.id" :aria-selected="release.current">
+            <td><code>{{ release.id }}</code></td>
+            <td>{{ when(release.createdAt) }}</td>
+            <td><code>{{ shortSha(release.appHead) || '?' }}</code><small v-if="release.appDirty">uncommitted changes</small></td>
+            <td><code>{{ shortSha(release.layersHead) || '?' }}</code><small v-if="release.layersDirty">uncommitted changes</small></td>
+            <td>
+              <span v-if="release.current" class="services-state" data-tone="ok">live</span>
+              <button v-else class="compact-button" type="button" :disabled="prod.busy.value" @click="ask('rollback', release.id)" :aria-label="`Roll back to ${release.id}`">Roll back…</button>
+            </td>
+          </tr>
+          <tr v-if="!view.releases.length"><td colspan="5" class="empty-state">No releases yet.</td></tr>
+        </tbody>
+      </table>
+    </details>
   </section>
 </template>

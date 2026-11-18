@@ -62,7 +62,7 @@ deploy() {
     [ -d "$CF_WORKSPACE/$repo" ] || continue
     as_cfcp mkdir -p "$snap/$(dirname "$repo")"
     as_cfcp rsync -a --delete --chmod=Dg+rwxs,Fg+rw \
-      --exclude=node_modules --exclude=.nuxt --exclude=.output --exclude='.env*' \
+      --exclude=node_modules --exclude=.nuxt --exclude=.nuxt-public --exclude=.nuxt-admin --exclude=.output --exclude=.output_admin --exclude='.env*' \
       --exclude=.git --exclude=test-results --exclude='._*' \
       "$CF_WORKSPACE/$repo/" "$snap/$repo/"
   done

@@ -7,6 +7,7 @@
 //! * `doctor`       — checks the installation
 
 mod agent;
+mod screenshot;
 mod api;
 mod config;
 mod dev;

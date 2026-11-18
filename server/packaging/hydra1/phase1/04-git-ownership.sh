@@ -13,6 +13,8 @@ for repo in "${CF_REPOS[@]}"; do
   chmod -R u+rwX,g-w,o-rwx "$g"
   setfacl -R -b "$g"
   setfacl -R -m u:radu:rwX -m d:u:radu:rwX "$g"
+  # Git replaces the index via rename. Files created by radu must also grant cfcp access.
+  find "$g" -type d -exec setfacl -m d:u:cfcp:rwx {} +
   sudo -u radu git config --global --get-all safe.directory 2>/dev/null | grep -qx "$CF_WORKSPACE/$repo" \
     || sudo -u radu git config --global --add safe.directory "$CF_WORKSPACE/$repo"
   # A seed from macOS carries core.ignorecase=true; this disk is case-sensitive.

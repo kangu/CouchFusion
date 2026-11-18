@@ -13,6 +13,25 @@ done
 echo "== nuxt build in apps/$app"
 cd "$snap/apps/$app"
 # Calling nuxt directly skips the app's legacy postbuild (git_output.sh).
-node node_modules/nuxt/bin/nuxt.mjs build
+if [[ $app == radustanciu ]]; then
+  # This checkout is a disposable snapshot. Point Vite at the current target's
+  # generated TypeScript projects while Nuxt keeps its separate build caches.
+  original=$(mktemp)
+  cp tsconfig.json "$original"
+  trap 'cp "$original" tsconfig.json; rm -f "$original"' EXIT
+  for target in public admin; do
+    sed "s|\\./\\.nuxt/|./.nuxt-$target/|g" "$original" >tsconfig.json
+    COUCHFUSION_BUILD_TARGET=$target node node_modules/nuxt/bin/nuxt.mjs build
+    dir=.output/dist
+    [[ $target == public ]] || dir=.output_admin/dist
+    test -f "$dir/server/index.mjs"
+    node -e 'if (require(process.argv[1]).target !== process.argv[2]) process.exit(1)' "./$dir/route-inventory.json" "$target"
+  done
+  mv .output_admin/dist .output/admin
+  mkdir -p .output/server
+  cp "$(dirname "$(readlink -f "$0")")/paired-site.mjs" .output/server/index.mjs
+else
+  node node_modules/nuxt/bin/nuxt.mjs build
+fi
 test -f .output/server/index.mjs
 echo "== build ok"

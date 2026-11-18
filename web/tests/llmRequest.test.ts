@@ -66,6 +66,24 @@ describe('LLM request', () => {
     expect(request.canApply.value).toBe(true)
   })
 
+  it('continues the selected task with its page and sends screenshot bytes only for the new turn', async () => {
+    const previous = job({ status: 'succeeded', result: { ...pendingResult, prompt: 'Review the page', currentPath: '/services' } })
+    const { api, request } = setup({
+      get: path => path.includes('/jobs/') ? previous : { requests: [] },
+      post: () => job({ id: 'next', status: 'succeeded', result: pendingResult }),
+    })
+    await request.open('r1')
+    request.newTask({ followUp: true })
+    request.prompt.value = 'Use this layout'
+    await request.submit({ data: 'data:image/png;base64,AQID', key: 'image-key' })
+    expect(api.post.mock.calls[0]?.[1]).toEqual({
+      parentRequestId: 'r1', currentPath: '/services', prompt: 'Use this layout', screenshot: 'data:image/png;base64,AQID',
+    })
+    request.newTask({ reuse: true })
+    await request.submit()
+    expect(api.post.mock.calls[1]?.[1]).toEqual({ prompt: 'Use this layout' })
+  })
+
   it('applies only a checked, pending proposal, once', async () => {
     const { api, tracker, request } = setup({
       post: (path) => (path.endsWith('/apply') ? job({ id: 'a1', type: 'llm.request.apply' }) : job()),
@@ -192,6 +210,20 @@ describe('request history', () => {
 
 describe('request drawer', () => {
   const props = { prompt: '', currentPath: '', pagesError: '', model: 'gpt', view: 'task' as const, submittedPrompt: '', proposal: 'none' as const, historyError: '', canSubmit: false, canApply: false, canStartNew: true, running: false, busy: false, error: '' }
+
+  it('previews a dropped screenshot, submits it, and lets the author remove it', async () => {
+    const wrapper = mount(DevRequestDrawer, { props: { ...props, prompt: 'Review layout', canSubmit: true } })
+    const file = new File(['pixels'], 'layout.png', { type: 'image/png' })
+    const form = wrapper.get('form')
+    await form.trigger('drop', { dataTransfer: { files: [file] } })
+    await vi.waitFor(() => expect(wrapper.get('img').attributes('src')).toBe('data:image/png;base64,cGl4ZWxz'))
+    await form.trigger('submit')
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ data: 'data:image/png;base64,cGl4ZWxz' })
+    await wrapper.findAll('button').find(b => b.text() === 'Remove')!.trigger('click')
+    expect(wrapper.find('img').exists()).toBe(false)
+    await form.trigger('submit')
+    expect(wrapper.emitted('submit')?.[1]).toEqual([undefined])
+  })
 
   it('shows the sent prompt and a new-task button once a task is finished', async () => {
     const wrapper = mount(DevRequestDrawer, { props: { ...props, submittedPrompt: 'Swap services', job: job({ status: 'succeeded', events: [] }), result: { ...pendingResult, applyState: 'pending' } as never, proposal: 'pending' } })
